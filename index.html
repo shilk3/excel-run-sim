@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+<title>Cell Grind — Excel Esports Manager</title>
+<meta name="description" content="Manage an Excel esports pro: balance training, running, cross training, sleep and relaxation across 24 hours a day to become the world's best." />
+
+<!-- iOS home-screen / PWA support -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Cell Grind" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="theme-color" content="#0b1220" />
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+<link rel="icon" href="icons/icon-192.png" />
+<link rel="manifest" href="manifest.webmanifest" />
+
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div id="app">
+
+  <!-- ===== Top bar ===== -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="brand">Cell Grind</div>
+      <div class="day-counter">Day <span id="dayNum">1</span> · <span id="phaseLabel">Preseason</span></div>
+    </div>
+    <div class="topbar-right">
+      <button class="chip" id="cashChip" title="Prize money">💰 <span id="cashVal">0</span></button>
+      <button class="chip" id="rankChip" title="Rank rating">🏆 <span id="rankVal">800</span></button>
+      <button class="icon-btn" id="menuBtn" aria-label="Menu">☰</button>
+    </div>
+  </header>
+
+  <!-- ===== Stat bars ===== -->
+  <section class="stats" id="statsSection">
+    <div class="stat" data-stat="excel">
+      <div class="stat-label"><span class="stat-icon">📊</span>Excel Skill<span class="stat-val" id="excelVal">0</span></div>
+      <div class="bar"><div class="bar-fill excel" id="excelBar" style="width:0%"></div></div>
+    </div>
+    <div class="stat" data-stat="phys">
+      <div class="stat-label"><span class="stat-icon">💪</span>Physical Health<span class="stat-val" id="physVal">0</span></div>
+      <div class="bar"><div class="bar-fill phys" id="physBar" style="width:0%"></div></div>
+    </div>
+    <div class="stat" data-stat="energy">
+      <div class="stat-label"><span class="stat-icon">⚡</span>Energy<span class="stat-val" id="energyVal">0</span></div>
+      <div class="bar"><div class="bar-fill energy" id="energyBar" style="width:0%"></div></div>
+    </div>
+    <div class="stat" data-stat="sleepDebt">
+      <div class="stat-label"><span class="stat-icon">🌙</span>Sleep Debt<span class="stat-val" id="sleepDebtVal">0</span></div>
+      <div class="bar"><div class="bar-fill sleepDebt" id="sleepDebtBar" style="width:0%"></div></div>
+    </div>
+    <div class="stat" data-stat="stress">
+      <div class="stat-label"><span class="stat-icon">🔥</span>Stress<span class="stat-val" id="stressVal">0</span></div>
+      <div class="bar"><div class="bar-fill stress" id="stressBar" style="width:0%"></div></div>
+    </div>
+  </section>
+
+  <div id="warningBanner" class="warning-banner hidden"></div>
+
+  <!-- ===== Time allocation ===== -->
+  <section class="planner">
+    <div class="planner-header">
+      <h2>Plan Your Day</h2>
+      <div class="hours-left">Unassigned: <span id="hoursLeft">24</span>h</div>
+    </div>
+
+    <div class="activity" data-act="excel">
+      <div class="activity-row">
+        <span class="activity-icon">📊</span>
+        <span class="activity-name">Excel Training</span>
+        <span class="activity-hours"><span id="excelHoursVal">0</span>h</span>
+      </div>
+      <div class="stepper">
+        <button class="step-btn" data-act="excel" data-dir="-1">−</button>
+        <input type="range" min="0" max="16" step="1" value="0" id="excelHours" data-act="excel" />
+        <button class="step-btn" data-act="excel" data-dir="1">+</button>
+      </div>
+    </div>
+
+    <div class="activity" data-act="running">
+      <div class="activity-row">
+        <span class="activity-icon">🏃</span>
+        <span class="activity-name">Running</span>
+        <span class="activity-hours"><span id="runningHoursVal">0</span>h</span>
+      </div>
+      <div class="stepper">
+        <button class="step-btn" data-act="running" data-dir="-1">−</button>
+        <input type="range" min="0" max="8" step="1" value="0" id="runningHours" data-act="running" />
+        <button class="step-btn" data-act="running" data-dir="1">+</button>
+      </div>
+    </div>
+
+    <div class="activity" data-act="cross">
+      <div class="activity-row">
+        <span class="activity-icon">🏋️</span>
+        <span class="activity-name">Cross Training</span>
+        <span class="activity-hours"><span id="crossHoursVal">0</span>h</span>
+      </div>
+      <div class="stepper">
+        <button class="step-btn" data-act="cross" data-dir="-1">−</button>
+        <input type="range" min="0" max="8" step="1" value="0" id="crossHours" data-act="cross" />
+        <button class="step-btn" data-act="cross" data-dir="1">+</button>
+      </div>
+    </div>
+
+    <div class="activity" data-act="sleep">
+      <div class="activity-row">
+        <span class="activity-icon">🌙</span>
+        <span class="activity-name">Sleep</span>
+        <span class="activity-hours"><span id="sleepHoursVal">0</span>h</span>
+      </div>
+      <div class="stepper">
+        <button class="step-btn" data-act="sleep" data-dir="-1">−</button>
+        <input type="range" min="0" max="12" step="1" value="8" id="sleepHours" data-act="sleep" />
+        <button class="step-btn" data-act="sleep" data-dir="1">+</button>
+      </div>
+    </div>
+
+    <div class="activity" data-act="relax">
+      <div class="activity-row">
+        <span class="activity-icon">🎮</span>
+        <span class="activity-name">Relaxation</span>
+        <span class="activity-hours"><span id="relaxHoursVal">0</span>h</span>
+      </div>
+      <div class="stepper">
+        <button class="step-btn" data-act="relax" data-dir="-1">−</button>
+        <input type="range" min="0" max="12" step="1" value="0" id="relaxHours" data-act="relax" />
+        <button class="step-btn" data-act="relax" data-dir="1">+</button>
+      </div>
+    </div>
+
+    <button class="end-day-btn" id="endDayBtn">End Day ▶</button>
+  </section>
+
+  <!-- ===== Log ===== -->
+  <section class="log-section">
+    <h2>Log</h2>
+    <div id="log" class="log"></div>
+  </section>
+
+</div>
+
+<!-- ===== Modal: generic ===== -->
+<div id="modalOverlay" class="modal-overlay hidden">
+  <div class="modal" id="modal">
+    <button class="modal-close" id="modalClose">✕</button>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<script src="game.js"></script>
+</body>
+</html>
