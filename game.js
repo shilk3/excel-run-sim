@@ -237,11 +237,17 @@ function resolveDay() {
   }
 
   // ---- Energy ----
+  // How rested you feel today is driven mainly by *last night's* sleep, not
+  // a slowly-accumulating bank — otherwise a well-rested surplus can quietly
+  // absorb a bad night and Energy never visibly drops. Chronic sleep debt
+  // degrades how restorative sleep is; today's activity then spends down
+  // whatever that sleep gave you.
   const sleepQualityFactor = clamp(1 - Math.min(0.5, s.sleepDebt / 100), 0.5, 1);
-  const energyGain = sleepH * BAL.energyRestorePerSleepHour * sleepQualityFactor + relaxH * BAL.relaxEnergyRestore;
+  const energyFromSleep = clamp((sleepH / BAL.idealSleep) * 100, 0, 115) * sleepQualityFactor;
   const energySpend =
     excelH * BAL.energyDrainPerHour.excel + runH * BAL.energyDrainPerHour.running + crossH * BAL.energyDrainPerHour.cross;
-  s.energy = clamp(s.energy - energySpend + energyGain, 0, 100);
+  const relaxEnergyBonus = relaxH * BAL.relaxEnergyRestore;
+  s.energy = clamp(energyFromSleep - energySpend + relaxEnergyBonus, 0, 100);
 
   // ---- Sleep debt ----
   const sleepAppMult = u.sleepApp ? 0.75 : 1.0;
