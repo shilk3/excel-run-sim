@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "2.2.0";
+const APP_VERSION = "2.2.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1249,7 +1249,14 @@ function init() {
   }
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("sw.js").catch(() => {});
+    // updateViaCache: "none" stops the browser from serving a cached copy
+    // of sw.js itself when checking for updates; reg.update() forces that
+    // check immediately on every load instead of waiting on the browser's
+    // own (much lazier) update heuristic.
+    navigator.serviceWorker
+      .register("sw.js", { updateViaCache: "none" })
+      .then((reg) => reg.update())
+      .catch(() => {});
     // If a newer service worker takes over (a fresh deploy was installed),
     // reload once so the page's own HTML/JS is the new version too, instead
     // of new cached assets running against this tab's already-loaded code.

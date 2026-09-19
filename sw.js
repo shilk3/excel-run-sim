@@ -1,6 +1,6 @@
 // Bump this on every deploy that changes cached files — it's what makes the
 // browser notice this file changed and install a new service worker.
-const CACHE_NAME = "cellgrind-v2";
+const CACHE_NAME = "cellgrind-v3";
 const ASSETS = [
   "./",
   "index.html",
@@ -24,13 +24,16 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
-// Network-first: always serve the latest deployed files when online, so a
-// push to main shows up on next load instead of being masked by a stale
-// cache. The cache only kicks in offline, as a fallback.
+// Network-first, and *actually* bypassing the browser's ordinary HTTP
+// cache (not just our own Cache Storage) via { cache: "no-store" } — a
+// plain fetch() still honors GitHub Pages' Cache-Control headers and can
+// silently return a stale response from the browser's disk cache even
+// though this looks "network-first". no-store forces a real round trip.
+// Our own cache is only ever read as an offline fallback.
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   event.respondWith(
-    fetch(event.request)
+    fetch(event.request, { cache: "no-store" })
       .then((response) => {
         if (response && response.status === 200) {
           const clone = response.clone();
