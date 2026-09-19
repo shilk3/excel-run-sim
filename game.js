@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "2.0.0";
+const APP_VERSION = "2.1.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -38,6 +38,11 @@ const BAL = {
   roundIntervalDays: 7,
   playoffSize: 16,
   offseasonDays: 7,
+  // Missing the playoffs ends your season 4 rounds early compared to a
+  // Final run — give that time back as an explicit training camp instead
+  // of just a short generic break, so missing the cut isn't strictly worse
+  // for preparing next season than qualifying and getting knocked out fast.
+  trainingCampDays: 28,
   statCapBase: 70, // Excel Skill / Physical Health ceiling with zero relevant upgrades
   statCapPerLevel: 10, // + this much per Coach / Physio level (max 3 levels -> +30 -> 100)
 };
@@ -161,6 +166,7 @@ function freshState() {
     lastStandings: null,
     lastPlayerPosition: null,
     offseasonDays: BAL.offseasonDays,
+    offseasonReason: null, // "missed" | "playoffs" — set when entering offseason
     playoff: null, // { stage, currentRound, eliminated, champion, playerSeed }
     cash: 100,
     rank: 800,
@@ -227,6 +233,7 @@ function migrateSave(parsed) {
     parsed.lastStandings = null;
     parsed.lastPlayerPosition = null;
     parsed.offseasonDays = BAL.offseasonDays;
+    parsed.offseasonReason = null;
     parsed.playoff = null;
     parsed.schedule = generateSeasonSchedule(parsed.rank || 800);
   }
@@ -666,8 +673,9 @@ function processDayEnd() {
           phaseEvent = `🏆 Regular season complete! Finished #${playerPosition} of ${standings.length} — through to the playoffs as seed ${state.playoff.playerSeed}.`;
         } else {
           state.seasonPhase = "offseason";
-          state.offseasonDays = BAL.offseasonDays;
-          phaseEvent = `📋 Regular season complete. Finished #${playerPosition} of ${standings.length} — missed the top ${BAL.playoffSize} playoff cutoff.`;
+          state.offseasonDays = BAL.trainingCampDays;
+          state.offseasonReason = "missed";
+          phaseEvent = `📋 Regular season complete. Finished #${playerPosition} of ${standings.length} — missed the top ${BAL.playoffSize} playoff cutoff. ${BAL.trainingCampDays}-day training camp starts now to get ready for next season.`;
         }
       }
     }
@@ -683,6 +691,7 @@ function processDayEnd() {
       if (result.seasonOver) {
         state.seasonPhase = "offseason";
         state.offseasonDays = BAL.offseasonDays;
+        state.offseasonReason = "playoffs";
       }
     }
     return { matchResult, phaseEvent };
@@ -745,7 +754,8 @@ function getNextMatchInfo() {
   if (s.seasonPhase === "offseason") {
     const daysUntil = (s.offseasonDays || BAL.offseasonDays) - s.phaseDay;
     let outcome = "Season over";
-    if (s.playoff && s.playoff.champion) outcome = "🏆 Champion!";
+    if (s.offseasonReason === "missed") outcome = "Training camp";
+    else if (s.playoff && s.playoff.champion) outcome = "🏆 Champion!";
     else if (s.playoff && s.playoff.eliminated) outcome = "Eliminated";
     return { kind: "offseason", daysUntil, label: `${outcome} — Year ${s.year + 1} in ${daysUntil}d` };
   }
@@ -757,7 +767,9 @@ function phaseLabelText() {
   if (s.seasonPhase === "preseason") return `Preseason (Day ${s.phaseDay}/${BAL.preseasonDays})`;
   if (s.seasonPhase === "regular") return `Round ${Math.min(s.roundIndex + 1, BAL.seasonRounds)}/${BAL.seasonRounds}`;
   if (s.seasonPhase === "playoffs") return `Playoffs: ${PLAYOFF_ROUND_NAMES[s.playoff.stage]}`;
-  if (s.seasonPhase === "offseason") return "Offseason";
+  if (s.seasonPhase === "offseason") {
+    return s.offseasonReason === "missed" ? `Training Camp (Day ${s.phaseDay}/${s.offseasonDays})` : "Offseason";
+  }
   return "";
 }
 
@@ -1084,7 +1096,8 @@ function openHowTo() {
       <p><b>It's all connected:</b> poor sleep builds Sleep Debt, which wears down Physical Health even if you train well. Low Physical Health caps how much your Excel Training actually helps. Training hard without Relaxation builds Stress — hit 100 and you burn out, tanking your effectiveness until you rest.</p>
       <p>Overtraining physically (too much Exercise) risks injury, which locks out Exercise for several days.</p>
       <p><b>Stat ceilings:</b> Excel Skill and Physical Health cap at ${BAL.statCapBase} until you invest in the Coaching Shop — each level of Personal Coach raises your skill ceiling by ${BAL.statCapPerLevel}, each level of Sports Physio raises your health ceiling the same way. Maxing out at 100 in either stat requires buying every level.</p>
-      <p><b>The season:</b> a ${BAL.preseasonDays}-day preseason to train, then a ${BAL.seasonRounds}-round regular season — one match a week against a named rival, all scheduled in advance. Finish in the top ${BAL.playoffSize} of the ${BAL.seasonRounds + 1}-competitor league (you + your rivals) to reach the knockout playoffs. Lose a playoff match and you're out; win the Final and you're champion. Either way, a new season with a fresh set of rivals begins after a short offseason.</p>
+      <p><b>The season:</b> a ${BAL.preseasonDays}-day preseason to train, then a ${BAL.seasonRounds}-round regular season — one match a week against a named rival, all scheduled in advance. Finish in the top ${BAL.playoffSize} of the ${BAL.seasonRounds + 1}-competitor league (you + your rivals) to reach the knockout playoffs. Lose a playoff match and you're out; win the Final and you're champion.</p>
+      <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken, so missing the cut isn't a worse deal than making it and getting knocked out early. Either way, a new season with a fresh set of rivals begins once the year turns over.</p>
       <p>Cash and Rank carry across seasons — spend cash in the Coaching Shop any time.</p>
     </div>`;
   openModal(html);
