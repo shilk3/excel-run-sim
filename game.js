@@ -2,7 +2,7 @@
  * Single-file game engine: state, daily simulation, matches, shop, UI rendering.
  */
 
-const APP_VERSION = "1.3.0";
+const APP_VERSION = "1.4.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -10,8 +10,8 @@ const SAVE_KEY = "cellgrind_save_v1";
 /* ---------------------------------------------------------------------- */
 const BAL = {
   idealSleep: 8,
-  excelGainBase: 0.65,
-  exerciseGainBase: 1.15,
+  excelGainBase: 0.24,
+  exerciseGainBase: 0.6,
   softFatigueCap: 8, // hours per activity before in-day fatigue kicks in
   hardFatigueCap: 12,
   fatigueMultSoft: 0.6, // effectiveness for hours between soft and hard cap
@@ -222,7 +222,14 @@ function physSynergy(phys) {
 }
 
 function skillDiminish(excel) {
-  return clamp(1 - 0.6 * (excel / 100), 0.2, 1.0);
+  // A steep, accelerating falloff (not linear) so the last stretch to 100
+  // takes meaningfully longer than the climb from 0 to 80 — mastery should
+  // be a long tail, not a wall you hit in a couple of months.
+  return clamp(1 - 0.85 * Math.pow(excel / 100, 1.5), 0.12, 1.0);
+}
+
+function physDiminish(phys) {
+  return clamp(1 - 0.75 * Math.pow(phys / 100, 1.3), 0.18, 1.0);
 }
 
 function randInt(lo, hi) {
@@ -280,7 +287,7 @@ function resolveDay() {
 
   // ---- Physical health ----
   const physioMult = physioEff ? 1 + physioEff.exerciseBonus : 1.0;
-  const exerciseGain = effectiveHours(exerciseH) * BAL.exerciseGainBase * physioMult;
+  const exerciseGain = effectiveHours(exerciseH) * BAL.exerciseGainBase * physioMult * physDiminish(s.phys);
   const sleepDebtDecayFactor = nutritionistEff ? nutritionistEff.decayMult : 1.0;
   const physDecayFromSleep = s.sleepDebt * 0.045 * sleepDebtDecayFactor;
   const detrainMult = recoveryEff ? recoveryEff.detrainMult : 1.0;
@@ -447,6 +454,7 @@ function simulateMatch() {
     win,
     perf,
     opponentRating: Math.round(opponentRating),
+    winProb: Math.round(winProb * 100),
     ratingChange,
     cashReward,
   };
@@ -466,10 +474,12 @@ function renderTopbar() {
   $("cashVal").textContent = fmt(state.cash);
   $("rankVal").textContent = fmt(state.rank);
   const week = Math.floor((state.day - 1) / BAL.matchIntervalDays) + 1;
-  const phase = state.day <= BAL.matchIntervalDays ? "Preseason" : `Season Wk ${week}`;
+  $("phaseLabel").textContent = state.day <= BAL.matchIntervalDays ? "Preseason" : `Season Wk ${week}`;
+
   const daysToMatch = daysUntilNextMatch();
+  const opp = estimateOpponent();
   const matchText = daysToMatch === 0 ? "Match today!" : `Match in ${daysToMatch}d`;
-  $("phaseLabel").textContent = `${phase} · ${matchText}`;
+  $("matchCounter").textContent = `${matchText} · ${opp.label}`;
 }
 
 function renderStats() {
@@ -581,7 +591,7 @@ function showMatchModal(result) {
     html = `
       <div class="match-card">
         <div class="match-result ${result.win ? "win" : "loss"}">${result.win ? "VICTORY" : "DEFEAT"}</div>
-        <div class="match-sub">Opponent rating: ${result.opponentRating}</div>
+        <div class="match-sub">Opponent rating: ${result.opponentRating} · You had a ${result.winProb}% win chance</div>
         <div class="match-stats">
           <div><b>${fmt(result.perf)}</b>Performance</div>
           <div><b>${fmtSigned(result.ratingChange, 0)}</b>Rank</div>
