@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "2.1.0";
+const APP_VERSION = "2.2.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -718,6 +718,17 @@ function processDayEnd() {
   return { matchResult, phaseEvent };
 }
 
+// Qualitative read on a specific known opponent vs the player's current
+// rank — concrete now that the schedule/bracket tells us exactly who's
+// next, rather than a vague matchmaking estimate.
+function difficultyLabel(opponentRating, rank) {
+  const diff = opponentRating - rank;
+  if (diff <= -80) return "Favorable";
+  if (diff < 60) return "Even";
+  if (diff < 180) return "Tough";
+  return "Elite";
+}
+
 function getNextMatchInfo() {
   const s = state;
   if (s.seasonPhase === "preseason") {
@@ -729,12 +740,14 @@ function getNextMatchInfo() {
     const fixture = s.schedule[s.roundIndex];
     if (!fixture) return { kind: "regular-end", label: "Season wrapping up…" };
     const roundNum = s.roundIndex + 1;
+    const diff = difficultyLabel(fixture.rating, s.rank);
     return {
       kind: "fixture",
       daysUntil,
       opponentName: fixture.name,
       opponentRating: Math.round(fixture.rating),
-      label: daysUntil <= 0 ? `Round ${roundNum} today vs ${fixture.name}!` : `Round ${roundNum}/${BAL.seasonRounds} in ${daysUntil}d vs ${fixture.name}`,
+      difficulty: diff,
+      label: daysUntil <= 0 ? `Round ${roundNum} today vs ${fixture.name}! (${diff})` : `Round ${roundNum}/${BAL.seasonRounds} in ${daysUntil}d vs ${fixture.name} (${diff})`,
     };
   }
   if (s.seasonPhase === "playoffs") {
@@ -743,12 +756,14 @@ function getNextMatchInfo() {
     const idx = p.currentRound.findIndex((t) => t.isPlayer);
     const opp = idx >= 0 ? p.currentRound[idx % 2 === 0 ? idx + 1 : idx - 1] : null;
     const roundName = PLAYOFF_ROUND_NAMES[p.stage];
+    const diff = opp ? difficultyLabel(opp.rating, s.rank) : null;
     return {
       kind: "playoff",
       daysUntil,
       opponentName: opp ? opp.name : "?",
       opponentRating: opp ? Math.round(opp.rating) : null,
-      label: daysUntil <= 0 ? `${roundName} today vs ${opp ? opp.name : "?"}!` : `${roundName} in ${daysUntil}d vs ${opp ? opp.name : "?"}`,
+      difficulty: diff,
+      label: daysUntil <= 0 ? `${roundName} today vs ${opp ? opp.name : "?"}! (${diff})` : `${roundName} in ${daysUntil}d vs ${opp ? opp.name : "?"} (${diff})`,
     };
   }
   if (s.seasonPhase === "offseason") {
@@ -764,12 +779,10 @@ function getNextMatchInfo() {
 
 function phaseLabelText() {
   const s = state;
-  if (s.seasonPhase === "preseason") return `Preseason (Day ${s.phaseDay}/${BAL.preseasonDays})`;
-  if (s.seasonPhase === "regular") return `Round ${Math.min(s.roundIndex + 1, BAL.seasonRounds)}/${BAL.seasonRounds}`;
-  if (s.seasonPhase === "playoffs") return `Playoffs: ${PLAYOFF_ROUND_NAMES[s.playoff.stage]}`;
-  if (s.seasonPhase === "offseason") {
-    return s.offseasonReason === "missed" ? `Training Camp (Day ${s.phaseDay}/${s.offseasonDays})` : "Offseason";
-  }
+  if (s.seasonPhase === "preseason") return "Preseason";
+  if (s.seasonPhase === "regular") return "Regular Season";
+  if (s.seasonPhase === "playoffs") return "Playoffs";
+  if (s.seasonPhase === "offseason") return s.offseasonReason === "missed" ? "Training Camp" : "Offseason";
   return "";
 }
 
