@@ -1,21 +1,30 @@
 # Cell Grind — Excel Esports Manager
 
 A mobile-first simulation game: manage a rising Excel esports competitor. Every
-day has 24 hours — split them across Excel Training, Running, Cross Training,
-Sleep, and Relaxation. Everything is connected:
+day has 24 hours — split them across Excel Training, Exercise, Sleep, and
+Relaxation. Everything is connected:
 
 - **Excel Training** raises your Excel Skill, the core competitive stat.
-- **Running** and **Cross Training** raise Physical Health — but low Physical
-  Health caps how much your Excel Training actually helps.
+- **Exercise** raises Physical Health — but low Physical Health caps how much
+  your Excel Training actually helps.
 - **Sleep** restores Energy and pays down Sleep Debt. Skimp on sleep and
   Sleep Debt quietly wears down your Physical Health, even if you train hard.
 - **Relaxation** relieves Stress. Train hard with no downtime and Stress
   builds until you burn out, tanking your effectiveness until you rest.
-- Overtrain physically (too much Running + Cross Training) and you risk an
-  injury that locks out physical activities for several days.
+- Overtrain physically and you risk an injury that locks out Exercise for
+  several days.
+- Excel Skill and Physical Health cap at 70 until you invest match winnings
+  into the Coaching Shop — each upgrade level raises the relevant ceiling,
+  so maxing out at 100 takes real investment, not just time.
 
-Every 7 days you compete in a ranked match. Win to climb the rank ladder and
-earn prize money, then spend it in the Coaching Shop on permanent upgrades.
+**The season**: a 14-day preseason to train, then a 39-round regular season —
+one match a week against a named rival, the full schedule known in advance.
+Finish in the top 16 of the 40-competitor league (you + your rivals) to reach
+the knockout playoffs (Round of 16 → Quarterfinal → Semifinal → Final,
+single elimination). Lose a playoff match and you're out; win the Final and
+you're champion. Either way, a new season with a fresh set of rivals begins
+after a short offseason — Rank, Cash, stats, and Coaching Shop upgrades all
+carry over between years.
 
 ## Playing it on your iPhone
 

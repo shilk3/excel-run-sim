@@ -52,7 +52,16 @@ html, body {
 .topbar-left { display: flex; flex-direction: column; gap: 2px; }
 .brand { font-weight: 800; font-size: 18px; letter-spacing: 0.2px; }
 .day-counter { font-size: 12px; color: var(--text-dim); }
-.match-counter { font-size: 11px; color: var(--text-dim); opacity: 0.8; margin-top: 1px; }
+.match-counter {
+  font-size: 11px;
+  color: var(--text-dim);
+  opacity: 0.8;
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
 .topbar-right { display: flex; align-items: center; gap: 8px; }
 .chip {
   background: var(--bg-elev);
@@ -241,6 +250,7 @@ input[type="range"]::-webkit-slider-thumb {
 .log-entry.event-good { border-color: rgba(52, 208, 160, 0.4); }
 .log-entry.event-bad { border-color: rgba(255, 93, 93, 0.4); }
 .log-entry.event-match { border-color: rgba(255, 176, 32, 0.5); background: rgba(255, 176, 32, 0.06); }
+.log-entry.event-season { border-color: rgba(184, 146, 255, 0.5); background: rgba(184, 146, 255, 0.08); font-weight: 600; }
 
 /* ---------- Save toast ---------- */
 .save-toast {
@@ -380,6 +390,28 @@ input[type="range"]::-webkit-slider-thumb {
   font-weight: 800;
   margin-top: 6px;
 }
+
+.name-input {
+  width: 100%;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  color: var(--text);
+  font-size: 15px;
+  margin-bottom: 10px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.standings-list {
+  margin: 0;
+  padding-left: 22px;
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.7;
+}
+.standings-list li.standings-you { color: var(--excel); font-weight: 700; }
 .ghost-btn {
   width: 100%;
   padding: 12px;
