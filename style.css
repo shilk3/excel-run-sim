@@ -242,6 +242,38 @@ input[type="range"]::-webkit-slider-thumb {
 .log-entry.event-bad { border-color: rgba(255, 93, 93, 0.4); }
 .log-entry.event-match { border-color: rgba(255, 176, 32, 0.5); background: rgba(255, 176, 32, 0.06); }
 
+/* ---------- Save toast ---------- */
+.save-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(18px + var(--safe-bottom));
+  transform: translate(-50%, 12px);
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 10px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  z-index: 200;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  max-width: calc(100% - 32px);
+  text-align: center;
+}
+.save-toast.hidden { display: none; }
+.save-toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+.save-toast.toast-warn {
+  background: rgba(255, 93, 93, 0.15);
+  border-color: rgba(255, 93, 93, 0.5);
+  color: #ffb3b3;
+}
+
 /* ---------- Modal ---------- */
 .modal-overlay {
   position: fixed;

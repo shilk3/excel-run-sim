@@ -88,13 +88,28 @@ function freshState() {
   };
 }
 
+function storageAvailable() {
+  try {
+    const testKey = "__cellgrind_test__";
+    localStorage.setItem(testKey, "1");
+    localStorage.removeItem(testKey);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+const STORAGE_OK = storageAvailable();
+let lastLoadedFromSave = false;
 let state = loadState();
 
 function loadState() {
+  if (!STORAGE_OK) return freshState();
   try {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return freshState();
     const parsed = JSON.parse(raw);
+    lastLoadedFromSave = true;
     return Object.assign(freshState(), parsed);
   } catch (e) {
     return freshState();
@@ -102,10 +117,12 @@ function loadState() {
 }
 
 function saveState() {
+  if (!STORAGE_OK) return false;
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(state));
+    return true;
   } catch (e) {
-    /* storage unavailable — game still playable this session */
+    return false;
   }
 }
 
@@ -404,6 +421,20 @@ function renderFullLog() {
   state.logEntries.slice(-200).forEach((e) => appendLog(e.html, e.cls));
 }
 
+let saveToastTimer = null;
+function showSaveToast(saved) {
+  const toast = $("saveToast");
+  if (!toast) return;
+  toast.textContent = saved ? "✓ Progress saved to this device" : "⚠️ Could not save — progress may be lost";
+  toast.classList.toggle("toast-warn", !saved);
+  toast.classList.remove("hidden");
+  toast.classList.add("show");
+  clearTimeout(saveToastTimer);
+  saveToastTimer = setTimeout(() => {
+    toast.classList.remove("show");
+  }, saved ? 1800 : 4000);
+}
+
 /* ---------------------------------------------------------------------- */
 /* Modal helpers                                                          */
 /* ---------------------------------------------------------------------- */
@@ -599,7 +630,8 @@ function endDay() {
   }
 
   state.day += 1;
-  saveState();
+  const saved = saveState();
+  showSaveToast(saved);
 
   renderTopbar();
   renderStats();
@@ -659,6 +691,15 @@ function renderAll() {
     };
     state.logEntries.push(welcome);
     appendLog(welcome.html, welcome.cls);
+  } else if (lastLoadedFromSave) {
+    appendLog(`Welcome back — resumed from Day ${state.day}.`, "event-good");
+  }
+
+  if (!STORAGE_OK) {
+    appendLog(
+      "⚠️ This browser isn't allowing saves (private/incognito mode, or storage is blocked). You can still play, but progress won't persist after you close this tab.",
+      "event-bad"
+    );
   }
 }
 
