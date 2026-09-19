@@ -2,7 +2,7 @@
  * Single-file game engine: state, daily simulation, matches, shop, UI rendering.
  */
 
-const APP_VERSION = "1.2.0";
+const APP_VERSION = "1.3.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -34,38 +34,82 @@ const BAL = {
   matchIntervalDays: 7,
 };
 
+// Each upgrade has up to 3 purchasable levels. state.upgrades[key] stores
+// the current level (0 = not purchased). Buying goes 0->1->2->3 in order;
+// each level's fields describe that level's total (not additive) effect.
 const UPGRADES = {
   coach: {
     name: "Personal Coach",
     icon: "🧑‍🏫",
-    desc: "+20% Excel training gains",
-    cost: 500,
+    levels: [
+      { cost: 300, bonus: 0.1, desc: "+10% Excel training gains" },
+      { cost: 650, bonus: 0.2, desc: "+20% Excel training gains" },
+      { cost: 1200, bonus: 0.35, desc: "+35% Excel training gains" },
+    ],
   },
   physio: {
     name: "Sports Physio",
     icon: "🩺",
-    desc: "-35% injury risk, +10% gains from Exercise",
-    cost: 400,
+    levels: [
+      { cost: 300, injuryReduceMult: 0.8, exerciseBonus: 0.05, desc: "-20% injury risk, +5% Exercise gains" },
+      { cost: 650, injuryReduceMult: 0.65, exerciseBonus: 0.1, desc: "-35% injury risk, +10% Exercise gains" },
+      { cost: 1200, injuryReduceMult: 0.5, exerciseBonus: 0.18, desc: "-50% injury risk, +18% Exercise gains" },
+    ],
   },
   sleepApp: {
     name: "Sleep Coach App",
     icon: "📱",
-    desc: "-25% sleep debt build-up, better energy recovery",
-    cost: 350,
+    levels: [
+      { cost: 250, sleepDebtMult: 0.85, desc: "-15% Sleep Debt build-up" },
+      { cost: 550, sleepDebtMult: 0.75, desc: "-25% Sleep Debt build-up" },
+      { cost: 1000, sleepDebtMult: 0.6, desc: "-40% Sleep Debt build-up" },
+    ],
   },
   nutritionist: {
     name: "Nutritionist",
     icon: "🥗",
-    desc: "-25% physical decay caused by sleep debt",
-    cost: 450,
+    levels: [
+      { cost: 300, decayMult: 0.85, desc: "-15% physical decay from Sleep Debt" },
+      { cost: 650, decayMult: 0.75, desc: "-25% physical decay from Sleep Debt" },
+      { cost: 1150, decayMult: 0.6, desc: "-40% physical decay from Sleep Debt" },
+    ],
   },
   meditation: {
     name: "Meditation Coach",
     icon: "🧘",
-    desc: "+40% stress relief from Relaxation",
-    cost: 300,
+    levels: [
+      { cost: 200, reliefMult: 1.2, desc: "+20% stress relief from Relaxation" },
+      { cost: 450, reliefMult: 1.4, desc: "+40% stress relief from Relaxation" },
+      { cost: 850, reliefMult: 1.65, desc: "+65% stress relief from Relaxation" },
+    ],
+  },
+  recovery: {
+    name: "Recovery Program",
+    icon: "🧊",
+    levels: [
+      { cost: 350, injuryDaysReduce: 1, detrainMult: 0.7, desc: "-1 day injury duration, -30% detraining" },
+      { cost: 750, injuryDaysReduce: 2, detrainMult: 0.45, desc: "-2 days injury duration, -55% detraining" },
+      { cost: 1400, injuryDaysReduce: 3, detrainMult: 0.2, desc: "-3 days injury duration, -80% detraining" },
+    ],
+  },
+  manager: {
+    name: "Team Manager",
+    icon: "💼",
+    levels: [
+      { cost: 400, rankLossMult: 0.9, cashBonusMult: 1.0, desc: "-10% rank lost on defeat" },
+      { cost: 800, rankLossMult: 0.8, cashBonusMult: 1.05, desc: "-20% rank lost on defeat, +5% prize money" },
+      { cost: 1500, rankLossMult: 0.65, cashBonusMult: 1.1, desc: "-35% rank lost on defeat, +10% prize money" },
+    ],
   },
 };
+
+function upgradeLevel(key) {
+  return state.upgrades[key] || 0;
+}
+function upgradeEffect(key) {
+  const lvl = upgradeLevel(key);
+  return lvl > 0 ? UPGRADES[key].levels[lvl - 1] : null;
+}
 
 /* ---------------------------------------------------------------------- */
 /* State                                                                  */
@@ -82,7 +126,7 @@ function freshState() {
     allocation: { excel: 4, exercise: 1, sleep: 8, relax: 2 },
     injury: { active: false, daysLeft: 0 },
     burnout: { active: false, daysLeft: 0 },
-    upgrades: { coach: false, physio: false, sleepApp: false, nutritionist: false, meditation: false },
+    upgrades: { coach: 0, physio: 0, sleepApp: 0, nutritionist: 0, meditation: 0, recovery: 0, manager: 0 },
     logEntries: [],
   };
 }
@@ -111,6 +155,20 @@ function migrateSave(parsed) {
     delete alloc.running;
     delete alloc.cross;
   }
+
+  // v1.3.0 turned upgrades from owned:boolean into owned:level (0-3), and
+  // added two new upgrade types. Rebuild upgrades from scratch so old
+  // booleans convert to level 1 and any new/missing keys default to 0.
+  const oldUpgrades = parsed.upgrades || {};
+  const normalizedUpgrades = {};
+  Object.keys(UPGRADES).forEach((key) => {
+    const v = oldUpgrades[key];
+    if (typeof v === "boolean") normalizedUpgrades[key] = v ? 1 : 0;
+    else if (typeof v === "number") normalizedUpgrades[key] = v;
+    else normalizedUpgrades[key] = 0;
+  });
+  parsed.upgrades = normalizedUpgrades;
+
   return parsed;
 }
 
@@ -186,7 +244,12 @@ function fmtSigned(n, decimals = 1) {
 function resolveDay() {
   const a = state.allocation;
   const s = state.stats;
-  const u = state.upgrades;
+  const coachEff = upgradeEffect("coach");
+  const physioEff = upgradeEffect("physio");
+  const sleepAppEff = upgradeEffect("sleepApp");
+  const nutritionistEff = upgradeEffect("nutritionist");
+  const meditationEff = upgradeEffect("meditation");
+  const recoveryEff = upgradeEffect("recovery");
   const events = [];
 
   // ---- Injury / burnout lockouts: enforce before computing effects ----
@@ -200,7 +263,7 @@ function resolveDay() {
   const physMult = physSynergy(s.phys);
 
   // ---- Excel skill ----
-  const coachMult = u.coach ? 1.2 : 1.0;
+  const coachMult = coachEff ? 1 + coachEff.bonus : 1.0;
   const excelEff = effectiveHours(excelH);
   const excelGain = excelEff * BAL.excelGainBase * focusMult * physMult * skillDiminish(s.excel) * coachMult;
   const excelRust = excelH === 0 ? Math.min(0.15, s.excel * 0.003) : 0;
@@ -216,11 +279,12 @@ function resolveDay() {
   }
 
   // ---- Physical health ----
-  const physioMult = u.physio ? 1.1 : 1.0;
+  const physioMult = physioEff ? 1 + physioEff.exerciseBonus : 1.0;
   const exerciseGain = effectiveHours(exerciseH) * BAL.exerciseGainBase * physioMult;
-  const sleepDebtDecayFactor = u.nutritionist ? 0.75 : 1.0;
+  const sleepDebtDecayFactor = nutritionistEff ? nutritionistEff.decayMult : 1.0;
   const physDecayFromSleep = s.sleepDebt * 0.045 * sleepDebtDecayFactor;
-  const detrain = exerciseH < BAL.detrainThresholdHours ? BAL.detrainDecay : 0;
+  const detrainMult = recoveryEff ? recoveryEff.detrainMult : 1.0;
+  const detrain = exerciseH < BAL.detrainThresholdHours ? BAL.detrainDecay * detrainMult : 0;
   const physDelta = exerciseGain - physDecayFromSleep - detrain;
   s.phys = clamp(s.phys + physDelta, 0, 100);
   if (exerciseH > 0) {
@@ -232,12 +296,13 @@ function resolveDay() {
 
   // ---- Injury roll (only if not already injured) ----
   if (!state.injury.active && exerciseH > BAL.overtrainThreshold) {
-    const injuryReduceMult = u.physio ? 0.65 : 1.0;
+    const injuryReduceMult = physioEff ? physioEff.injuryReduceMult : 1.0;
     const excess = exerciseH - BAL.overtrainThreshold;
     const chance = clamp(excess * BAL.injuryChancePerExcessHour * injuryReduceMult, 0, 0.6);
     if (Math.random() < chance) {
       const loss = randInt(BAL.injuryPhysLoss[0], BAL.injuryPhysLoss[1]);
-      const days = randInt(BAL.injuryDaysRange[0], BAL.injuryDaysRange[1]);
+      const daysReduce = recoveryEff ? recoveryEff.injuryDaysReduce : 0;
+      const days = Math.max(1, randInt(BAL.injuryDaysRange[0], BAL.injuryDaysRange[1]) - daysReduce);
       s.phys = clamp(s.phys - loss, 0, 100);
       state.injury = { active: true, daysLeft: days };
       events.push({ type: "bad", text: `🤕 Overtraining injury! -${loss} physical health. Exercise disabled for ${days} days.` });
@@ -257,7 +322,7 @@ function resolveDay() {
   s.energy = clamp(energyFromSleep - energySpend + relaxEnergyBonus, 0, 100);
 
   // ---- Sleep debt ----
-  const sleepAppMult = u.sleepApp ? 0.75 : 1.0;
+  const sleepAppMult = sleepAppEff ? sleepAppEff.sleepDebtMult : 1.0;
   let sleepDebtDelta;
   if (sleepH < BAL.idealSleep) {
     sleepDebtDelta = (BAL.idealSleep - sleepH) * 1.3 * sleepAppMult;
@@ -272,7 +337,7 @@ function resolveDay() {
   }
 
   // ---- Stress ----
-  const meditationMult = u.meditation ? 1.4 : 1.0;
+  const meditationMult = meditationEff ? meditationEff.reliefMult : 1.0;
   const stressLoad = (excelH + exerciseH) * BAL.stressLoadPerHour;
   const stressRelief = relaxH * BAL.relaxStressRelief * meditationMult + (sleepH >= BAL.idealSleep ? BAL.sleepDebtGoodBonus : 0);
   const stressFromDebt = s.sleepDebt * 0.1;
@@ -314,27 +379,65 @@ function performanceScore() {
   return clamp(s.excel * 0.55 + s.phys * 0.25 + (100 - s.stress) * 0.15 + (100 - s.sleepDebt) * 0.05, 0, 100);
 }
 
+// The ladder gets tougher the higher you climb, independent of your own
+// rating swings — every 150 rating above the starting 800, opponents skew
+// systematically stronger. This is what stops "cap every stat once, then
+// win forever": a maxed-out performance score gives a strong but bounded
+// edge (see matchRating below), while the opposition keeps getting harder,
+// so sustained results — not a one-time stat cap — are what keeps you
+// winning.
+function tierToughness(rank) {
+  return Math.floor(Math.max(0, rank - 800) / 150) * 12;
+}
+
+function estimateOpponent() {
+  const toughness = tierToughness(state.rank);
+  const mid = state.rank + toughness;
+  const low = clamp(mid - 130, 400, 5000);
+  const high = clamp(mid + 150, 400, 5000);
+  let label;
+  if (toughness === 0) label = "Even matchup";
+  else if (toughness < 40) label = "Competitive";
+  else if (toughness < 90) label = "Tough matchup";
+  else label = "Elite competition";
+  return { low, high, label };
+}
+
+function daysUntilNextMatch() {
+  const next = Math.ceil(state.day / BAL.matchIntervalDays) * BAL.matchIntervalDays;
+  return next - state.day;
+}
+
 function simulateMatch() {
+  const managerEff = upgradeEffect("manager");
+  const rankLossMult = managerEff ? managerEff.rankLossMult : 1.0;
+  const cashBonusMult = managerEff ? managerEff.cashBonusMult : 1.0;
+
   if (state.injury.active) {
-    state.rank = Math.max(400, state.rank - 10);
+    const loss = Math.round(10 * rankLossMult);
+    state.rank = Math.max(400, state.rank - loss);
     return {
       forfeit: true,
-      text: `You're injured and had to forfeit this week's match. Rank -10.`,
+      text: `You're injured and had to forfeit this week's match. Rank -${loss}.`,
     };
   }
 
   const perf = performanceScore();
-  const opponentRating = clamp(state.rank + randInt(-150, 150), 400, 5000);
-  const matchRating = state.rank + (perf - 70) * 8;
+  const opponentRating = clamp(state.rank + tierToughness(state.rank) + randInt(-130, 150), 400, 5000);
+  // Perfect performance (100) gives a strong but no longer overwhelming form
+  // bonus — enough to matter, not enough to guarantee a win against a tough
+  // roll once the ladder has gotten hard.
+  const matchRating = state.rank + (perf - 70) * 3;
   const winProb = 1 / (1 + Math.pow(10, (opponentRating - matchRating) / 400));
   const win = Math.random() < winProb;
   const K = 24;
   const actual = win ? 1 : 0;
-  const ratingChange = Math.round(K * (actual - winProb));
+  let ratingChange = Math.round(K * (actual - winProb));
+  if (ratingChange < 0) ratingChange = Math.round(ratingChange * rankLossMult);
   state.rank = clamp(state.rank + ratingChange, 400, 5000);
   state.peakRank = Math.max(state.peakRank, state.rank);
 
-  const cashReward = win ? Math.round(150 + state.rank / 10) : 40;
+  const cashReward = Math.round((win ? 150 + state.rank / 10 : 40) * cashBonusMult);
   state.cash += cashReward;
   if (win) state.wins += 1;
   else state.losses += 1;
@@ -363,7 +466,10 @@ function renderTopbar() {
   $("cashVal").textContent = fmt(state.cash);
   $("rankVal").textContent = fmt(state.rank);
   const week = Math.floor((state.day - 1) / BAL.matchIntervalDays) + 1;
-  $("phaseLabel").textContent = state.day <= BAL.matchIntervalDays ? "Preseason" : `Season Wk ${week}`;
+  const phase = state.day <= BAL.matchIntervalDays ? "Preseason" : `Season Wk ${week}`;
+  const daysToMatch = daysUntilNextMatch();
+  const matchText = daysToMatch === 0 ? "Match today!" : `Match in ${daysToMatch}d`;
+  $("phaseLabel").textContent = `${phase} · ${matchText}`;
 }
 
 function renderStats() {
@@ -495,17 +601,22 @@ function showMatchModal(result) {
 function shopHtml() {
   const items = Object.entries(UPGRADES)
     .map(([key, u]) => {
-      const owned = state.upgrades[key];
-      const canAfford = state.cash >= u.cost;
+      const lvl = upgradeLevel(key);
+      const maxLvl = u.levels.length;
+      const isMax = lvl >= maxLvl;
+      const next = isMax ? null : u.levels[lvl];
+      const current = lvl > 0 ? u.levels[lvl - 1] : null;
+      const canAfford = next && state.cash >= next.cost;
+      const desc = isMax ? `${current.desc} — MAX` : next.desc + (current ? ` <span class="shop-item-current">(now: ${current.desc})</span>` : "");
       return `
       <div class="shop-item">
         <div class="shop-item-icon">${u.icon}</div>
         <div class="shop-item-info">
-          <div class="shop-item-name">${u.name}</div>
-          <div class="shop-item-desc">${u.desc}</div>
+          <div class="shop-item-name">${u.name}${lvl > 0 ? ` <span class="shop-item-level">Lv.${lvl}</span>` : ""}</div>
+          <div class="shop-item-desc">${desc}</div>
         </div>
-        <button class="shop-item-btn ${owned ? "owned" : ""}" data-upgrade="${key}" ${owned || !canAfford ? "disabled" : ""}>
-          ${owned ? "Owned" : "$" + u.cost}
+        <button class="shop-item-btn ${isMax ? "owned" : ""}" data-upgrade="${key}" ${isMax || !canAfford ? "disabled" : ""}>
+          ${isMax ? "MAX" : "$" + next.cost}
         </button>
       </div>`;
     })
@@ -524,9 +635,12 @@ function openShop() {
     btn.addEventListener("click", () => {
       const key = btn.getAttribute("data-upgrade");
       const u = UPGRADES[key];
-      if (state.upgrades[key] || state.cash < u.cost) return;
-      state.cash -= u.cost;
-      state.upgrades[key] = true;
+      const lvl = upgradeLevel(key);
+      if (lvl >= u.levels.length) return;
+      const next = u.levels[lvl];
+      if (state.cash < next.cost) return;
+      state.cash -= next.cost;
+      state.upgrades[key] = lvl + 1;
       saveState();
       openShop();
       renderTopbar();
@@ -560,8 +674,17 @@ function openMenu() {
 }
 
 function openCareer() {
+  const days = daysUntilNextMatch();
+  const opp = estimateOpponent();
+  const nextMatchDay = state.day + days;
   const html = `
     <h2>Career Stats</h2>
+    <div class="modal-section">
+      <h3>Next Match</h3>
+      <p>${days === 0 ? "Today, after you end this day" : `In ${days} day${days === 1 ? "" : "s"}`} (Day ${nextMatchDay})<br>
+      Expected opponent rating: ~${fmt(opp.low)}–${fmt(opp.high)} — <b>${opp.label}</b><br>
+      Your performance score right now: ${fmt(performanceScore())} / 100</p>
+    </div>
     <div class="modal-section">
       <h3>Record</h3>
       <p>Day ${state.day} · Rank ${fmt(state.rank)} (peak ${fmt(state.peakRank)})<br>
@@ -592,7 +715,8 @@ function openHowTo() {
       </p>
       <p><b>It's all connected:</b> poor sleep builds Sleep Debt, which wears down Physical Health even if you train well. Low Physical Health caps how much your Excel Training actually helps. Training hard without Relaxation builds Stress — hit 100 and you burn out, tanking your effectiveness until you rest.</p>
       <p>Overtraining physically (too much Exercise) risks injury, which locks out Exercise for several days.</p>
-      <p>Every ${BAL.matchIntervalDays} days you compete in a ranked match. Win to climb the rank ladder and earn prize money — spend it in the Coaching Shop on permanent upgrades.</p>
+      <p>Every ${BAL.matchIntervalDays} days you compete in a ranked match. Win to climb the rank ladder and earn prize money — spend it in the Coaching Shop on upgrades, each with up to 3 levels. Tap your rank in the top bar any time to preview your next opponent.</p>
+      <p>The ladder gets tougher the higher you climb — opponents get systematically stronger as your rank rises, so capping your stats once isn't the finish line. Staying on top takes sustained good management and shop investment.</p>
     </div>`;
   openModal(html);
 }

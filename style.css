@@ -343,7 +343,18 @@ input[type="range"]::-webkit-slider-thumb {
 .shop-item-icon { font-size: 22px; }
 .shop-item-info { flex: 1; }
 .shop-item-name { font-weight: 700; font-size: 14px; }
+.shop-item-level {
+  display: inline-block;
+  background: rgba(52, 208, 160, 0.15);
+  color: var(--excel);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 800;
+  vertical-align: middle;
+}
 .shop-item-desc { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+.shop-item-current { opacity: 0.75; }
 .shop-item-btn {
   border: none;
   border-radius: 8px;
