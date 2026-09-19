@@ -1,4 +1,6 @@
-const CACHE_NAME = "cellgrind-v1";
+// Bump this on every deploy that changes cached files — it's what makes the
+// browser notice this file changed and install a new service worker.
+const CACHE_NAME = "cellgrind-v2";
 const ASSETS = [
   "./",
   "index.html",
@@ -22,20 +24,20 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
+// Network-first: always serve the latest deployed files when online, so a
+// push to main shows up on next load instead of being masked by a stale
+// cache. The cache only kicks in offline, as a fallback.
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      const network = fetch(event.request)
-        .then((response) => {
-          if (response && response.status === 200) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-          }
-          return response;
-        })
-        .catch(() => cached);
-      return cached || network;
-    })
+    fetch(event.request)
+      .then((response) => {
+        if (response && response.status === 200) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        }
+        return response;
+      })
+      .catch(() => caches.match(event.request))
   );
 });

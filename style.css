@@ -43,7 +43,7 @@ html, body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: calc(12px + var(--safe-top)) 16px 12px;
+  padding: calc(8px + var(--safe-top)) 16px 8px;
   position: sticky;
   top: 0;
   background: linear-gradient(180deg, var(--bg) 80%, transparent);
@@ -77,18 +77,18 @@ html, body {
 .stats {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 4px 16px 12px;
+  gap: 6px;
+  padding: 2px 16px 8px;
 }
 .stat-label {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-dim);
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
-.stat-icon { font-size: 14px; }
+.stat-icon { font-size: 13px; }
 .stat-val {
   margin-left: auto;
   font-weight: 700;
@@ -96,7 +96,7 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 .bar {
-  height: 9px;
+  height: 7px;
   border-radius: 999px;
   background: var(--bg-elev-2);
   overflow: hidden;
@@ -114,8 +114,8 @@ html, body {
 .bar-fill.stress { background: var(--stress); }
 
 .warning-banner {
-  margin: 0 16px 12px;
-  padding: 10px 12px;
+  margin: 0 16px 8px;
+  padding: 8px 12px;
   border-radius: var(--radius);
   background: rgba(255, 93, 93, 0.12);
   border: 1px solid rgba(255, 93, 93, 0.4);
@@ -131,27 +131,27 @@ html, body {
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  margin: 0 16px 16px;
-  padding: 14px 14px 16px;
+  margin: 0 16px 12px;
+  padding: 12px 12px 12px;
 }
 .planner-header {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
 }
 .planner-header h2 { font-size: 15px; margin: 0; }
 .hours-left { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .hours-left.over { color: var(--danger); font-weight: 700; }
 
-.activity { padding: 8px 0; border-top: 1px solid var(--border); }
+.activity { padding: 6px 0; border-top: 1px solid var(--border); }
 .activity:first-of-type { border-top: none; }
 .activity-row {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 14px;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 .activity-icon { font-size: 16px; }
 .activity-name { font-weight: 600; }
@@ -195,15 +195,14 @@ input[type="range"]::-webkit-slider-thumb {
   box-shadow: 0 0 0 1px var(--accent);
 }
 .activity[data-act="excel"] input[type="range"]::-webkit-slider-thumb { background: var(--excel); box-shadow: 0 0 0 1px var(--excel); }
-.activity[data-act="running"] input[type="range"]::-webkit-slider-thumb,
-.activity[data-act="cross"] input[type="range"]::-webkit-slider-thumb { background: var(--phys); box-shadow: 0 0 0 1px var(--phys); }
+.activity[data-act="exercise"] input[type="range"]::-webkit-slider-thumb { background: var(--phys); box-shadow: 0 0 0 1px var(--phys); }
 .activity[data-act="sleep"] input[type="range"]::-webkit-slider-thumb { background: var(--sleepDebt); box-shadow: 0 0 0 1px var(--sleepDebt); }
 .activity[data-act="relax"] input[type="range"]::-webkit-slider-thumb { background: var(--energy); box-shadow: 0 0 0 1px var(--energy); }
 
 .end-day-btn {
   width: 100%;
-  margin-top: 14px;
-  padding: 14px;
+  margin-top: 10px;
+  padding: 12px;
   border-radius: 12px;
   border: none;
   background: var(--accent);
@@ -392,6 +391,13 @@ input[type="range"]::-webkit-slider-thumb {
 }
 .menu-row:first-of-type { border-top: none; }
 .menu-row span.arrow { color: var(--text-dim); }
+
+.version-tag {
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 14px;
+}
 
 @media (min-width: 560px) {
   #app { border-left: 1px solid var(--border); border-right: 1px solid var(--border); }

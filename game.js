@@ -2,6 +2,7 @@
  * Single-file game engine: state, daily simulation, matches, shop, UI rendering.
  */
 
+const APP_VERSION = "1.2.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -10,27 +11,25 @@ const SAVE_KEY = "cellgrind_save_v1";
 const BAL = {
   idealSleep: 8,
   excelGainBase: 0.65,
-  runGainBase: 1.3,
-  crossGainBase: 1.0,
-  crossInjuryRelief: 0.4, // cross training counts less toward injury risk than running
+  exerciseGainBase: 1.15,
   softFatigueCap: 8, // hours per activity before in-day fatigue kicks in
   hardFatigueCap: 12,
   fatigueMultSoft: 0.6, // effectiveness for hours between soft and hard cap
   fatigueMultHard: 0.3, // effectiveness for hours beyond hard cap
-  energyDrainPerHour: { excel: 1.0, running: 1.4, cross: 1.25 },
+  energyDrainPerHour: { excel: 1.0, exercise: 1.3 },
   energyRestorePerSleepHour: 10.5,
   relaxEnergyRestore: 1.2,
   relaxStressRelief: 2.4,
   stressLoadPerHour: 0.85,
   sleepDebtGoodBonus: 3, // stress relief when sleepHours >= ideal
-  overtrainThreshold: 10, // combined running+cross hours before injury risk starts
+  overtrainThreshold: 10, // exercise hours before injury risk starts
   injuryChancePerExcessHour: 0.045,
   injuryPhysLoss: [15, 25],
   injuryDaysRange: [3, 5],
   burnoutStressThreshold: 100,
   burnoutRecoverThreshold: 65,
   burnoutEffectivenessMult: 0.2,
-  detrainThresholdHours: 1, // running+cross below this triggers slow detraining
+  detrainThresholdHours: 1, // exercise hours below this triggers slow detraining
   detrainDecay: 0.35,
   matchIntervalDays: 7,
 };
@@ -45,7 +44,7 @@ const UPGRADES = {
   physio: {
     name: "Sports Physio",
     icon: "🩺",
-    desc: "-35% injury risk, +10% gains from Running & Cross Training",
+    desc: "-35% injury risk, +10% gains from Exercise",
     cost: 400,
   },
   sleepApp: {
@@ -80,7 +79,7 @@ function freshState() {
     wins: 0,
     losses: 0,
     stats: { excel: 8, phys: 65, energy: 80, sleepDebt: 0, stress: 8 },
-    allocation: { excel: 4, running: 1, cross: 0, sleep: 8, relax: 2 },
+    allocation: { excel: 4, exercise: 1, sleep: 8, relax: 2 },
     injury: { active: false, daysLeft: 0 },
     burnout: { active: false, daysLeft: 0 },
     upgrades: { coach: false, physio: false, sleepApp: false, nutritionist: false, meditation: false },
@@ -103,12 +102,24 @@ const STORAGE_OK = storageAvailable();
 let lastLoadedFromSave = false;
 let state = loadState();
 
+function migrateSave(parsed) {
+  // v1.2.0 merged the separate Running/Cross Training sliders into one
+  // Exercise slider. Old saves still have { running, cross } instead.
+  const alloc = parsed.allocation;
+  if (alloc && alloc.exercise === undefined && (alloc.running !== undefined || alloc.cross !== undefined)) {
+    alloc.exercise = clamp((alloc.running || 0) + (alloc.cross || 0), 0, 12);
+    delete alloc.running;
+    delete alloc.cross;
+  }
+  return parsed;
+}
+
 function loadState() {
   if (!STORAGE_OK) return freshState();
   try {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return freshState();
-    const parsed = JSON.parse(raw);
+    const parsed = migrateSave(JSON.parse(raw));
     lastLoadedFromSave = true;
     return Object.assign(freshState(), parsed);
   } catch (e) {
@@ -180,8 +191,7 @@ function resolveDay() {
 
   // ---- Injury / burnout lockouts: enforce before computing effects ----
   let excelH = a.excel;
-  let runH = state.injury.active ? 0 : a.running;
-  let crossH = state.injury.active ? 0 : a.cross;
+  let exerciseH = state.injury.active ? 0 : a.exercise;
   const sleepH = a.sleep;
   const relaxH = a.relax;
 
@@ -207,32 +217,30 @@ function resolveDay() {
 
   // ---- Physical health ----
   const physioMult = u.physio ? 1.1 : 1.0;
-  const runGain = effectiveHours(runH) * BAL.runGainBase * physioMult;
-  const crossGain = effectiveHours(crossH) * BAL.crossGainBase * physioMult;
+  const exerciseGain = effectiveHours(exerciseH) * BAL.exerciseGainBase * physioMult;
   const sleepDebtDecayFactor = u.nutritionist ? 0.75 : 1.0;
   const physDecayFromSleep = s.sleepDebt * 0.045 * sleepDebtDecayFactor;
-  const combinedTrainHours = runH + crossH;
-  const detrain = combinedTrainHours < BAL.detrainThresholdHours ? BAL.detrainDecay : 0;
-  const physDelta = runGain + crossGain - physDecayFromSleep - detrain;
+  const detrain = exerciseH < BAL.detrainThresholdHours ? BAL.detrainDecay : 0;
+  const physDelta = exerciseGain - physDecayFromSleep - detrain;
   s.phys = clamp(s.phys + physDelta, 0, 100);
-  if (runH > 0 || crossH > 0) {
-    events.push({ type: physDelta > 0 ? "good" : "neutral", text: `🏃 Running ${runH}h / 🏋️ Cross ${crossH}h: ${fmtSigned(physDelta)} physical health` });
+  if (exerciseH > 0) {
+    events.push({ type: physDelta > 0 ? "good" : "neutral", text: `🏃 Exercise (${exerciseH}h): ${fmtSigned(physDelta)} physical health` });
   }
   if (physDecayFromSleep > 1) {
     events.push({ type: "bad", text: `🌙 Poor sleep is wearing down your body (${fmtSigned(-physDecayFromSleep)} health from sleep debt)` });
   }
 
   // ---- Injury roll (only if not already injured) ----
-  if (!state.injury.active && combinedTrainHours > BAL.overtrainThreshold) {
+  if (!state.injury.active && exerciseH > BAL.overtrainThreshold) {
     const injuryReduceMult = u.physio ? 0.65 : 1.0;
-    const excess = combinedTrainHours - BAL.overtrainThreshold;
+    const excess = exerciseH - BAL.overtrainThreshold;
     const chance = clamp(excess * BAL.injuryChancePerExcessHour * injuryReduceMult, 0, 0.6);
     if (Math.random() < chance) {
       const loss = randInt(BAL.injuryPhysLoss[0], BAL.injuryPhysLoss[1]);
       const days = randInt(BAL.injuryDaysRange[0], BAL.injuryDaysRange[1]);
       s.phys = clamp(s.phys - loss, 0, 100);
       state.injury = { active: true, daysLeft: days };
-      events.push({ type: "bad", text: `🤕 Overtraining injury! -${loss} physical health. Running & Cross Training disabled for ${days} days.` });
+      events.push({ type: "bad", text: `🤕 Overtraining injury! -${loss} physical health. Exercise disabled for ${days} days.` });
     }
   }
 
@@ -244,8 +252,7 @@ function resolveDay() {
   // whatever that sleep gave you.
   const sleepQualityFactor = clamp(1 - Math.min(0.5, s.sleepDebt / 100), 0.5, 1);
   const energyFromSleep = clamp((sleepH / BAL.idealSleep) * 100, 0, 115) * sleepQualityFactor;
-  const energySpend =
-    excelH * BAL.energyDrainPerHour.excel + runH * BAL.energyDrainPerHour.running + crossH * BAL.energyDrainPerHour.cross;
+  const energySpend = excelH * BAL.energyDrainPerHour.excel + exerciseH * BAL.energyDrainPerHour.exercise;
   const relaxEnergyBonus = relaxH * BAL.relaxEnergyRestore;
   s.energy = clamp(energyFromSleep - energySpend + relaxEnergyBonus, 0, 100);
 
@@ -266,7 +273,7 @@ function resolveDay() {
 
   // ---- Stress ----
   const meditationMult = u.meditation ? 1.4 : 1.0;
-  const stressLoad = (excelH + runH + crossH) * BAL.stressLoadPerHour;
+  const stressLoad = (excelH + exerciseH) * BAL.stressLoadPerHour;
   const stressRelief = relaxH * BAL.relaxStressRelief * meditationMult + (sleepH >= BAL.idealSleep ? BAL.sleepDebtGoodBonus : 0);
   const stressFromDebt = s.sleepDebt * 0.1;
   const stressDelta = stressLoad - stressRelief + stressFromDebt;
@@ -281,7 +288,7 @@ function resolveDay() {
   // ---- Burnout state transitions ----
   if (!state.burnout.active && s.stress >= BAL.burnoutStressThreshold) {
     state.burnout = { active: true, daysLeft: 1 };
-    events.push({ type: "bad", text: `⚠️ BURNOUT! You've pushed too hard with too little rest. Training and running are far less effective until your stress drops — relax more.` });
+    events.push({ type: "bad", text: `⚠️ BURNOUT! You've pushed too hard with too little rest. Training and exercise are far less effective until your stress drops — relax more.` });
   } else if (state.burnout.active && s.stress <= BAL.burnoutRecoverThreshold) {
     state.burnout = { active: false, daysLeft: 0 };
     events.push({ type: "good", text: `✅ Recovered from burnout. You're focused again.` });
@@ -292,7 +299,7 @@ function resolveDay() {
     state.injury.daysLeft -= 1;
     if (state.injury.daysLeft <= 0) {
       state.injury = { active: false, daysLeft: 0 };
-      events.push({ type: "good", text: `✅ Injury healed. Running & Cross Training are available again.` });
+      events.push({ type: "good", text: `✅ Injury healed. Exercise is available again.` });
     }
   }
 
@@ -347,9 +354,9 @@ function simulateMatch() {
 /* ---------------------------------------------------------------------- */
 const $ = (id) => document.getElementById(id);
 
-const ACT_KEYS = ["excel", "running", "cross", "sleep", "relax"];
-const ACT_INPUT_IDS = { excel: "excelHours", running: "runningHours", cross: "crossHours", sleep: "sleepHours", relax: "relaxHours" };
-const ACT_MAX = { excel: 16, running: 8, cross: 8, sleep: 12, relax: 12 };
+const ACT_KEYS = ["excel", "exercise", "sleep", "relax"];
+const ACT_INPUT_IDS = { excel: "excelHours", exercise: "exerciseHours", sleep: "sleepHours", relax: "relaxHours" };
+const ACT_MAX = { excel: 16, exercise: 12, sleep: 12, relax: 12 };
 
 function renderTopbar() {
   $("dayNum").textContent = state.day;
@@ -369,9 +376,9 @@ function renderStats() {
 
   const banner = $("warningBanner");
   const msgs = [];
-  if (state.burnout.active) msgs.push("🔥 Burnout active — training & running are far less effective. Relax to recover.");
+  if (state.burnout.active) msgs.push("🔥 Burnout active — training & exercise are far less effective. Relax to recover.");
   else if (s.stress >= 80) msgs.push("🔥 Stress critical — burnout imminent. Schedule relaxation soon.");
-  if (state.injury.active) msgs.push(`🤕 Injured — Running & Cross Training disabled for ${state.injury.daysLeft} more day(s).`);
+  if (state.injury.active) msgs.push(`🤕 Injured — Exercise disabled for ${state.injury.daysLeft} more day(s).`);
   if (s.sleepDebt >= 70) msgs.push("🌙 Severe sleep debt — your body is breaking down. Sleep more.");
   if (s.phys <= 20) msgs.push("💪 Physical health critically low — it's capping your Excel performance.");
 
@@ -390,7 +397,7 @@ function setBar(key, val, max) {
 
 function totalAssigned() {
   const a = state.allocation;
-  return a.excel + a.running + a.cross + a.sleep + a.relax;
+  return a.excel + a.exercise + a.sleep + a.relax;
 }
 
 function renderPlanner() {
@@ -400,14 +407,10 @@ function renderPlanner() {
     $(`${k}HoursVal`).textContent = a[k];
   });
 
-  const running = $("runningHours");
-  const cross = $("crossHours");
-  const runningRow = document.querySelector('.activity[data-act="running"]');
-  const crossRow = document.querySelector('.activity[data-act="cross"]');
-  running.disabled = state.injury.active;
-  cross.disabled = state.injury.active;
-  runningRow.style.opacity = state.injury.active ? 0.45 : 1;
-  crossRow.style.opacity = state.injury.active ? 0.45 : 1;
+  const exercise = $("exerciseHours");
+  const exerciseRow = document.querySelector('.activity[data-act="exercise"]');
+  exercise.disabled = state.injury.active;
+  exerciseRow.style.opacity = state.injury.active ? 0.45 : 1;
 
   const left = 24 - totalAssigned();
   const hoursLeftEl = $("hoursLeft");
@@ -539,6 +542,7 @@ function openMenu() {
     <div class="menu-row" id="menuHow"><span>❓ How to Play</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuInstall"><span>📲 Add to Home Screen</span><span class="arrow">›</span></div>
     <button class="ghost-btn" id="menuReset">Reset Career</button>
+    <div class="version-tag">Cell Grind v${APP_VERSION}</div>
   `;
   openModal(html);
   $("menuShop").addEventListener("click", openShop);
@@ -582,12 +586,12 @@ function openHowTo() {
       <p>You manage a rising Excel esports competitor. Every day has 24 hours — split them across:</p>
       <p>
       📊 <b>Excel Training</b> — raises Excel Skill, your core competitive stat.<br>
-      🏃 <b>Running</b> and 🏋️ <b>Cross Training</b> — raise Physical Health.<br>
+      🏃 <b>Exercise</b> (running, cross training) — raises Physical Health.<br>
       🌙 <b>Sleep</b> — restores Energy and pays down Sleep Debt.<br>
       🎮 <b>Relaxation</b> — relieves Stress and prevents burnout.
       </p>
       <p><b>It's all connected:</b> poor sleep builds Sleep Debt, which wears down Physical Health even if you train well. Low Physical Health caps how much your Excel Training actually helps. Training hard without Relaxation builds Stress — hit 100 and you burn out, tanking your effectiveness until you rest.</p>
-      <p>Overtraining physically (heavy Running + Cross Training) risks injury, which locks out physical activities for several days.</p>
+      <p>Overtraining physically (too much Exercise) risks injury, which locks out Exercise for several days.</p>
       <p>Every ${BAL.matchIntervalDays} days you compete in a ranked match. Win to climb the rank ladder and earn prize money — spend it in the Coaching Shop on permanent upgrades.</p>
     </div>`;
   openModal(html);
@@ -671,7 +675,7 @@ function wireInputs() {
     btn.addEventListener("click", () => {
       const act = btn.getAttribute("data-act");
       const dir = Number(btn.getAttribute("data-dir"));
-      if ((act === "running" || act === "cross") && state.injury.active) return;
+      if (act === "exercise" && state.injury.active) return;
       setAllocation(act, state.allocation[act] + dir);
     });
   });
@@ -715,6 +719,15 @@ function init() {
 
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
+    // If a newer service worker takes over (a fresh deploy was installed),
+    // reload once so the page's own HTML/JS is the new version too, instead
+    // of new cached assets running against this tab's already-loaded code.
+    let refreshedForUpdate = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (refreshedForUpdate) return;
+      refreshedForUpdate = true;
+      window.location.reload();
+    });
   }
 }
 
