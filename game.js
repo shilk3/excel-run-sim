@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.0.0";
+const APP_VERSION = "4.1.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -103,6 +103,15 @@ function rollActiveSkills() {
     picked.push(pool.splice(idx, 1)[0]);
   }
   return picked;
+}
+function isPreseason() {
+  return state.seasonPhase === "preseason";
+}
+// Preseason has no matches and no case-type rotation yet — every skill is
+// open for training. Outside preseason, only this week's revealed 1-3
+// active skills are trainable.
+function trainableSkills() {
+  return isPreseason() ? SKILL_KEYS : state.activeSkills;
 }
 
 // Initial rating bands per league tier (1 = top, 5 = bottom) — only used to
@@ -572,12 +581,14 @@ function resolveDay() {
   const physMult = physSynergy(s.phys);
   const restMult = restTrainingMultiplier(s.rest);
 
-  // ---- The 7 case specialties: only this round's 1-3 active skills can be
-  // trained; the rest sit locked (0h, forced) and quietly rust. ----
+  // ---- The 7 case specialties: outside preseason, only this round's 1-3
+  // active skills can be trained; the rest sit locked (0h, forced) and
+  // quietly rust. Preseason has no rotation yet — everything is open. ----
   let totalSkillH = 0;
+  const trainable = trainableSkills();
   SKILL_KEYS.forEach((key) => {
     const meta = skillMeta(key);
-    const isActive = state.activeSkills.includes(key);
+    const isActive = trainable.includes(key);
     const hours = isActive ? a.skills[key] || 0 : 0;
     const cap = skillCap(key);
     const wasAtCap = s.skills[key] >= cap - 0.05;
@@ -1137,6 +1148,9 @@ function getNextMatchInfo() {
 // Hours pending on the old active skills are cleared since they're about to
 // become untrainable; the player reassigns under the new focus.
 function advanceSkillCycle() {
+  // Preseason trains everything (see trainableSkills()), so the weekly
+  // reveal is frozen until the regular season actually begins.
+  if (isPreseason()) return null;
   state.skillCycleDay += 1;
   if (state.skillCycleDay < 7) return null;
   state.skillCycleDay = 0;
@@ -1183,7 +1197,8 @@ function renderTopbar() {
 
 function renderStats() {
   const s = state.stats;
-  const skillRows = state.activeSkills
+  const trainable = trainableSkills();
+  const skillRows = trainable
     .map((key) => {
       const meta = skillMeta(key);
       const cap = skillCap(key);
@@ -1195,7 +1210,7 @@ function renderStats() {
     })
     .join("");
   $("skillStatRows").innerHTML = skillRows;
-  state.activeSkills.forEach((key) => setBar(`skill_${key}`, s.skills[key], skillCap(key)));
+  trainable.forEach((key) => setBar(`skill_${key}`, s.skills[key], skillCap(key)));
 
   setBar("phys", s.phys, 100);
   setBar("energy", s.energy, 100);
@@ -1225,13 +1240,13 @@ function setBar(key, val, max) {
 
 function totalAssigned() {
   const a = state.allocation;
-  const skillSum = state.activeSkills.reduce((sum, k) => sum + (a.skills[k] || 0), 0);
+  const skillSum = trainableSkills().reduce((sum, k) => sum + (a.skills[k] || 0), 0);
   return skillSum + a.exercise + a.sleep + a.relax;
 }
 
 function renderSkillActivityRows() {
   const a = state.allocation;
-  const rows = state.activeSkills
+  const rows = trainableSkills()
     .map((key) => {
       const meta = skillMeta(key);
       const lvl = upgradeLevel(coachKey(key));
@@ -1523,11 +1538,11 @@ function openCareer() {
       Cash: $${fmt(state.cash)}</p>
     </div>
     <div class="modal-section">
-      <h3>Skills — this week's focus: ${state.activeSkills.map((k) => skillMeta(k).name).join(", ")}</h3>
+      <h3>Skills — ${isPreseason() ? "preseason: train anything" : `this week's focus: ${state.activeSkills.map((k) => skillMeta(k).name).join(", ")}`}</h3>
       <p>
       ${SKILLS.map((sk) => {
         const cap = skillCap(sk.key);
-        const active = state.activeSkills.includes(sk.key) ? " 🟢" : "";
+        const active = trainableSkills().includes(sk.key) ? " 🟢" : "";
         return `${sk.icon} ${sk.name}: ${fmt(state.stats.skills[sk.key])} / ${cap}${active}`;
       }).join("<br>")}
       </p>
@@ -1600,7 +1615,7 @@ function openHowTo() {
     <div class="modal-section">
       <p>You manage a rising Excel esports competitor. Every day has 24 hours — split them across:</p>
       <p>
-      📈🗺️📝🎲🔢⏱️🃏 <b>Skill Training</b> — 7 case specialties (Data, Mapping, Text, Game Logic, Math, Time, Cards). Only 1-3 are "active" each round, revealed at the start of that round's week — the rest can't be trained until they come up again.<br>
+      📈🗺️📝🎲🔢⏱️🃏 <b>Skill Training</b> — 7 case specialties (Data, Mapping, Text, Game Logic, Math, Time, Cards). During preseason, all 7 are open for training. Once the regular season starts, only 1-3 are "active" each round, revealed at the start of that round's week — the rest can't be trained until they come up again.<br>
       🏃 <b>Exercise</b> — raises Physical Health.<br>
       🌙 <b>Sleep</b> — restores Energy and builds Rest.<br>
       🎮 <b>Relaxation</b> — builds Composure and prevents burnout.
