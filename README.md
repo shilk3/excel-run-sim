@@ -1,21 +1,34 @@
 # Cell Grind — Excel Esports Manager
 
 A mobile-first simulation game: manage a rising Excel esports competitor. Every
-day has 24 hours — split them across Excel Training, Exercise, Sleep, and
+day has 24 hours — split them across Skill Training, Exercise, Sleep, and
 Relaxation. Everything is connected:
 
-- **Excel Training** raises your Excel Skill, the core competitive stat.
+- **Skill Training** raises one of 7 case specialties — Data Analysis,
+  Mapping, Text Processing, Game Logic, Math & Formulas, Time & Dates, and
+  Cards & Random. Only 1-3 skills are "active" (trainable) each round,
+  revealed at the start of that round's week — every match that week tests
+  exactly those skills. The other 4-6 sit locked and slowly rust.
 - **Exercise** raises Physical Health — but low Physical Health caps how much
-  your Excel Training actually helps.
-- **Sleep** restores Energy and pays down Sleep Debt. Skimp on sleep and
-  Sleep Debt quietly wears down your Physical Health, even if you train hard.
-- **Relaxation** relieves Stress. Train hard with no downtime and Stress
-  builds until you burn out, tanking your effectiveness until you rest.
+  your skill training actually helps.
+- **Sleep** builds Rest and restores Energy. Skimp on sleep and Rest drains,
+  which quietly wears down your Physical Health even if you train hard.
+- **Relaxation** builds Composure. Train hard with no downtime and Composure
+  drains until you burn out, tanking your effectiveness until you recover.
+- **Decay is universal**: every stat needs upkeep or it slips — an
+  inactive skill, Exercise, Sleep, or Relaxation below its threshold hours
+  (shown as a marker on each slider) causes that stat to fall instead of
+  rise.
+- **Rest** also swings training itself: well-rested days train up to 200%
+  as effectively. **Composure** swings match day specifically: low
+  Composure can cut your active skills' effect on a match in half.
 - Overtrain physically and you risk an injury that locks out Exercise for
   several days.
-- Excel Skill and Physical Health cap at 70 until you invest match winnings
-  into the Coaching Shop — each upgrade level raises the relevant ceiling,
-  so maxing out at 100 takes real investment, not just time.
+- Each skill caps at 50 until you invest match winnings in that skill's
+  dedicated Coach (5 levels, Coaching Shop) — and the effective ceiling is
+  also capped by the highest league you've ever reached, from 60 in League 5
+  up to 100 in League 1. Both gates must be cleared to hit 100. Physical
+  Health caps at 70 until you invest in Sports Physio.
 
 **The season**: a 14-day preseason to train, then a 39-round regular season —
 one match a week against a named rival, the full schedule known in advance.

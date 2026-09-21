@@ -3,35 +3,45 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "3.0.0";
+const APP_VERSION = "4.0.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
 /* Balance constants — tune game feel here                                */
 /* ---------------------------------------------------------------------- */
 const BAL = {
-  idealSleep: 8,
-  excelGainBase: 0.24,
+  idealSleep: 8, // also the Rest decay threshold: sleep below this drains Rest
+  relaxComposureThreshold: 3, // Composure's decay threshold, in relaxation hours
+  skillDecayThresholdHours: 1, // an active skill/Exercise below this hour count rusts
+  skillGainBase: 0.24,
   exerciseGainBase: 0.6,
   softFatigueCap: 8, // hours per activity before in-day fatigue kicks in
   hardFatigueCap: 12,
   fatigueMultSoft: 0.6, // effectiveness for hours between soft and hard cap
   fatigueMultHard: 0.3, // effectiveness for hours beyond hard cap
-  energyDrainPerHour: { excel: 1.0, exercise: 1.3 },
+  energyDrainPerHour: { skill: 1.0, exercise: 1.3 },
   energyRestorePerSleepHour: 10.5,
   relaxEnergyRestore: 1.2,
-  relaxStressRelief: 2.4,
-  stressLoadPerHour: 0.85,
-  sleepDebtGoodBonus: 3, // stress relief when sleepHours >= ideal
+  relaxComposureRelief: 2.4,
+  composureLoadPerHour: 0.85,
+  restGoodSleepBonus: 3, // extra composure relief when sleepHours >= ideal
   overtrainThreshold: 10, // exercise hours before injury risk starts
   injuryChancePerExcessHour: 0.045,
   injuryPhysLoss: [15, 25],
   injuryDaysRange: [3, 5],
-  burnoutStressThreshold: 100,
-  burnoutRecoverThreshold: 65,
+  burnoutComposureThreshold: 0,
+  burnoutRecoverThreshold: 35,
   burnoutEffectivenessMult: 0.2,
   detrainThresholdHours: 1, // exercise hours below this triggers slow detraining
   detrainDecay: 0.35,
+  // Rest's training-effectiveness upside: well-rested days train harder, on
+  // top of (not instead of) Energy's own effect on focus.
+  restTrainingBoostThreshold: 80, // <=80 Rest: 100% effective
+  restTrainingBoostHigh: 90, // 81-90 Rest: 150%; >90 Rest: 200%
+  // Composure's match-day effect: low Composure halves your skill on the
+  // day it matters most, recovering in the same step pattern in reverse.
+  composureMatchLow: 10, // <10 Composure: 50% skill
+  composureMatchMid: 20, // 10-19: 75% skill; >=20: 100% skill
   // Season structure
   preseasonDays: 14,
   seasonRounds: 39,
@@ -43,8 +53,14 @@ const BAL = {
   // of just a short generic break, so missing the cut isn't strictly worse
   // for preparing next season than qualifying and getting knocked out fast.
   trainingCampDays: 28,
-  statCapBase: 70, // Excel Skill / Physical Health ceiling with zero relevant upgrades
-  statCapPerLevel: 10, // + this much per Coach / Physio level (max 3 levels -> +30 -> 100)
+  statCapBase: 70, // Physical Health ceiling with zero relevant upgrades
+  statCapPerLevel: 10, // + this much per Physio level (max 3 levels -> +30 -> 100)
+  // Skill ceilings stack two independent gates: the Coaching Shop (per
+  // skill, 5 levels) and the league you've ever reached (peak, not
+  // current — getting relegated doesn't lower it). Effective cap is the
+  // lower of the two.
+  skillShopCapBase: 50,
+  skillShopCapPerLevel: 10, // levels 1-5 -> 60/70/80/90/100
   // League structure: 5 tiers, 40 competitors each (199 persistent rivals +
   // the player, who occupies one slot in whichever tier they're currently in).
   leagueCount: 5,
@@ -52,6 +68,42 @@ const BAL = {
   promotionCount: 4,
   relegationCount: 4,
 };
+
+// Skill cap granted by the highest league tier ever reached (1 = top).
+const LEAGUE_SKILL_CAP = { 1: 100, 2: 90, 3: 80, 4: 70, 5: 60 };
+
+/* ---------------------------------------------------------------------- */
+/* The 7 case specialties                                                 */
+/* ---------------------------------------------------------------------- */
+const SKILLS = [
+  { key: "data", name: "Data Analysis", icon: "📈" },
+  { key: "map", name: "Mapping", icon: "🗺️" },
+  { key: "text", name: "Text Processing", icon: "📝" },
+  { key: "games", name: "Game Logic", icon: "🎲" },
+  { key: "math", name: "Math & Formulas", icon: "🔢" },
+  { key: "time", name: "Time & Dates", icon: "⏱️" },
+  { key: "cards", name: "Cards & Random", icon: "🃏" },
+];
+const SKILL_KEYS = SKILLS.map((s) => s.key);
+function skillMeta(key) {
+  return SKILLS.find((s) => s.key === key);
+}
+function coachKey(key) {
+  return `coach_${key}`;
+}
+// Each round focuses on 1-3 randomly chosen skills, revealed only once the
+// previous round's week is over — the other 4-6 skills can't be trained
+// (and quietly rust) until they come up again.
+function rollActiveSkills() {
+  const n = randInt(1, 3);
+  const pool = SKILL_KEYS.slice();
+  const picked = [];
+  for (let i = 0; i < n; i++) {
+    const idx = randInt(0, pool.length - 1);
+    picked.push(pool.splice(idx, 1)[0]);
+  }
+  return picked;
+}
 
 // Initial rating bands per league tier (1 = top, 5 = bottom) — only used to
 // seed a fresh roster. Ratings drift from there via real simulated results.
@@ -63,19 +115,30 @@ const LEAGUE_RATING_BANDS = {
   5: [350, 600],
 };
 
-// Each upgrade has up to 3 purchasable levels. state.upgrades[key] stores
-// the current level (0 = not purchased). Buying goes 0->1->2->3 in order;
-// each level's fields describe that level's total (not additive) effect.
-const UPGRADES = {
-  coach: {
-    name: "Personal Coach",
-    icon: "🧑‍🏫",
-    levels: [
-      { cost: 300, bonus: 0.1, desc: "+10% Excel training gains, skill ceiling 80" },
-      { cost: 650, bonus: 0.2, desc: "+20% Excel training gains, skill ceiling 90" },
-      { cost: 1200, bonus: 0.35, desc: "+35% Excel training gains, skill ceiling 100" },
-    ],
-  },
+// Each upgrade has up to 3 purchasable levels (5 for the 7 skill coaches).
+// state.upgrades[key] stores the current level (0 = not purchased). Buying
+// goes 0->1->2->... in order; each level's fields describe that level's
+// total (not additive) effect.
+const SKILL_COACH_LEVELS = [
+  { cost: 150, bonus: 0.05, capAdd: 10 },
+  { cost: 300, bonus: 0.1, capAdd: 20 },
+  { cost: 500, bonus: 0.15, capAdd: 30 },
+  { cost: 800, bonus: 0.22, capAdd: 40 },
+  { cost: 1300, bonus: 0.3, capAdd: 50 },
+];
+const UPGRADES = {};
+SKILLS.forEach((sk) => {
+  UPGRADES[coachKey(sk.key)] = {
+    name: `${sk.name} Coach`,
+    icon: sk.icon,
+    levels: SKILL_COACH_LEVELS.map((lvl) => ({
+      cost: lvl.cost,
+      bonus: lvl.bonus,
+      desc: `+${Math.round(lvl.bonus * 100)}% ${sk.name} training gains, skill ceiling ${BAL.skillShopCapBase + lvl.capAdd}`,
+    })),
+  };
+});
+Object.assign(UPGRADES, {
   physio: {
     name: "Sports Physio",
     icon: "🩺",
@@ -89,27 +152,27 @@ const UPGRADES = {
     name: "Sleep Coach App",
     icon: "📱",
     levels: [
-      { cost: 250, sleepDebtMult: 0.85, desc: "-15% Sleep Debt build-up" },
-      { cost: 550, sleepDebtMult: 0.75, desc: "-25% Sleep Debt build-up" },
-      { cost: 1000, sleepDebtMult: 0.6, desc: "-40% Sleep Debt build-up" },
+      { cost: 250, sleepDebtMult: 0.85, desc: "-15% Rest lost from poor sleep" },
+      { cost: 550, sleepDebtMult: 0.75, desc: "-25% Rest lost from poor sleep" },
+      { cost: 1000, sleepDebtMult: 0.6, desc: "-40% Rest lost from poor sleep" },
     ],
   },
   nutritionist: {
     name: "Nutritionist",
     icon: "🥗",
     levels: [
-      { cost: 300, decayMult: 0.85, desc: "-15% physical decay from Sleep Debt" },
-      { cost: 650, decayMult: 0.75, desc: "-25% physical decay from Sleep Debt" },
-      { cost: 1150, decayMult: 0.6, desc: "-40% physical decay from Sleep Debt" },
+      { cost: 300, decayMult: 0.85, desc: "-15% physical decay from low Rest" },
+      { cost: 650, decayMult: 0.75, desc: "-25% physical decay from low Rest" },
+      { cost: 1150, decayMult: 0.6, desc: "-40% physical decay from low Rest" },
     ],
   },
   meditation: {
     name: "Meditation Coach",
     icon: "🧘",
     levels: [
-      { cost: 200, reliefMult: 1.2, desc: "+20% stress relief from Relaxation" },
-      { cost: 450, reliefMult: 1.4, desc: "+40% stress relief from Relaxation" },
-      { cost: 850, reliefMult: 1.65, desc: "+65% stress relief from Relaxation" },
+      { cost: 200, reliefMult: 1.2, desc: "+20% Composure relief from Relaxation" },
+      { cost: 450, reliefMult: 1.4, desc: "+40% Composure relief from Relaxation" },
+      { cost: 850, reliefMult: 1.65, desc: "+65% Composure relief from Relaxation" },
     ],
   },
   recovery: {
@@ -130,7 +193,7 @@ const UPGRADES = {
       { cost: 1500, rankLossMult: 0.65, cashBonusMult: 1.1, desc: "-35% rank lost on defeat, +10% prize money" },
     ],
   },
-};
+});
 
 function upgradeLevel(key) {
   return state.upgrades[key] || 0;
@@ -139,11 +202,29 @@ function upgradeEffect(key) {
   const lvl = upgradeLevel(key);
   return lvl > 0 ? UPGRADES[key].levels[lvl - 1] : null;
 }
-function excelCap() {
-  return BAL.statCapBase + BAL.statCapPerLevel * upgradeLevel("coach");
-}
 function physCap() {
   return BAL.statCapBase + BAL.statCapPerLevel * upgradeLevel("physio");
+}
+// Effective skill ceiling stacks two independent gates: the Coaching Shop
+// (per skill, 5 levels) and the highest league ever reached (peak tier).
+function skillShopCap(key) {
+  return BAL.skillShopCapBase + BAL.skillShopCapPerLevel * upgradeLevel(coachKey(key));
+}
+function leagueSkillCap() {
+  return LEAGUE_SKILL_CAP[state.peakLeagueTier] || LEAGUE_SKILL_CAP[5];
+}
+function skillCap(key) {
+  return Math.min(skillShopCap(key), leagueSkillCap());
+}
+function restTrainingMultiplier(rest) {
+  if (rest > BAL.restTrainingBoostHigh) return 2.0;
+  if (rest > BAL.restTrainingBoostThreshold) return 1.5;
+  return 1.0;
+}
+function composureMatchMultiplier(composure) {
+  if (composure >= BAL.composureMatchMid) return 1.0;
+  if (composure >= BAL.composureMatchLow) return 0.75;
+  return 0.5;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -254,11 +335,24 @@ function freshState() {
     peakRank: 480,
     wins: 0,
     losses: 0,
-    stats: { excel: 8, phys: 65, energy: 80, sleepDebt: 0, stress: 8 },
-    allocation: { excel: 4, exercise: 1, sleep: 8, relax: 2 },
+    stats: {
+      skills: Object.fromEntries(SKILL_KEYS.map((k) => [k, 8])),
+      phys: 65,
+      energy: 80,
+      rest: 100, // higher = better; drains when sleep < idealSleep
+      composure: 92, // higher = better; drains when relax < relaxComposureThreshold
+    },
+    allocation: {
+      skills: Object.fromEntries(SKILL_KEYS.map((k) => [k, 0])),
+      exercise: 1,
+      sleep: 8,
+      relax: 2,
+    },
+    activeSkills: rollActiveSkills(), // 1-3 skills trainable this round; rerolled weekly
+    skillCycleDay: 0, // days elapsed in the current 7-day skill-focus cycle
     injury: { active: false, daysLeft: 0 },
     burnout: { active: false, daysLeft: 0 },
-    upgrades: { coach: 0, physio: 0, sleepApp: 0, nutritionist: 0, meditation: 0, recovery: 0, manager: 0 },
+    upgrades: Object.fromEntries(Object.keys(UPGRADES).map((k) => [k, 0])),
     logEntries: [],
   };
 }
@@ -335,6 +429,48 @@ function migrateSave(parsed) {
     parsed.schedule = buildLeagueSchedule(rivals, tier);
   }
 
+  // v4.0.0 replaced the single Excel Skill stat with 7 case specialties
+  // (only 1-3 "active" and trainable each round), and renamed/inverted
+  // Sleep Debt -> Rest and Stress -> Composure (both higher-is-better now,
+  // matching every other stat). Any save still on the old single-skill
+  // shape gets migrated: every new skill starts at the old Excel Skill
+  // level (simplest continuity, no worse than a fresh grind), Rest/Composure
+  // are seeded from their old inverse, and cash is refunded for whatever
+  // was invested in the old single Personal Coach upgrade (it no longer
+  // exists — 5 flat levels: 300/650/1200 cumulative) since that progress
+  // can't carry over 1:1 into 7 separate per-skill coaches.
+  if (!parsed.stats || parsed.stats.skills === undefined) {
+    const oldStats = parsed.stats || { excel: 8, phys: 65, energy: 80, sleepDebt: 0, stress: 8 };
+    const oldExcel = oldStats.excel !== undefined ? oldStats.excel : 8;
+    // Every skill starts fresh (level 0) in the new per-skill Coaching Shop,
+    // so the migrated value can't exceed the shop-base/league-cap gate any
+    // veteran's real progress would still have to clear.
+    const migratedSkillCap = Math.min(BAL.skillShopCapBase, LEAGUE_SKILL_CAP[parsed.peakLeagueTier] || LEAGUE_SKILL_CAP[5]);
+    const seededSkill = clamp(oldExcel, 0, migratedSkillCap);
+    parsed.stats = {
+      skills: Object.fromEntries(SKILL_KEYS.map((k) => [k, seededSkill])),
+      phys: oldStats.phys !== undefined ? oldStats.phys : 65,
+      energy: oldStats.energy !== undefined ? oldStats.energy : 80,
+      rest: oldStats.sleepDebt !== undefined ? clamp(100 - oldStats.sleepDebt, 0, 100) : 100,
+      composure: oldStats.stress !== undefined ? clamp(100 - oldStats.stress, 0, 100) : 92,
+    };
+
+    const oldAlloc = parsed.allocation || {};
+    parsed.allocation = {
+      skills: Object.fromEntries(SKILL_KEYS.map((k) => [k, 0])),
+      exercise: oldAlloc.exercise !== undefined ? oldAlloc.exercise : 1,
+      sleep: oldAlloc.sleep !== undefined ? oldAlloc.sleep : 8,
+      relax: oldAlloc.relax !== undefined ? oldAlloc.relax : 2,
+    };
+
+    const OLD_COACH_CUMULATIVE = [0, 300, 950, 2150];
+    const oldCoachLvl = clamp(oldUpgrades.coach || 0, 0, 3);
+    parsed.cash = (parsed.cash || 0) + OLD_COACH_CUMULATIVE[oldCoachLvl];
+
+    parsed.activeSkills = rollActiveSkills();
+    parsed.skillCycleDay = 0;
+  }
+
   return parsed;
 }
 
@@ -377,10 +513,12 @@ function effectiveHours(h, cfg = BAL) {
   return base + mid + over;
 }
 
-function focusMultiplier(energy, stress) {
+// Composure no longer factors into training focus — it's purely a match-day
+// effect now (see composureMatchMultiplier). Rest supplies training's own
+// separate upside multiplier (see restTrainingMultiplier).
+function focusMultiplier(energy) {
   const energyFactor = 0.4 + 0.6 * (energy / 100);
-  const stressFactor = 1 - 0.5 * (stress / 100);
-  return clamp(energyFactor * stressFactor, 0.15, 1.0);
+  return clamp(energyFactor, 0.15, 1.0);
 }
 
 function physSynergy(phys) {
@@ -417,7 +555,6 @@ function fmtSigned(n, decimals = 1) {
 function resolveDay() {
   const a = state.allocation;
   const s = state.stats;
-  const coachEff = upgradeEffect("coach");
   const physioEff = upgradeEffect("physio");
   const sleepAppEff = upgradeEffect("sleepApp");
   const nutritionistEff = upgradeEffect("nutritionist");
@@ -426,51 +563,64 @@ function resolveDay() {
   const events = [];
 
   // ---- Injury / burnout lockouts: enforce before computing effects ----
-  let excelH = a.excel;
   let exerciseH = state.injury.active ? 0 : a.exercise;
   const sleepH = a.sleep;
   const relaxH = a.relax;
 
   const burnoutActive = state.burnout.active;
-  const focusMult = focusMultiplier(s.energy, s.stress) * (burnoutActive ? BAL.burnoutEffectivenessMult : 1);
+  const focusMult = focusMultiplier(s.energy) * (burnoutActive ? BAL.burnoutEffectivenessMult : 1);
   const physMult = physSynergy(s.phys);
+  const restMult = restTrainingMultiplier(s.rest);
 
-  // ---- Excel skill ----
-  const cap = excelCap();
-  const wasAtCap = s.excel >= cap - 0.05;
-  const coachMult = coachEff ? 1 + coachEff.bonus : 1.0;
-  const excelEff = effectiveHours(excelH);
-  const excelGain = excelEff * BAL.excelGainBase * focusMult * physMult * skillDiminish(s.excel) * coachMult;
-  const excelRust = excelH === 0 ? Math.min(0.15, s.excel * 0.003) : 0;
-  const excelDelta = excelGain - excelRust;
-  s.excel = clamp(s.excel + excelDelta, 0, cap);
-  if (excelH > 0) {
-    let note = "";
-    if (wasAtCap && cap < 100) note = ` (capped at ${cap} — upgrade Personal Coach for a higher ceiling)`;
-    else if (focusMult < 0.5) note = " (focus was poor — low energy or high stress hurt your training)";
-    else if (physMult < 0.75) note = " (low physical health capped your gains)";
-    events.push({ type: excelDelta > 0.5 ? "good" : "neutral", text: `📊 Excel Training (${excelH}h): ${fmtSigned(excelDelta)} skill${note}` });
-  } else if (excelRust > 0) {
-    events.push({ type: "bad", text: `📊 No training today: skill rusted slightly (${fmtSigned(-excelRust)})` });
-  }
+  // ---- The 7 case specialties: only this round's 1-3 active skills can be
+  // trained; the rest sit locked (0h, forced) and quietly rust. ----
+  let totalSkillH = 0;
+  SKILL_KEYS.forEach((key) => {
+    const meta = skillMeta(key);
+    const isActive = state.activeSkills.includes(key);
+    const hours = isActive ? a.skills[key] || 0 : 0;
+    const cap = skillCap(key);
+    const wasAtCap = s.skills[key] >= cap - 0.05;
+    const coachEff = upgradeEffect(coachKey(key));
+    const coachMult = coachEff ? 1 + coachEff.bonus : 1.0;
+
+    if (hours >= BAL.skillDecayThresholdHours) {
+      totalSkillH += hours;
+      const eff = effectiveHours(hours);
+      const gain = eff * BAL.skillGainBase * focusMult * physMult * restMult * skillDiminish(s.skills[key]) * coachMult;
+      s.skills[key] = clamp(s.skills[key] + gain, 0, cap);
+      let note = "";
+      if (wasAtCap && cap < 100) note = ` (capped at ${cap})`;
+      else if (focusMult < 0.5) note = " (low energy hurt your training)";
+      else if (physMult < 0.75) note = " (low physical health capped your gains)";
+      events.push({ type: gain > 0.5 ? "good" : "neutral", text: `${meta.icon} ${meta.name} (${hours}h): ${fmtSigned(gain)} skill${note}` });
+    } else {
+      totalSkillH += hours;
+      const rust = Math.min(0.15, s.skills[key] * 0.003);
+      if (rust > 0) {
+        s.skills[key] = clamp(s.skills[key] - rust, 0, cap);
+        if (isActive) events.push({ type: "bad", text: `${meta.icon} No ${meta.name} training: skill rusted slightly (${fmtSigned(-rust)})` });
+      }
+    }
+  });
 
   // ---- Physical health ----
   const pCap = physCap();
   const physWasAtCap = s.phys >= pCap - 0.05;
   const physioMult = physioEff ? 1 + physioEff.exerciseBonus : 1.0;
-  const exerciseGain = effectiveHours(exerciseH) * BAL.exerciseGainBase * physioMult * physDiminish(s.phys);
-  const sleepDebtDecayFactor = nutritionistEff ? nutritionistEff.decayMult : 1.0;
-  const physDecayFromSleep = s.sleepDebt * 0.045 * sleepDebtDecayFactor;
+  const exerciseGain = effectiveHours(exerciseH) * BAL.exerciseGainBase * physioMult * restMult * physDiminish(s.phys);
+  const restDecayFactor = nutritionistEff ? nutritionistEff.decayMult : 1.0;
+  const physDecayFromRest = (100 - s.rest) * 0.045 * restDecayFactor;
   const detrainMult = recoveryEff ? recoveryEff.detrainMult : 1.0;
   const detrain = exerciseH < BAL.detrainThresholdHours ? BAL.detrainDecay * detrainMult : 0;
-  const physDelta = exerciseGain - physDecayFromSleep - detrain;
+  const physDelta = exerciseGain - physDecayFromRest - detrain;
   s.phys = clamp(s.phys + physDelta, 0, pCap);
   if (exerciseH > 0) {
     let note = physWasAtCap && pCap < 100 ? ` (capped at ${pCap} — upgrade Sports Physio for a higher ceiling)` : "";
     events.push({ type: physDelta > 0 ? "good" : "neutral", text: `🏃 Exercise (${exerciseH}h): ${fmtSigned(physDelta)} physical health${note}` });
   }
-  if (physDecayFromSleep > 1) {
-    events.push({ type: "bad", text: `🌙 Poor sleep is wearing down your body (${fmtSigned(-physDecayFromSleep)} health from sleep debt)` });
+  if (physDecayFromRest > 1) {
+    events.push({ type: "bad", text: `🌙 Poor Rest is wearing down your body (${fmtSigned(-physDecayFromRest)} health)` });
   }
 
   // ---- Injury roll (only if not already injured) ----
@@ -491,49 +641,49 @@ function resolveDay() {
   // ---- Energy ----
   // How rested you feel today is driven mainly by *last night's* sleep, not
   // a slowly-accumulating bank — otherwise a well-rested surplus can quietly
-  // absorb a bad night and Energy never visibly drops. Chronic sleep debt
-  // degrades how restorative sleep is; today's activity then spends down
-  // whatever that sleep gave you.
-  const sleepQualityFactor = clamp(1 - Math.min(0.5, s.sleepDebt / 100), 0.5, 1);
+  // absorb a bad night and Energy never visibly drops. Low Rest degrades how
+  // restorative sleep is; today's activity then spends down whatever that
+  // sleep gave you.
+  const sleepQualityFactor = clamp(0.5 + 0.5 * (s.rest / 100), 0.5, 1);
   const energyFromSleep = clamp((sleepH / BAL.idealSleep) * 100, 0, 115) * sleepQualityFactor;
-  const energySpend = excelH * BAL.energyDrainPerHour.excel + exerciseH * BAL.energyDrainPerHour.exercise;
+  const energySpend = totalSkillH * BAL.energyDrainPerHour.skill + exerciseH * BAL.energyDrainPerHour.exercise;
   const relaxEnergyBonus = relaxH * BAL.relaxEnergyRestore;
   s.energy = clamp(energyFromSleep - energySpend + relaxEnergyBonus, 0, 100);
 
-  // ---- Sleep debt ----
+  // ---- Rest (renamed/inverted Sleep Debt: higher = better) ----
   const sleepAppMult = sleepAppEff ? sleepAppEff.sleepDebtMult : 1.0;
-  let sleepDebtDelta;
+  let restDelta;
   if (sleepH < BAL.idealSleep) {
-    sleepDebtDelta = (BAL.idealSleep - sleepH) * 1.3 * sleepAppMult;
+    restDelta = -((BAL.idealSleep - sleepH) * 1.3 * sleepAppMult);
   } else {
-    sleepDebtDelta = -Math.min(sleepH - BAL.idealSleep, 3) * 1.4;
+    restDelta = Math.min(sleepH - BAL.idealSleep, 3) * 1.4;
   }
-  s.sleepDebt = clamp(s.sleepDebt + sleepDebtDelta, 0, 100);
+  s.rest = clamp(s.rest + restDelta, 0, 100);
   if (sleepH < 6) {
-    events.push({ type: "bad", text: `🌙 Only slept ${sleepH}h: sleep debt rising fast (${fmtSigned(sleepDebtDelta)})` });
+    events.push({ type: "bad", text: `🌙 Only slept ${sleepH}h: Rest dropping fast (${fmtSigned(restDelta)})` });
   } else if (sleepH >= BAL.idealSleep) {
-    events.push({ type: "good", text: `🌙 Slept ${sleepH}h: well rested (sleep debt ${fmtSigned(sleepDebtDelta)})` });
+    events.push({ type: "good", text: `🌙 Slept ${sleepH}h: well rested (Rest ${fmtSigned(restDelta)})` });
   }
 
-  // ---- Stress ----
+  // ---- Composure (renamed/inverted Stress: higher = better) ----
   const meditationMult = meditationEff ? meditationEff.reliefMult : 1.0;
-  const stressLoad = (excelH + exerciseH) * BAL.stressLoadPerHour;
-  const stressRelief = relaxH * BAL.relaxStressRelief * meditationMult + (sleepH >= BAL.idealSleep ? BAL.sleepDebtGoodBonus : 0);
-  const stressFromDebt = s.sleepDebt * 0.1;
-  const stressDelta = stressLoad - stressRelief + stressFromDebt;
-  s.stress = clamp(s.stress + stressDelta, 0, 100);
+  const composureLoad = (totalSkillH + exerciseH) * BAL.composureLoadPerHour;
+  const composureRelief = relaxH * BAL.relaxComposureRelief * meditationMult + (sleepH >= BAL.idealSleep ? BAL.restGoodSleepBonus : 0);
+  const composurePenaltyFromRest = (100 - s.rest) * 0.1;
+  const composureDelta = composureRelief - composureLoad - composurePenaltyFromRest;
+  s.composure = clamp(s.composure + composureDelta, 0, 100);
 
-  if (relaxH === 0 && stressLoad > 5) {
-    events.push({ type: "bad", text: `🔥 No downtime today: stress climbed to ${fmt(s.stress)}` });
-  } else if (relaxH > 0) {
-    events.push({ type: "good", text: `🎮 Relaxed ${relaxH}h: stress relief ${fmtSigned(-stressRelief, 1)}` });
+  if (relaxH < BAL.relaxComposureThreshold && composureLoad > 5) {
+    events.push({ type: "bad", text: `🔥 Under ${BAL.relaxComposureThreshold}h relaxation: Composure fell to ${fmt(s.composure)}` });
+  } else if (relaxH >= BAL.relaxComposureThreshold) {
+    events.push({ type: "good", text: `🎮 Relaxed ${relaxH}h: Composure ${fmtSigned(composureDelta)}` });
   }
 
   // ---- Burnout state transitions ----
-  if (!state.burnout.active && s.stress >= BAL.burnoutStressThreshold) {
+  if (!state.burnout.active && s.composure <= BAL.burnoutComposureThreshold) {
     state.burnout = { active: true, daysLeft: 1 };
-    events.push({ type: "bad", text: `⚠️ BURNOUT! You've pushed too hard with too little rest. Training and exercise are far less effective until your stress drops — relax more.` });
-  } else if (state.burnout.active && s.stress <= BAL.burnoutRecoverThreshold) {
+    events.push({ type: "bad", text: `⚠️ BURNOUT! You've pushed too hard with too little rest. Training and exercise are far less effective until your Composure recovers — relax more.` });
+  } else if (state.burnout.active && s.composure >= BAL.burnoutRecoverThreshold) {
     state.burnout = { active: false, daysLeft: 0 };
     events.push({ type: "good", text: `✅ Recovered from burnout. You're focused again.` });
   }
@@ -553,9 +703,22 @@ function resolveDay() {
 /* ---------------------------------------------------------------------- */
 /* Match simulation                                                       */
 /* ---------------------------------------------------------------------- */
+// Every match tests only this round's active 1-3 skills — a live case
+// competition on those specific specialties, not the full roster of 7.
+function activeSkillAverage() {
+  const active = state.activeSkills;
+  if (!active.length) return 0;
+  const sum = active.reduce((acc, k) => acc + state.stats.skills[k], 0);
+  return sum / active.length;
+}
+
 function performanceScore() {
   const s = state.stats;
-  return clamp(s.excel * 0.55 + s.phys * 0.25 + (100 - s.stress) * 0.15 + (100 - s.sleepDebt) * 0.05, 0, 100);
+  // Low Composure hits you hardest where it matters most: match day. This
+  // stacks on top of (doesn't replace) Composure's own weighted contribution
+  // below, same as before.
+  const skillComponent = activeSkillAverage() * composureMatchMultiplier(s.composure);
+  return clamp(skillComponent * 0.55 + s.phys * 0.25 + s.composure * 0.15 + s.rest * 0.05, 0, 100);
 }
 
 // Resolves one real match for the player against a specific opponent rating.
@@ -899,8 +1062,8 @@ function processDayEnd() {
       state.schedule = buildLeagueSchedule(state.rivals, state.leagueTier);
       state.playoff = null;
       // Offseason recovery — a clean slate for the new year.
-      state.stats.stress = 0;
-      state.stats.sleepDebt = 0;
+      state.stats.composure = 100;
+      state.stats.rest = 100;
       state.stats.energy = 100;
       phaseEvent = `🎉 Year ${state.year} begins! A fresh ${BAL.seasonRounds}-round season has been scheduled — good luck.`;
     }
@@ -969,6 +1132,22 @@ function getNextMatchInfo() {
   return { kind: "unknown", label: "" };
 }
 
+// Every 7 days, reroll which 1-3 skills are trainable for the coming week —
+// revealed only now, at the end of the previous cycle, never in advance.
+// Hours pending on the old active skills are cleared since they're about to
+// become untrainable; the player reassigns under the new focus.
+function advanceSkillCycle() {
+  state.skillCycleDay += 1;
+  if (state.skillCycleDay < 7) return null;
+  state.skillCycleDay = 0;
+  state.activeSkills = rollActiveSkills();
+  SKILL_KEYS.forEach((k) => {
+    state.allocation.skills[k] = 0;
+  });
+  const names = state.activeSkills.map((k) => `${skillMeta(k).icon} ${skillMeta(k).name}`).join(", ");
+  return `📋 New focus for the week ahead: ${names}.`;
+}
+
 function phaseLabelText() {
   const s = state;
   const league = `League ${s.leagueTier} · `;
@@ -984,9 +1163,15 @@ function phaseLabelText() {
 /* ---------------------------------------------------------------------- */
 const $ = (id) => document.getElementById(id);
 
-const ACT_KEYS = ["excel", "exercise", "sleep", "relax"];
-const ACT_INPUT_IDS = { excel: "excelHours", exercise: "exerciseHours", sleep: "sleepHours", relax: "relaxHours" };
-const ACT_MAX = { excel: 16, exercise: 12, sleep: 12, relax: 12 };
+const ACT_KEYS = ["exercise", "sleep", "relax"];
+const ACT_INPUT_IDS = { exercise: "exerciseHours", sleep: "sleepHours", relax: "relaxHours" };
+const ACT_MAX = { exercise: 12, sleep: 12, relax: 12 };
+const ACT_DECAY_MARKER = { exercise: BAL.skillDecayThresholdHours, sleep: BAL.idealSleep, relax: BAL.relaxComposureThreshold };
+const SKILL_MAX_HOURS = 16;
+
+function markerPct(threshold, max) {
+  return clamp((threshold / max) * 100, 0, 100);
+}
 
 function renderTopbar() {
   $("yearNum").textContent = state.year;
@@ -998,19 +1183,32 @@ function renderTopbar() {
 
 function renderStats() {
   const s = state.stats;
-  setBar("excel", s.excel, 100);
+  const skillRows = state.activeSkills
+    .map((key) => {
+      const meta = skillMeta(key);
+      const cap = skillCap(key);
+      return `
+      <div class="stat" data-stat="skill-${key}">
+        <div class="stat-label"><span class="stat-icon">${meta.icon}</span>${meta.name}<span class="stat-val" id="skill_${key}Val">0</span><span class="stat-cap">/${cap}</span></div>
+        <div class="bar"><div class="bar-fill skill" id="skill_${key}Bar" style="width:0%"></div></div>
+      </div>`;
+    })
+    .join("");
+  $("skillStatRows").innerHTML = skillRows;
+  state.activeSkills.forEach((key) => setBar(`skill_${key}`, s.skills[key], skillCap(key)));
+
   setBar("phys", s.phys, 100);
   setBar("energy", s.energy, 100);
-  setBar("sleepDebt", s.sleepDebt, 100);
-  setBar("stress", s.stress, 100);
+  setBar("rest", s.rest, 100);
+  setBar("composure", s.composure, 100);
 
   const banner = $("warningBanner");
   const msgs = [];
   if (state.burnout.active) msgs.push("🔥 Burnout active — training & exercise are far less effective. Relax to recover.");
-  else if (s.stress >= 80) msgs.push("🔥 Stress critical — burnout imminent. Schedule relaxation soon.");
+  else if (s.composure <= 10) msgs.push("🔥 Composure critical — burnout imminent. Schedule relaxation soon.");
   if (state.injury.active) msgs.push(`🤕 Injured — Exercise disabled for ${state.injury.daysLeft} more day(s).`);
-  if (s.sleepDebt >= 70) msgs.push("🌙 Severe sleep debt — your body is breaking down. Sleep more.");
-  if (s.phys <= 20) msgs.push("💪 Physical health critically low — it's capping your Excel performance.");
+  if (s.rest <= 30) msgs.push("🌙 Severely low Rest — your body is breaking down. Sleep more.");
+  if (s.phys <= 20) msgs.push("💪 Physical health critically low — it's capping your training performance.");
 
   if (msgs.length) {
     banner.innerHTML = msgs.join("<br>");
@@ -1027,11 +1225,45 @@ function setBar(key, val, max) {
 
 function totalAssigned() {
   const a = state.allocation;
-  return a.excel + a.exercise + a.sleep + a.relax;
+  const skillSum = state.activeSkills.reduce((sum, k) => sum + (a.skills[k] || 0), 0);
+  return skillSum + a.exercise + a.sleep + a.relax;
+}
+
+function renderSkillActivityRows() {
+  const a = state.allocation;
+  const rows = state.activeSkills
+    .map((key) => {
+      const meta = skillMeta(key);
+      const lvl = upgradeLevel(coachKey(key));
+      const shopTag = lvl > 0 ? `<span class="skill-shop-tag">${meta.icon}Lv${lvl}</span>` : `<span class="skill-shop-tag skill-shop-tag-none">no coach</span>`;
+      const hours = a.skills[key] || 0;
+      const pct = markerPct(BAL.skillDecayThresholdHours, SKILL_MAX_HOURS);
+      return `
+      <div class="activity skill-activity" data-skill="${key}">
+        <div class="activity-row">
+          <span class="activity-icon">${meta.icon}</span>
+          <span class="activity-name">${meta.name}</span>
+          ${shopTag}
+          <span class="activity-hours"><span id="skillHoursVal_${key}">${hours}</span>h</span>
+        </div>
+        <div class="stepper">
+          <button class="step-btn" data-skill="${key}" data-dir="-1">−</button>
+          <div class="slider-wrap">
+            <input type="range" min="0" max="${SKILL_MAX_HOURS}" step="1" value="${hours}" id="skillHours_${key}" data-skill="${key}" />
+            <div class="slider-marker" style="left:${pct}%"></div>
+          </div>
+          <button class="step-btn" data-skill="${key}" data-dir="1">+</button>
+        </div>
+      </div>`;
+    })
+    .join("");
+  $("skillActivityRows").innerHTML = rows;
 }
 
 function renderPlanner() {
   const a = state.allocation;
+  renderSkillActivityRows();
+
   ACT_KEYS.forEach((k) => {
     $(ACT_INPUT_IDS[k]).value = a[k];
     $(`${k}HoursVal`).textContent = a[k];
@@ -1123,34 +1355,44 @@ function showMatchModal(result) {
 /* ---------------------------------------------------------------------- */
 /* Shop / Menu                                                            */
 /* ---------------------------------------------------------------------- */
+function shopItemHtml(key, u) {
+  const lvl = upgradeLevel(key);
+  const maxLvl = u.levels.length;
+  const isMax = lvl >= maxLvl;
+  const next = isMax ? null : u.levels[lvl];
+  const current = lvl > 0 ? u.levels[lvl - 1] : null;
+  const canAfford = next && state.cash >= next.cost;
+  const desc = isMax ? `${current.desc} — MAX` : next.desc + (current ? ` <span class="shop-item-current">(now: ${current.desc})</span>` : "");
+  return `
+  <div class="shop-item">
+    <div class="shop-item-icon">${u.icon}</div>
+    <div class="shop-item-info">
+      <div class="shop-item-name">${u.name}${lvl > 0 ? ` <span class="shop-item-level">Lv.${lvl}</span>` : ""}</div>
+      <div class="shop-item-desc">${desc}</div>
+    </div>
+    <button class="shop-item-btn ${isMax ? "owned" : ""}" data-upgrade="${key}" ${isMax || !canAfford ? "disabled" : ""}>
+      ${isMax ? "MAX" : "$" + next.cost}
+    </button>
+  </div>`;
+}
+
 function shopHtml() {
-  const items = Object.entries(UPGRADES)
-    .map(([key, u]) => {
-      const lvl = upgradeLevel(key);
-      const maxLvl = u.levels.length;
-      const isMax = lvl >= maxLvl;
-      const next = isMax ? null : u.levels[lvl];
-      const current = lvl > 0 ? u.levels[lvl - 1] : null;
-      const canAfford = next && state.cash >= next.cost;
-      const desc = isMax ? `${current.desc} — MAX` : next.desc + (current ? ` <span class="shop-item-current">(now: ${current.desc})</span>` : "");
-      return `
-      <div class="shop-item">
-        <div class="shop-item-icon">${u.icon}</div>
-        <div class="shop-item-info">
-          <div class="shop-item-name">${u.name}${lvl > 0 ? ` <span class="shop-item-level">Lv.${lvl}</span>` : ""}</div>
-          <div class="shop-item-desc">${desc}</div>
-        </div>
-        <button class="shop-item-btn ${isMax ? "owned" : ""}" data-upgrade="${key}" ${isMax || !canAfford ? "disabled" : ""}>
-          ${isMax ? "MAX" : "$" + next.cost}
-        </button>
-      </div>`;
-    })
-    .join("");
+  const skillItems = SKILLS.map((sk) => shopItemHtml(coachKey(sk.key), UPGRADES[coachKey(sk.key)])).join("");
+  const supportKeys = ["physio", "sleepApp", "nutritionist", "meditation", "recovery", "manager"];
+  const supportItems = supportKeys.map((key) => shopItemHtml(key, UPGRADES[key])).join("");
   return `
     <h2>Coaching Shop</h2>
     <div class="modal-section">
       <h3>Cash: $${fmt(state.cash)}</h3>
-      ${items}
+    </div>
+    <div class="modal-section">
+      <h3>Skill Coaches</h3>
+      <p class="modal-sub">Each skill's ceiling is also capped by your highest league reached — a maxed-out coach alone won't get you past that.</p>
+      ${skillItems}
+    </div>
+    <div class="modal-section">
+      <h3>Support Team</h3>
+      ${supportItems}
     </div>`;
 }
 
@@ -1281,12 +1523,21 @@ function openCareer() {
       Cash: $${fmt(state.cash)}</p>
     </div>
     <div class="modal-section">
+      <h3>Skills — this week's focus: ${state.activeSkills.map((k) => skillMeta(k).name).join(", ")}</h3>
+      <p>
+      ${SKILLS.map((sk) => {
+        const cap = skillCap(sk.key);
+        const active = state.activeSkills.includes(sk.key) ? " 🟢" : "";
+        return `${sk.icon} ${sk.name}: ${fmt(state.stats.skills[sk.key])} / ${cap}${active}`;
+      }).join("<br>")}
+      </p>
+    </div>
+    <div class="modal-section">
       <h3>Current Stats</h3>
-      <p>Excel Skill: ${fmt(state.stats.excel)} / ${excelCap()}${excelCap() < 100 ? " (upgrade Coach for more)" : ""}<br>
-      Physical Health: ${fmt(state.stats.phys)} / ${physCap()}${physCap() < 100 ? " (upgrade Physio for more)" : ""}<br>
+      <p>Physical Health: ${fmt(state.stats.phys)} / ${physCap()}${physCap() < 100 ? " (upgrade Physio for more)" : ""}<br>
       Energy: ${fmt(state.stats.energy)} / 100<br>
-      Sleep Debt: ${fmt(state.stats.sleepDebt)} / 100<br>
-      Stress: ${fmt(state.stats.stress)} / 100</p>
+      Rest: ${fmt(state.stats.rest)} / 100<br>
+      Composure: ${fmt(state.stats.composure)} / 100</p>
     </div>`;
   openModal(html);
 }
@@ -1349,15 +1600,17 @@ function openHowTo() {
     <div class="modal-section">
       <p>You manage a rising Excel esports competitor. Every day has 24 hours — split them across:</p>
       <p>
-      📊 <b>Excel Training</b> — raises Excel Skill, your core competitive stat.<br>
-      🏃 <b>Exercise</b> (running, cross training) — raises Physical Health.<br>
-      🌙 <b>Sleep</b> — restores Energy and pays down Sleep Debt.<br>
-      🎮 <b>Relaxation</b> — relieves Stress and prevents burnout.
+      📈🗺️📝🎲🔢⏱️🃏 <b>Skill Training</b> — 7 case specialties (Data, Mapping, Text, Game Logic, Math, Time, Cards). Only 1-3 are "active" each round, revealed at the start of that round's week — the rest can't be trained until they come up again.<br>
+      🏃 <b>Exercise</b> — raises Physical Health.<br>
+      🌙 <b>Sleep</b> — restores Energy and builds Rest.<br>
+      🎮 <b>Relaxation</b> — builds Composure and prevents burnout.
       </p>
-      <p><b>It's all connected:</b> poor sleep builds Sleep Debt, which wears down Physical Health even if you train well. Low Physical Health caps how much your Excel Training actually helps. Training hard without Relaxation builds Stress — hit 100 and you burn out, tanking your effectiveness until you rest.</p>
+      <p><b>It's all connected:</b> low Rest wears down Physical Health even if you train well, and low Physical Health caps how much your skill training actually helps. Training hard without Relaxation drains Composure — hit 0 and you burn out, tanking your effectiveness until it recovers.</p>
+      <p><b>Decay:</b> every stat needs upkeep or it slips. Any skill that isn't active this round rusts; an active skill still rusts below ${BAL.skillDecayThresholdHours}h of training. Exercise below ${BAL.skillDecayThresholdHours}h detrains Physical Health. Sleep below ${BAL.idealSleep}h drains Rest. Relaxation below ${BAL.relaxComposureThreshold}h drains Composure. Each slider shows a marker at its threshold.</p>
+      <p><b>Rest</b> also swings training itself: above ${BAL.restTrainingBoostThreshold} it's 150% effective, above ${BAL.restTrainingBoostHigh} it's 200% effective. <b>Composure</b> hits match day specifically — below ${BAL.composureMatchMid} your active skills count for only 75%, below ${BAL.composureMatchLow} just 50%.</p>
       <p>Overtraining physically (too much Exercise) risks injury, which locks out Exercise for several days.</p>
-      <p><b>Stat ceilings:</b> Excel Skill and Physical Health cap at ${BAL.statCapBase} until you invest in the Coaching Shop — each level of Personal Coach raises your skill ceiling by ${BAL.statCapPerLevel}, each level of Sports Physio raises your health ceiling the same way. Maxing out at 100 in either stat requires buying every level.</p>
-      <p><b>The season:</b> a ${BAL.preseasonDays}-day preseason to train, then a ${BAL.seasonRounds}-round regular season — one match a week against a named rival, all scheduled in advance. Finish in the top ${BAL.playoffSize} of your ${BAL.seasonRounds + 1}-competitor league to reach the knockout playoffs. Lose a playoff match and you're out; win the Final and you're champion.</p>
+      <p><b>Stat ceilings:</b> each skill caps at ${BAL.skillShopCapBase} until you invest in that skill's dedicated Coach (5 levels, Coaching Shop) — but the effective ceiling is also capped by the highest league you've ever reached (peak, not current), from 60 in League 5 up to 100 in League 1. Both gates must be cleared to hit 100. Physical Health caps at ${BAL.statCapBase} until you invest in Sports Physio.</p>
+      <p><b>The season:</b> a ${BAL.preseasonDays}-day preseason to train, then a ${BAL.seasonRounds}-round regular season — one match a week against a named rival, all scheduled in advance, each testing that week's active skills. Finish in the top ${BAL.playoffSize} of your ${BAL.seasonRounds + 1}-competitor league to reach the knockout playoffs. Lose a playoff match and you're out; win the Final and you're champion.</p>
       <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken, so missing the cut isn't a worse deal than making it and getting knocked out early.</p>
       <p><b>Leagues:</b> there are ${BAL.leagueCount} leagues, League 1 at the top and League 5 at the bottom — you start in League 5. Every league has a persistent roster of named rivals whose ratings evolve from real simulated results year after year, same as yours. Finish top ${BAL.promotionCount} of your league's table at season's end and you're promoted a tier; finish bottom ${BAL.relegationCount} and you're relegated — this applies to every competitor in every league, not just you, so the standings you see are a living world, not scenery. Check the Leagues screen any time to see all ${BAL.leagueCount} tables. Promotion and relegation are based purely on table position — the playoffs are a separate prize, unrelated to which league you're in next year.</p>
       <p>Cash and Rank carry across seasons and leagues — spend cash in the Coaching Shop any time.</p>
@@ -1396,6 +1649,13 @@ function endDay() {
     appendLog(e.html, e.cls);
   });
 
+  const skillCycleEvent = advanceSkillCycle();
+  if (skillCycleEvent) {
+    const e = { html: skillCycleEvent, cls: "event-season" };
+    state.logEntries.push(e);
+    appendLog(e.html, e.cls);
+  }
+
   const { matchResult, phaseEvent } = processDayEnd();
 
   if (matchResult) {
@@ -1433,11 +1693,21 @@ function endDay() {
 /* ---------------------------------------------------------------------- */
 /* Input wiring                                                           */
 /* ---------------------------------------------------------------------- */
-function setAllocation(act, val) {
-  const a = state.allocation;
-  const others = ACT_KEYS.filter((k) => k !== act).reduce((sum, k) => sum + a[k], 0);
-  const maxAllowed = Math.min(ACT_MAX[act], 24 - others);
-  a[act] = clamp(val, 0, Math.max(0, maxAllowed));
+function isSkillKey(key) {
+  return SKILL_KEYS.includes(key);
+}
+function getAllocHours(key) {
+  return isSkillKey(key) ? state.allocation.skills[key] || 0 : state.allocation[key];
+}
+function setAllocHoursRaw(key, val) {
+  if (isSkillKey(key)) state.allocation.skills[key] = val;
+  else state.allocation[key] = val;
+}
+function setAllocation(key, val) {
+  const maxForKey = isSkillKey(key) ? SKILL_MAX_HOURS : ACT_MAX[key];
+  const others = totalAssigned() - getAllocHours(key);
+  const maxAllowed = Math.min(maxForKey, 24 - others);
+  setAllocHoursRaw(key, clamp(val, 0, Math.max(0, maxAllowed)));
   renderPlanner();
 }
 
@@ -1447,13 +1717,30 @@ function wireInputs() {
     input.addEventListener("input", () => setAllocation(k, Number(input.value)));
   });
 
-  document.querySelectorAll(".step-btn").forEach((btn) => {
+  document.querySelectorAll(".activity[data-act] .step-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       const act = btn.getAttribute("data-act");
       const dir = Number(btn.getAttribute("data-dir"));
       if (act === "exercise" && state.injury.active) return;
       setAllocation(act, state.allocation[act] + dir);
     });
+  });
+
+  // Skill rows are rebuilt on every renderPlanner() call (their set changes
+  // weekly), so their inputs are wired via delegation on the stable
+  // container rather than direct listeners that would go stale.
+  const skillContainer = $("skillActivityRows");
+  skillContainer.addEventListener("input", (e) => {
+    if (!e.target.matches("input[type=range]")) return;
+    const key = e.target.getAttribute("data-skill");
+    if (key) setAllocation(key, Number(e.target.value));
+  });
+  skillContainer.addEventListener("click", (e) => {
+    const btn = e.target.closest(".step-btn");
+    if (!btn) return;
+    const key = btn.getAttribute("data-skill");
+    const dir = Number(btn.getAttribute("data-dir"));
+    setAllocation(key, getAllocHours(key) + dir);
   });
 
   $("endDayBtn").addEventListener("click", endDay);

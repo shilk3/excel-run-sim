@@ -37,10 +37,7 @@
 
   <!-- ===== Stat bars ===== -->
   <section class="stats" id="statsSection">
-    <div class="stat" data-stat="excel">
-      <div class="stat-label"><span class="stat-icon">📊</span>Excel Skill<span class="stat-val" id="excelVal">0</span></div>
-      <div class="bar"><div class="bar-fill excel" id="excelBar" style="width:0%"></div></div>
-    </div>
+    <div id="skillStatRows"><!-- 1-3 active skill bars, rendered by renderStats() --></div>
     <div class="stat" data-stat="phys">
       <div class="stat-label"><span class="stat-icon">💪</span>Physical Health<span class="stat-val" id="physVal">0</span></div>
       <div class="bar"><div class="bar-fill phys" id="physBar" style="width:0%"></div></div>
@@ -49,13 +46,13 @@
       <div class="stat-label"><span class="stat-icon">⚡</span>Energy<span class="stat-val" id="energyVal">0</span></div>
       <div class="bar"><div class="bar-fill energy" id="energyBar" style="width:0%"></div></div>
     </div>
-    <div class="stat" data-stat="sleepDebt">
-      <div class="stat-label"><span class="stat-icon">🌙</span>Sleep Debt<span class="stat-val" id="sleepDebtVal">0</span></div>
-      <div class="bar"><div class="bar-fill sleepDebt" id="sleepDebtBar" style="width:0%"></div></div>
+    <div class="stat" data-stat="rest">
+      <div class="stat-label"><span class="stat-icon">🌙</span>Rest<span class="stat-val" id="restVal">0</span></div>
+      <div class="bar"><div class="bar-fill rest" id="restBar" style="width:0%"></div></div>
     </div>
-    <div class="stat" data-stat="stress">
-      <div class="stat-label"><span class="stat-icon">🔥</span>Stress<span class="stat-val" id="stressVal">0</span></div>
-      <div class="bar"><div class="bar-fill stress" id="stressBar" style="width:0%"></div></div>
+    <div class="stat" data-stat="composure">
+      <div class="stat-label"><span class="stat-icon">🧘</span>Composure<span class="stat-val" id="composureVal">0</span></div>
+      <div class="bar"><div class="bar-fill composure" id="composureBar" style="width:0%"></div></div>
     </div>
   </section>
 
@@ -68,18 +65,7 @@
       <div class="hours-left">Unassigned: <span id="hoursLeft">24</span>h</div>
     </div>
 
-    <div class="activity" data-act="excel">
-      <div class="activity-row">
-        <span class="activity-icon">📊</span>
-        <span class="activity-name">Excel Training</span>
-        <span class="activity-hours"><span id="excelHoursVal">0</span>h</span>
-      </div>
-      <div class="stepper">
-        <button class="step-btn" data-act="excel" data-dir="-1">−</button>
-        <input type="range" min="0" max="16" step="1" value="0" id="excelHours" data-act="excel" />
-        <button class="step-btn" data-act="excel" data-dir="1">+</button>
-      </div>
-    </div>
+    <div id="skillActivityRows"><!-- 1-3 active skill training rows, rendered by renderPlanner() --></div>
 
     <div class="activity" data-act="exercise">
       <div class="activity-row">
@@ -89,7 +75,10 @@
       </div>
       <div class="stepper">
         <button class="step-btn" data-act="exercise" data-dir="-1">−</button>
-        <input type="range" min="0" max="12" step="1" value="0" id="exerciseHours" data-act="exercise" />
+        <div class="slider-wrap">
+          <input type="range" min="0" max="12" step="1" value="0" id="exerciseHours" data-act="exercise" />
+          <div class="slider-marker" style="left:8.33%"></div>
+        </div>
         <button class="step-btn" data-act="exercise" data-dir="1">+</button>
       </div>
     </div>
@@ -102,7 +91,10 @@
       </div>
       <div class="stepper">
         <button class="step-btn" data-act="sleep" data-dir="-1">−</button>
-        <input type="range" min="0" max="12" step="1" value="8" id="sleepHours" data-act="sleep" />
+        <div class="slider-wrap">
+          <input type="range" min="0" max="12" step="1" value="8" id="sleepHours" data-act="sleep" />
+          <div class="slider-marker" style="left:66.67%"></div>
+        </div>
         <button class="step-btn" data-act="sleep" data-dir="1">+</button>
       </div>
     </div>
@@ -115,7 +107,10 @@
       </div>
       <div class="stepper">
         <button class="step-btn" data-act="relax" data-dir="-1">−</button>
-        <input type="range" min="0" max="12" step="1" value="0" id="relaxHours" data-act="relax" />
+        <div class="slider-wrap">
+          <input type="range" min="0" max="12" step="1" value="0" id="relaxHours" data-act="relax" />
+          <div class="slider-marker" style="left:25%"></div>
+        </div>
         <button class="step-btn" data-act="relax" data-dir="1">+</button>
       </div>
     </div>
