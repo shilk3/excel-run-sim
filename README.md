@@ -19,12 +19,26 @@ Relaxation. Everything is connected:
 
 **The season**: a 14-day preseason to train, then a 39-round regular season —
 one match a week against a named rival, the full schedule known in advance.
-Finish in the top 16 of the 40-competitor league (you + your rivals) to reach
-the knockout playoffs (Round of 16 → Quarterfinal → Semifinal → Final,
-single elimination). Lose a playoff match and you're out; win the Final and
-you're champion. Either way, a new season with a fresh set of rivals begins
-after a short offseason — Rank, Cash, stats, and Coaching Shop upgrades all
-carry over between years.
+Finish in the top 16 of your 40-competitor league to reach the knockout
+playoffs (Round of 16 → Quarterfinal → Semifinal → Final, single elimination).
+Lose a playoff match and you're out; win the Final and you're champion. Miss
+the playoffs and you get a 28-day training camp instead of a short offseason,
+so missing the cut is never a worse deal than qualifying and getting knocked
+out early.
+
+**Leagues**: 5 tiers (League 1 at the top, League 5 at the bottom — new
+careers start at the bottom). Every league has a persistent roster of 199
+named rivals total across all 5 tiers, whose ratings evolve from real
+simulated results every season, exactly like yours — it's a living world,
+not scenery. Finish top 4 of your league's table and you're promoted a tier;
+finish bottom 4 and you're relegated. This applies to every competitor in
+every league, not just you, so rivals you've never played can climb or fall
+in the background too. Promotion/relegation is based purely on table
+position — the playoffs are a separate prize, unrelated to which league you
+play in next year. Check the Leagues screen any time to see all 5 tables.
+
+Rank, Cash, stats, and Coaching Shop upgrades all carry over between years
+and leagues.
 
 ## Playing it on your iPhone
 

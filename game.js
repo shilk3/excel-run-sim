@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "2.2.1";
+const APP_VERSION = "3.0.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -45,6 +45,22 @@ const BAL = {
   trainingCampDays: 28,
   statCapBase: 70, // Excel Skill / Physical Health ceiling with zero relevant upgrades
   statCapPerLevel: 10, // + this much per Coach / Physio level (max 3 levels -> +30 -> 100)
+  // League structure: 5 tiers, 40 competitors each (199 persistent rivals +
+  // the player, who occupies one slot in whichever tier they're currently in).
+  leagueCount: 5,
+  leagueSize: 40,
+  promotionCount: 4,
+  relegationCount: 4,
+};
+
+// Initial rating bands per league tier (1 = top, 5 = bottom) — only used to
+// seed a fresh roster. Ratings drift from there via real simulated results.
+const LEAGUE_RATING_BANDS = {
+  1: [1350, 1900],
+  2: [1000, 1400],
+  3: [750, 1050],
+  4: [550, 800],
+  5: [350, 600],
 };
 
 // Each upgrade has up to 3 purchasable levels. state.upgrades[key] stores
@@ -151,9 +167,69 @@ function generateOpponentName() {
 }
 
 /* ---------------------------------------------------------------------- */
+/* Persistent league roster                                               */
+/* ---------------------------------------------------------------------- */
+// 199 persistent rivals distributed across the 5 leagues (40 per league),
+// leaving exactly one slot in League 5 for the player to occupy. Every
+// rival keeps its identity and rating for the life of the career, drifting
+// via real simulated results and moving between tiers via promotion and
+// relegation — same as the player.
+function generateRivalRoster(playerTier) {
+  const used = new Set();
+  const rivals = [];
+  let id = 0;
+  // Whichever tier the player occupies gets 39 rivals instead of 40, leaving
+  // the player's slot open; every other tier is a full 40.
+  const countsByTier = { 1: 40, 2: 40, 3: 40, 4: 40, 5: 40 };
+  countsByTier[playerTier] = 39;
+  for (let tier = 1; tier <= 5; tier++) {
+    const [lo, hi] = LEAGUE_RATING_BANDS[tier];
+    for (let i = 0; i < countsByTier[tier]; i++) {
+      let name;
+      do {
+        name = generateOpponentName();
+      } while (used.has(name));
+      used.add(name);
+      rivals.push({ id: id++, name, rating: randInt(lo, hi), league: tier, wins: 0, losses: 0, promotions: 0, relegations: 0 });
+    }
+  }
+  return rivals;
+}
+
+// One-time placement for saves migrating in from before leagues existed —
+// buckets an already-earned rank into the tier whose band it best fits.
+function rankToLeagueTier(rank) {
+  if (rank >= LEAGUE_RATING_BANDS[1][0]) return 1;
+  if (rank >= LEAGUE_RATING_BANDS[2][0]) return 2;
+  if (rank >= LEAGUE_RATING_BANDS[3][0]) return 3;
+  if (rank >= LEAGUE_RATING_BANDS[4][0]) return 4;
+  return 5;
+}
+
+// Pulls the current 39 other members of the given league tier from the
+// persistent roster and shuffles them into this season's fixture order.
+function buildLeagueSchedule(rivals, leagueTier) {
+  const others = rivals.filter((r) => r.league === leagueTier);
+  const shuffled = others.slice();
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = randInt(0, i);
+    const tmp = shuffled[i];
+    shuffled[i] = shuffled[j];
+    shuffled[j] = tmp;
+  }
+  return shuffled.map((r) => ({ rivalId: r.id, name: r.name, rating: r.rating, played: false, win: null }));
+}
+
+function findRival(id) {
+  return state.rivals.find((r) => r.id === id);
+}
+
+/* ---------------------------------------------------------------------- */
 /* State                                                                  */
 /* ---------------------------------------------------------------------- */
 function freshState() {
+  const leagueTier = 5;
+  const rivals = generateRivalRoster(leagueTier);
   return {
     day: 1, // total career days played — flavor/log only
     playerName: null,
@@ -161,16 +237,21 @@ function freshState() {
     seasonPhase: "preseason", // preseason | regular | playoffs | offseason
     phaseDay: 0, // days elapsed in the current phase
     roundIndex: 0, // next regular-season fixture index (0-38)
-    schedule: generateSeasonSchedule(800),
+    leagueTier, // 1 (top) - 5 (bottom); new careers start at the bottom
+    peakLeagueTier: leagueTier, // numerically lowest (best) tier ever reached
+    rivals, // 199 persistent named rivals, spanning all 5 leagues
+    leagueStandings: { 1: null, 2: null, 3: null, 4: null, 5: null }, // last completed season per tier, for the Leagues viewer
+    schedule: buildLeagueSchedule(rivals, leagueTier),
     seasonResults: [], // { opponent, win } per completed regular-season round
     lastStandings: null,
     lastPlayerPosition: null,
+    lastStandingsTier: null, // which league lastStandings was for (may differ from leagueTier after a promotion/relegation)
     offseasonDays: BAL.offseasonDays,
     offseasonReason: null, // "missed" | "playoffs" — set when entering offseason
-    playoff: null, // { stage, currentRound, eliminated, champion, playerSeed }
+    playoff: null, // { stage, currentRound, eliminated, champion, playerSeed, tier }
     cash: 100,
-    rank: 800,
-    peakRank: 800,
+    rank: 480,
+    peakRank: 480,
     wins: 0,
     losses: 0,
     stats: { excel: 8, phys: 65, energy: 80, sleepDebt: 0, stress: 8 },
@@ -221,11 +302,27 @@ function migrateSave(parsed) {
   parsed.upgrades = normalizedUpgrades;
 
   // v2.0.0 introduced the season/league structure (preseason -> 39-round
-  // regular season vs named rivals -> top-16 playoffs -> offseason -> new
-  // year). Any save that predates it starts fresh at Year 1 preseason with
-  // a new schedule anchored to whatever rank they'd already earned.
+  // regular season -> top-16 playoffs -> offseason -> new year). Any save
+  // that predates it needs a Year 1 reset; handled together with the
+  // v3.0.0 migration below since every such save also predates leagues.
   if (!parsed.seasonPhase) {
     parsed.year = 1;
+  }
+
+  // v3.0.0 introduced 5 persistent leagues (199 rivals + the player, 40 per
+  // tier) with promotion/relegation, replacing the old per-season randomly
+  // generated 39-rival schedule. Any save without a roster gets one now,
+  // placed into whichever tier its existing rank best fits, and starts a
+  // fresh preseason there — reconciling an in-flight old-style season
+  // against the new league structure isn't worth the complexity. This also
+  // covers saves from before v2.0.0, which equally lack a roster.
+  if (!parsed.rivals) {
+    const tier = rankToLeagueTier(parsed.rank || 480);
+    const rivals = generateRivalRoster(tier);
+    parsed.rivals = rivals;
+    parsed.leagueTier = tier;
+    parsed.peakLeagueTier = tier;
+    parsed.leagueStandings = { 1: null, 2: null, 3: null, 4: null, 5: null };
     parsed.seasonPhase = "preseason";
     parsed.phaseDay = 0;
     parsed.roundIndex = 0;
@@ -235,7 +332,7 @@ function migrateSave(parsed) {
     parsed.offseasonDays = BAL.offseasonDays;
     parsed.offseasonReason = null;
     parsed.playoff = null;
-    parsed.schedule = generateSeasonSchedule(parsed.rank || 800);
+    parsed.schedule = buildLeagueSchedule(rivals, tier);
   }
 
   return parsed;
@@ -461,37 +558,6 @@ function performanceScore() {
   return clamp(s.excel * 0.55 + s.phys * 0.25 + (100 - s.stress) * 0.15 + (100 - s.sleepDebt) * 0.05, 0, 100);
 }
 
-// A rating-tier toughness bump used only to *anchor* how strong a season's
-// 39 named rivals are when the schedule is generated (higher career rank ->
-// tougher league). It no longer drives individual match matchmaking, since
-// matches are now against a fixed, known schedule.
-function tierToughness(rank) {
-  return Math.floor(Math.max(0, rank - 800) / 150) * 12;
-}
-
-function generateSeasonSchedule(baseRank) {
-  const used = new Set();
-  const schedule = [];
-  for (let i = 0; i < BAL.seasonRounds; i++) {
-    let name;
-    do {
-      name = generateOpponentName();
-    } while (used.has(name));
-    used.add(name);
-    const spread = randInt(-260, 300);
-    const rating = clamp(baseRank + tierToughness(baseRank) + spread, 400, 5000);
-    schedule.push({ name, rating, played: false, win: null });
-  }
-  // Shuffle fixture order so difficulty isn't predictably sorted.
-  for (let i = schedule.length - 1; i > 0; i--) {
-    const j = randInt(0, i);
-    const tmp = schedule[i];
-    schedule[i] = schedule[j];
-    schedule[j] = tmp;
-  }
-  return schedule;
-}
-
 // Resolves one real match for the player against a specific opponent rating.
 // Used for both regular-season fixtures and playoff matches.
 function resolveMatch(opponentRating) {
@@ -542,33 +608,144 @@ function simulateNpcMatch(ratingA, ratingB) {
   return Math.random() < winProbA;
 }
 
-// Called once the player's 39th regular-season match resolves. The other 39
-// rivals' season records are approximated (not a full pairwise round robin)
-// by giving each a win probability from their rating vs the league average,
-// then rolling 39 Bernoulli trials — cheap, and still rating-correlated.
-function computeSeasonStandings() {
-  const avgRating = state.schedule.reduce((sum, o) => sum + o.rating, 0) / state.schedule.length;
-  const npcResults = state.schedule.map((o) => {
-    const p = 1 / (1 + Math.pow(10, (avgRating - o.rating) / 400));
-    let wins = 0;
-    for (let i = 0; i < BAL.seasonRounds; i++) {
-      if (Math.random() < p) wins++;
+function eloChange(ratingA, ratingB, aWon, K = 24) {
+  const winProbA = 1 / (1 + Math.pow(10, (ratingB - ratingA) / 400));
+  return Math.round(K * ((aWon ? 1 : 0) - winProbA));
+}
+
+// Resolves one NPC-vs-NPC match and updates both rivals' persistent ratings
+// and lifetime records — this is what makes the other 199 rivals a real,
+// evolving world rather than static names.
+function resolveNpcMatch(rivalA, rivalB) {
+  const aWon = simulateNpcMatch(rivalA.rating, rivalB.rating);
+  const change = eloChange(rivalA.rating, rivalB.rating, aWon);
+  rivalA.rating = clamp(rivalA.rating + change, 300, 3000);
+  rivalB.rating = clamp(rivalB.rating - change, 300, 3000);
+  if (aWon) {
+    rivalA.wins += 1;
+    rivalB.losses += 1;
+  } else {
+    rivalB.wins += 1;
+    rivalA.losses += 1;
+  }
+  return aWon;
+}
+
+// Simulates a full round-robin (every pair plays once) for a league tier
+// that doesn't contain the player, returning that tier's final standings.
+function simulateLeagueRoundRobin(tier) {
+  const members = state.rivals.filter((r) => r.league === tier);
+  const points = new Map(members.map((r) => [r.id, 0]));
+  for (let i = 0; i < members.length; i++) {
+    for (let j = i + 1; j < members.length; j++) {
+      const aWon = resolveNpcMatch(members[i], members[j]);
+      const winner = aWon ? members[i] : members[j];
+      points.set(winner.id, points.get(winner.id) + 3);
     }
-    return { name: o.name, rating: o.rating, points: wins * 3, isPlayer: false };
-  });
+  }
+  return members
+    .map((r) => ({ name: r.name, rating: r.rating, points: points.get(r.id), isPlayer: false, rivalId: r.id }))
+    .sort((a, b) => b.points - a.points || b.rating - a.rating);
+}
+
+// Same idea for the player's own league: the player's 39 real match results
+// are already known (state.seasonResults), so only the 39x38/2 NPC-vs-NPC
+// pairs among their rivals need simulating; the player's record merges in
+// directly rather than being re-simulated.
+function simulatePlayerLeagueStandings() {
+  const members = state.rivals.filter((r) => r.league === state.leagueTier);
+  const points = new Map(members.map((r) => [r.id, 0]));
+  for (let i = 0; i < members.length; i++) {
+    for (let j = i + 1; j < members.length; j++) {
+      const aWon = resolveNpcMatch(members[i], members[j]);
+      const winner = aWon ? members[i] : members[j];
+      points.set(winner.id, points.get(winner.id) + 3);
+    }
+  }
+  const npcStandings = members.map((r) => ({ name: r.name, rating: r.rating, points: points.get(r.id), isPlayer: false, rivalId: r.id }));
   const playerWins = state.seasonResults.filter((r) => r.win).length;
-  const playerEntry = { name: state.playerName || "You", rating: state.rank, points: playerWins * 3, isPlayer: true };
-  const standings = [...npcResults, playerEntry].sort((a, b) => b.points - a.points || b.rating - a.rating);
-  const playerPosition = standings.findIndex((s) => s.isPlayer) + 1;
+  const playerEntry = { name: state.playerName || "You", rating: state.rank, points: playerWins * 3, isPlayer: true, rivalId: null };
+  return [...npcStandings, playerEntry].sort((a, b) => b.points - a.points || b.rating - a.rating);
+}
+
+// Promotes the top BAL.promotionCount and relegates the bottom
+// BAL.relegationCount of every league simultaneously (coordinated across
+// all 5 tiers so each stays at exactly 40 members), based on the standings
+// already computed for every tier this season. Returns the player's own
+// resulting tier.
+function applyPromotionRelegation(allStandings) {
+  const promoted = {};
+  const relegated = {};
+  const stayed = {};
+
+  for (let tier = 1; tier <= BAL.leagueCount; tier++) {
+    const standings = allStandings[tier];
+    const promoCount = tier > 1 ? BAL.promotionCount : 0;
+    const relCount = tier < BAL.leagueCount ? BAL.relegationCount : 0;
+    promoted[tier] = promoCount > 0 ? standings.slice(0, promoCount) : [];
+    relegated[tier] = relCount > 0 ? standings.slice(standings.length - relCount) : [];
+    const movedIds = new Set([...promoted[tier], ...relegated[tier]].map((e) => e.rivalId));
+    stayed[tier] = standings.filter((e) => !movedIds.has(e.rivalId));
+  }
+
+  let playerNewTier = state.leagueTier;
+  if (promoted[state.leagueTier].some((e) => e.isPlayer)) playerNewTier = state.leagueTier - 1;
+  else if (relegated[state.leagueTier].some((e) => e.isPlayer)) playerNewTier = state.leagueTier + 1;
+
+  for (let tier = 1; tier <= BAL.leagueCount; tier++) {
+    stayed[tier].forEach((e) => {
+      if (e.rivalId != null) findRival(e.rivalId).league = tier;
+    });
+    if (tier > 1) {
+      promoted[tier].forEach((e) => {
+        if (e.rivalId != null) {
+          const r = findRival(e.rivalId);
+          r.league = tier - 1;
+          r.promotions += 1;
+        }
+      });
+    }
+    if (tier < BAL.leagueCount) {
+      relegated[tier].forEach((e) => {
+        if (e.rivalId != null) {
+          const r = findRival(e.rivalId);
+          r.league = tier + 1;
+          r.relegations += 1;
+        }
+      });
+    }
+  }
+
+  return playerNewTier;
+}
+
+// Called once the player's 39th regular-season match resolves. Simulates a
+// full round-robin for every league (not just the player's), so the whole
+// 200-competitor world — all 5 tables — advances together every season.
+function processLeagueSeasonEnd() {
+  const allStandings = {};
+  for (let tier = 1; tier <= BAL.leagueCount; tier++) {
+    allStandings[tier] = tier === state.leagueTier ? simulatePlayerLeagueStandings() : simulateLeagueRoundRobin(tier);
+  }
+
+  const playerStandings = allStandings[state.leagueTier];
+  const playerPosition = playerStandings.findIndex((s) => s.isPlayer) + 1;
   const qualified = playerPosition <= BAL.playoffSize;
-  return { standings, playerPosition, qualified };
+
+  for (let tier = 1; tier <= BAL.leagueCount; tier++) {
+    state.leagueStandings[tier] = allStandings[tier];
+  }
+
+  const playerNewTier = applyPromotionRelegation(allStandings);
+
+  return { standings: playerStandings, playerPosition, qualified, playerNewTier };
 }
 
 // Standard 16-bracket seeding pairs so top seeds are spread across the draw
 // (1 and 2 can only meet in the Final, etc).
 const SEED_PAIRS_16 = [[1, 16], [8, 9], [5, 12], [4, 13], [6, 11], [3, 14], [7, 10], [2, 15]];
 
-function buildPlayoffBracket(standings) {
+function buildPlayoffBracket(standings, tier) {
   const top = standings.slice(0, BAL.playoffSize);
   const bySeed = {};
   top.forEach((team, idx) => {
@@ -579,7 +756,7 @@ function buildPlayoffBracket(standings) {
     currentRound.push(bySeed[a], bySeed[b]);
   });
   const playerSeed = top.findIndex((t) => t.isPlayer) + 1;
-  return { stage: "r16", currentRound, eliminated: false, champion: false, playerSeed };
+  return { stage: "r16", currentRound, eliminated: false, champion: false, playerSeed, tier };
 }
 
 const PLAYOFF_ROUND_NAMES = { r16: "Round of 16", qf: "Quarterfinal", sf: "Semifinal", f: "Final" };
@@ -607,7 +784,12 @@ function resolvePlayoffRound() {
       summary = win ? `🏆 ${roundName} WIN vs ${opp.name}!` : `💔 Eliminated in the ${roundName} by ${opp.name}.`;
       if (!win) p.eliminated = true;
     } else {
-      const aWins = simulateNpcMatch(teamA.rating, teamB.rating);
+      // Uses the persistent-rating-updating resolver so playoff results
+      // also feed back into the rivals' ongoing world, same as the regular
+      // season's round-robin does.
+      const rivalA = findRival(teamA.rivalId);
+      const rivalB = findRival(teamB.rivalId);
+      const aWins = rivalA && rivalB ? resolveNpcMatch(rivalA, rivalB) : simulateNpcMatch(teamA.rating, teamB.rating);
       winners.push(aWins ? teamA : teamB);
     }
   }
@@ -618,7 +800,7 @@ function resolvePlayoffRound() {
   } else if (p.stage === "f") {
     p.champion = true;
     seasonOver = true;
-    summary = `👑 CHAMPION! You won the Year ${state.year} Final!`;
+    summary = `👑 CHAMPION! You won the Year ${state.year} League ${p.tier} Final!`;
     state.cash += 2000;
     state.rank += 40;
     state.peakRank = Math.max(state.peakRank, state.rank);
@@ -664,18 +846,28 @@ function processDayEnd() {
       state.roundIndex += 1;
 
       if (state.roundIndex >= BAL.seasonRounds) {
-        const { standings, playerPosition, qualified } = computeSeasonStandings();
-        state.lastStandings = standings;
-        state.lastPlayerPosition = playerPosition;
-        if (qualified) {
+        const playedTier = state.leagueTier;
+        const result = processLeagueSeasonEnd();
+        state.lastStandings = result.standings;
+        state.lastPlayerPosition = result.playerPosition;
+        state.lastStandingsTier = playedTier;
+        state.leagueTier = result.playerNewTier;
+        state.peakLeagueTier = Math.min(state.peakLeagueTier, state.leagueTier);
+        const moveText =
+          state.leagueTier < playedTier
+            ? ` Promoted to League ${state.leagueTier}!`
+            : state.leagueTier > playedTier
+            ? ` Relegated to League ${state.leagueTier}.`
+            : "";
+        if (result.qualified) {
           state.seasonPhase = "playoffs";
-          state.playoff = buildPlayoffBracket(standings);
-          phaseEvent = `🏆 Regular season complete! Finished #${playerPosition} of ${standings.length} — through to the playoffs as seed ${state.playoff.playerSeed}.`;
+          state.playoff = buildPlayoffBracket(result.standings, playedTier);
+          phaseEvent = `🏆 Regular season complete! Finished #${result.playerPosition} of ${result.standings.length} in League ${playedTier} — through to the playoffs as seed ${state.playoff.playerSeed}.${moveText}`;
         } else {
           state.seasonPhase = "offseason";
           state.offseasonDays = BAL.trainingCampDays;
           state.offseasonReason = "missed";
-          phaseEvent = `📋 Regular season complete. Finished #${playerPosition} of ${standings.length} — missed the top ${BAL.playoffSize} playoff cutoff. ${BAL.trainingCampDays}-day training camp starts now to get ready for next season.`;
+          phaseEvent = `📋 Regular season complete. Finished #${result.playerPosition} of ${result.standings.length} in League ${playedTier} — missed the top ${BAL.playoffSize} playoff cutoff.${moveText} ${BAL.trainingCampDays}-day training camp starts now to get ready for next season.`;
         }
       }
     }
@@ -704,7 +896,7 @@ function processDayEnd() {
       state.seasonPhase = "preseason";
       state.roundIndex = 0;
       state.seasonResults = [];
-      state.schedule = generateSeasonSchedule(state.rank);
+      state.schedule = buildLeagueSchedule(state.rivals, state.leagueTier);
       state.playoff = null;
       // Offseason recovery — a clean slate for the new year.
       state.stats.stress = 0;
@@ -779,10 +971,11 @@ function getNextMatchInfo() {
 
 function phaseLabelText() {
   const s = state;
-  if (s.seasonPhase === "preseason") return "Preseason";
-  if (s.seasonPhase === "regular") return "Regular Season";
-  if (s.seasonPhase === "playoffs") return "Playoffs";
-  if (s.seasonPhase === "offseason") return s.offseasonReason === "missed" ? "Training Camp" : "Offseason";
+  const league = `League ${s.leagueTier} · `;
+  if (s.seasonPhase === "preseason") return league + "Preseason";
+  if (s.seasonPhase === "regular") return league + "Regular Season";
+  if (s.seasonPhase === "playoffs") return league + "Playoffs";
+  if (s.seasonPhase === "offseason") return league + (s.offseasonReason === "missed" ? "Training Camp" : "Offseason");
   return "";
 }
 
@@ -985,6 +1178,7 @@ function openMenu() {
     <h2>Menu</h2>
     <div class="menu-row" id="menuShop"><span>🛒 Coaching Shop</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuCareer"><span>📈 Career &amp; Season</span><span class="arrow">›</span></div>
+    <div class="menu-row" id="menuLeagues"><span>🏅 Leagues</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuRename"><span>✏️ Rename Player</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuHow"><span>❓ How to Play</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuInstall"><span>📲 Add to Home Screen</span><span class="arrow">›</span></div>
@@ -994,6 +1188,7 @@ function openMenu() {
   openModal(html);
   $("menuShop").addEventListener("click", openShop);
   $("menuCareer").addEventListener("click", openCareer);
+  $("menuLeagues").addEventListener("click", () => openLeagues(state.leagueTier));
   $("menuRename").addEventListener("click", () => openNameModal(false));
   $("menuHow").addEventListener("click", openHowTo);
   $("menuInstall").addEventListener("click", openInstall);
@@ -1048,7 +1243,7 @@ function openCareer() {
     const top5 = state.lastStandings.slice(0, 5);
     standingsSection = `
     <div class="modal-section">
-      <h3>Last Season — Final Standings</h3>
+      <h3>Last Season — League ${state.lastStandingsTier} Final Standings</h3>
       <p>You finished <b>#${state.lastPlayerPosition}</b> of ${state.lastStandings.length}.</p>
       <ol class="standings-list">
         ${top5.map((t) => `<li class="${t.isPlayer ? "standings-you" : ""}">${t.name}${t.isPlayer ? " (You)" : ""} — ${t.points} pts</li>`).join("")}
@@ -1062,7 +1257,7 @@ function openCareer() {
     playoffSection = `
     <div class="modal-section">
       <h3>Playoffs</h3>
-      <p>Seed #${state.playoff.playerSeed} of ${BAL.playoffSize} · ${statusText}</p>
+      <p>League ${state.playoff.tier} · Seed #${state.playoff.playerSeed} of ${BAL.playoffSize} · ${statusText}</p>
     </div>`;
   }
 
@@ -1074,7 +1269,8 @@ function openCareer() {
     </div>
     <div class="modal-section">
       <h3>This Season</h3>
-      <p>Year ${state.year} · Round ${seasonPlayed}/${BAL.seasonRounds} · Record ${seasonWins}-${seasonPlayed - seasonWins}</p>
+      <p>Year ${state.year} · League ${state.leagueTier} · Round ${seasonPlayed}/${BAL.seasonRounds} · Record ${seasonWins}-${seasonPlayed - seasonWins}<br>
+      Highest league reached: League ${state.peakLeagueTier}</p>
     </div>
     ${playoffSection}
     ${standingsSection}
@@ -1095,6 +1291,58 @@ function openCareer() {
   openModal(html);
 }
 
+function leagueTableHtml(tier) {
+  const standings = state.leagueStandings[tier];
+  if (!standings) {
+    return `<p class="modal-sub">Not yet available — this table fills in once a season completes while you're in (or have been in) League ${tier}.</p>`;
+  }
+  const rows = standings
+    .map((t, i) => {
+      const pos = i + 1;
+      const zone = pos <= BAL.promotionCount ? "zone-promo" : pos > standings.length - BAL.relegationCount ? "zone-releg" : "";
+      return `
+      <div class="league-row ${zone} ${t.isPlayer ? "league-row-you" : ""}">
+        <span class="league-pos">${pos}</span>
+        <span class="league-name">${t.name}${t.isPlayer ? " (You)" : ""}</span>
+        <span class="league-rating">${fmt(t.rating)}</span>
+        <span class="league-points">${t.points}</span>
+      </div>`;
+    })
+    .join("");
+  return `
+    <div class="league-table-header">
+      <span class="league-pos">#</span>
+      <span class="league-name">Name</span>
+      <span class="league-rating">Rating</span>
+      <span class="league-points">Pts</span>
+    </div>
+    <div class="league-table">${rows}</div>
+    <p class="modal-sub league-legend"><span class="legend-dot legend-promo"></span> Promotion zone · <span class="legend-dot legend-releg"></span> Relegation zone</p>`;
+}
+
+function openLeagues(startTier) {
+  const html = `
+    <h2>Leagues</h2>
+    <div class="league-tabs" id="leagueTabs">
+      ${[1, 2, 3, 4, 5]
+        .map(
+          (t) =>
+            `<button class="league-tab ${t === startTier ? "active" : ""}" data-tier="${t}">L${t}${t === state.leagueTier ? " (You)" : ""}</button>`
+        )
+        .join("")}
+    </div>
+    <div id="leagueTableContainer">${leagueTableHtml(startTier)}</div>`;
+  openModal(html);
+  document.querySelectorAll(".league-tab").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".league-tab").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      const tier = Number(btn.getAttribute("data-tier"));
+      $("leagueTableContainer").innerHTML = leagueTableHtml(tier);
+    });
+  });
+}
+
 function openHowTo() {
   const html = `
     <h2>How to Play</h2>
@@ -1109,9 +1357,10 @@ function openHowTo() {
       <p><b>It's all connected:</b> poor sleep builds Sleep Debt, which wears down Physical Health even if you train well. Low Physical Health caps how much your Excel Training actually helps. Training hard without Relaxation builds Stress — hit 100 and you burn out, tanking your effectiveness until you rest.</p>
       <p>Overtraining physically (too much Exercise) risks injury, which locks out Exercise for several days.</p>
       <p><b>Stat ceilings:</b> Excel Skill and Physical Health cap at ${BAL.statCapBase} until you invest in the Coaching Shop — each level of Personal Coach raises your skill ceiling by ${BAL.statCapPerLevel}, each level of Sports Physio raises your health ceiling the same way. Maxing out at 100 in either stat requires buying every level.</p>
-      <p><b>The season:</b> a ${BAL.preseasonDays}-day preseason to train, then a ${BAL.seasonRounds}-round regular season — one match a week against a named rival, all scheduled in advance. Finish in the top ${BAL.playoffSize} of the ${BAL.seasonRounds + 1}-competitor league (you + your rivals) to reach the knockout playoffs. Lose a playoff match and you're out; win the Final and you're champion.</p>
-      <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken, so missing the cut isn't a worse deal than making it and getting knocked out early. Either way, a new season with a fresh set of rivals begins once the year turns over.</p>
-      <p>Cash and Rank carry across seasons — spend cash in the Coaching Shop any time.</p>
+      <p><b>The season:</b> a ${BAL.preseasonDays}-day preseason to train, then a ${BAL.seasonRounds}-round regular season — one match a week against a named rival, all scheduled in advance. Finish in the top ${BAL.playoffSize} of your ${BAL.seasonRounds + 1}-competitor league to reach the knockout playoffs. Lose a playoff match and you're out; win the Final and you're champion.</p>
+      <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken, so missing the cut isn't a worse deal than making it and getting knocked out early.</p>
+      <p><b>Leagues:</b> there are ${BAL.leagueCount} leagues, League 1 at the top and League 5 at the bottom — you start in League 5. Every league has a persistent roster of named rivals whose ratings evolve from real simulated results year after year, same as yours. Finish top ${BAL.promotionCount} of your league's table at season's end and you're promoted a tier; finish bottom ${BAL.relegationCount} and you're relegated — this applies to every competitor in every league, not just you, so the standings you see are a living world, not scenery. Check the Leagues screen any time to see all ${BAL.leagueCount} tables. Promotion and relegation are based purely on table position — the playoffs are a separate prize, unrelated to which league you're in next year.</p>
+      <p>Cash and Rank carry across seasons and leagues — spend cash in the Coaching Shop any time.</p>
     </div>`;
   openModal(html);
 }

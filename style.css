@@ -412,6 +412,62 @@ input[type="range"]::-webkit-slider-thumb {
   line-height: 1.7;
 }
 .standings-list li.standings-you { color: var(--excel); font-weight: 700; }
+
+.modal-sub { font-size: 12px; color: var(--text-dim); margin: 6px 0 0; }
+
+.league-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+  overflow-x: auto;
+}
+.league-tab {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 700;
+}
+.league-tab.active { background: var(--accent); color: #04241a; border-color: var(--accent); }
+
+.league-table-header,
+.league-row {
+  display: grid;
+  grid-template-columns: 28px 1fr 56px 40px;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 8px;
+  font-size: 13px;
+}
+.league-table-header {
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.league-table {
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.league-row { border-bottom: 1px solid var(--border); }
+.league-row:last-child { border-bottom: none; }
+.league-pos { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.league-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.league-rating, .league-points { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-dim); }
+.league-row.zone-promo { background: rgba(52, 208, 160, 0.07); }
+.league-row.zone-releg { background: rgba(255, 93, 93, 0.07); }
+.league-row.league-row-you { background: rgba(255, 176, 32, 0.12); }
+.league-row.league-row-you .league-name { color: var(--text); font-weight: 700; }
+
+.league-legend { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.legend-dot { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 2px; }
+.legend-dot.legend-promo { background: rgba(52, 208, 160, 0.5); }
+.legend-dot.legend-releg { background: rgba(255, 93, 93, 0.5); }
 .ghost-btn {
   width: 100%;
   padding: 12px;
