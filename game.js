@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.2.0";
+const APP_VERSION = "4.3.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -581,57 +581,49 @@ function fmtSigned(n, decimals = 1) {
 /* ---------------------------------------------------------------------- */
 /* Day resolution — stats only                                            */
 /* ---------------------------------------------------------------------- */
-function resolveDay() {
-  const a = state.allocation;
-  const s = state.stats;
+// Pure, non-mutating: computes what a day WOULD do to every stat given a
+// (allocation, stats) pair, with no randomness (injury is a separate roll,
+// kept out of this function — see resolveDay()). Shared by the real
+// end-of-day resolution and the live "tomorrow" preview on each slider, so
+// the two can never drift apart.
+function computeDayResult(allocation, stats, injuryActive, burnoutActive) {
+  const a = allocation;
+  const s = stats;
   const physioEff = upgradeEffect("physio");
   const sleepAppEff = upgradeEffect("sleepApp");
   const nutritionistEff = upgradeEffect("nutritionist");
   const meditationEff = upgradeEffect("meditation");
   const recoveryEff = upgradeEffect("recovery");
-  const events = [];
 
-  // ---- Injury / burnout lockouts: enforce before computing effects ----
-  let exerciseH = state.injury.active ? 0 : a.exercise;
+  const exerciseH = injuryActive ? 0 : a.exercise;
   const sleepH = a.sleep;
   const relaxH = a.relax;
 
-  const burnoutActive = state.burnout.active;
   const focusMult = burnoutActive ? BAL.burnoutEffectivenessMult : 1;
   const physMult = physSynergy(s.phys);
   const restMult = restTrainingMultiplier(s.rest);
 
-  // ---- The 7 case specialties: outside preseason, only this round's 1-3
-  // active skills can be trained; the rest sit locked (0h, forced) and
-  // quietly rust. Preseason has no rotation yet — everything is open. ----
+  // ---- The 7 case specialties ----
   let totalSkillH = 0;
   const trainable = trainableSkills();
+  const skills = {};
+  const skillWasAtCap = {};
   SKILL_KEYS.forEach((key) => {
-    const meta = skillMeta(key);
     const isActive = trainable.includes(key);
     const hours = isActive ? a.skills[key] || 0 : 0;
     const cap = skillCap(key);
-    const wasAtCap = s.skills[key] >= cap - 0.05;
+    skillWasAtCap[key] = s.skills[key] >= cap - 0.05;
     const coachEff = upgradeEffect(coachKey(key));
     const coachMult = coachEff ? 1 + coachEff.bonus : 1.0;
+    totalSkillH += hours;
 
     if (hours >= BAL.skillDecayThresholdHours) {
-      totalSkillH += hours;
       const eff = effectiveHours(hours);
       const gain = eff * BAL.skillGainBase * focusMult * physMult * restMult * skillDiminish(s.skills[key]) * coachMult;
-      s.skills[key] = clamp(s.skills[key] + gain, 0, cap);
-      let note = "";
-      if (wasAtCap && cap < 100) note = ` (capped at ${cap})`;
-      else if (focusMult < 1) note = " (burnout hurt your training)";
-      else if (physMult < 0.75) note = " (low physical health capped your gains)";
-      events.push({ type: gain > 0.5 ? "good" : "neutral", text: `${meta.icon} ${meta.name} (${hours}h): ${fmtSigned(gain)} skill${note}` });
+      skills[key] = clamp(s.skills[key] + gain, 0, cap);
     } else {
-      totalSkillH += hours;
       const rust = Math.min(0.15, s.skills[key] * 0.003);
-      if (rust > 0) {
-        s.skills[key] = clamp(s.skills[key] - rust, 0, cap);
-        if (isActive) events.push({ type: "bad", text: `${meta.icon} No ${meta.name} training: skill rusted slightly (${fmtSigned(-rust)})` });
-      }
+      skills[key] = clamp(s.skills[key] - rust, 0, cap);
     }
   });
 
@@ -644,61 +636,27 @@ function resolveDay() {
   const detrainMult = recoveryEff ? recoveryEff.detrainMult : 1.0;
   const detrain = exerciseH < BAL.detrainThresholdHours ? BAL.detrainDecay * detrainMult : 0;
   const physDelta = exerciseGain - physDecayFromRest - detrain;
-  s.phys = clamp(s.phys + physDelta, 0, pCap);
-  if (exerciseH > 0) {
-    let note = physWasAtCap && pCap < 100 ? ` (capped at ${pCap} — upgrade Sports Physio for a higher ceiling)` : "";
-    events.push({ type: physDelta > 0 ? "good" : "neutral", text: `🏃 Exercise (${exerciseH}h): ${fmtSigned(physDelta)} physical health${note}` });
-  }
-  if (physDecayFromRest > 1) {
-    events.push({ type: "bad", text: `🌙 Poor Rest is wearing down your body (${fmtSigned(-physDecayFromRest)} health)` });
-  }
+  const phys = clamp(s.phys + physDelta, 0, pCap);
 
-  // ---- Injury roll (only if not already injured) ----
-  if (!state.injury.active && exerciseH > BAL.overtrainThreshold) {
-    const injuryReduceMult = physioEff ? physioEff.injuryReduceMult : 1.0;
-    const excess = exerciseH - BAL.overtrainThreshold;
-    const chance = clamp(excess * BAL.injuryChancePerExcessHour * injuryReduceMult, 0, 0.6);
-    if (Math.random() < chance) {
-      const loss = randInt(BAL.injuryPhysLoss[0], BAL.injuryPhysLoss[1]);
-      const daysReduce = recoveryEff ? recoveryEff.injuryDaysReduce : 0;
-      const days = Math.max(1, randInt(BAL.injuryDaysRange[0], BAL.injuryDaysRange[1]) - daysReduce);
-      s.phys = clamp(s.phys - loss, 0, pCap);
-      state.injury = { active: true, daysLeft: days };
-      events.push({ type: "bad", text: `🤕 Overtraining injury! -${loss} physical health. Exercise disabled for ${days} days.` });
-    }
-  }
-
-  // ---- Nutrition: governs today's total hours budget (see dailyHoursCap),
+  // ---- Nutrition: governs tomorrow's total hours budget (dailyHoursCap),
   // not training effectiveness — decays below the 1h threshold same as
   // every other trainable stat, grows with diminishing returns otherwise.
   const nutritionH = a.nutrition || 0;
-  const nutritionCap = 100;
   const nutritionGainMult = nutritionistEff ? nutritionistEff.nutritionGainMult : 1.0;
   const nutritionDecayMult = nutritionistEff ? nutritionistEff.nutritionDecayMult : 1.0;
+  let nutrition;
   if (nutritionH >= BAL.skillDecayThresholdHours) {
     const gain = effectiveHours(nutritionH) * BAL.nutritionGainBase * skillDiminish(s.nutrition) * nutritionGainMult;
-    s.nutrition = clamp(s.nutrition + gain, 0, nutritionCap);
-    events.push({ type: gain > 0.5 ? "good" : "neutral", text: `🥗 Nutrition (${nutritionH}h): ${fmtSigned(gain)}` });
+    nutrition = clamp(s.nutrition + gain, 0, 100);
   } else {
-    const loss = BAL.nutritionDecayFlat * nutritionDecayMult;
-    s.nutrition = clamp(s.nutrition - loss, 0, nutritionCap);
-    events.push({ type: "bad", text: `🥗 Skipped Nutrition: fell to ${fmt(s.nutrition)} — tomorrow's hours may shrink` });
+    nutrition = clamp(s.nutrition - BAL.nutritionDecayFlat * nutritionDecayMult, 0, 100);
   }
 
   // ---- Rest (renamed/inverted Sleep Debt: higher = better) ----
   const sleepAppMult = sleepAppEff ? sleepAppEff.sleepDebtMult : 1.0;
-  let restDelta;
-  if (sleepH < BAL.idealSleep) {
-    restDelta = -((BAL.idealSleep - sleepH) * 1.3 * sleepAppMult);
-  } else {
-    restDelta = Math.min(sleepH - BAL.idealSleep, 3) * 1.4;
-  }
-  s.rest = clamp(s.rest + restDelta, 0, 100);
-  if (sleepH < 6) {
-    events.push({ type: "bad", text: `🌙 Only slept ${sleepH}h: Rest dropping fast (${fmtSigned(restDelta)})` });
-  } else if (sleepH >= BAL.idealSleep) {
-    events.push({ type: "good", text: `🌙 Slept ${sleepH}h: well rested (Rest ${fmtSigned(restDelta)})` });
-  }
+  const restDelta =
+    sleepH < BAL.idealSleep ? -((BAL.idealSleep - sleepH) * 1.3 * sleepAppMult) : Math.min(sleepH - BAL.idealSleep, 3) * 1.4;
+  const rest = clamp(s.rest + restDelta, 0, 100);
 
   // ---- Composure (renamed/inverted Stress: higher = better) ----
   const meditationMult = meditationEff ? meditationEff.reliefMult : 1.0;
@@ -706,12 +664,120 @@ function resolveDay() {
   const composureRelief = relaxH * BAL.relaxComposureRelief * meditationMult + (sleepH >= BAL.idealSleep ? BAL.restGoodSleepBonus : 0);
   const composurePenaltyFromRest = (100 - s.rest) * 0.1;
   const composureDelta = composureRelief - composureLoad - composurePenaltyFromRest;
-  s.composure = clamp(s.composure + composureDelta, 0, 100);
+  const composure = clamp(s.composure + composureDelta, 0, 100);
 
-  if (relaxH < BAL.relaxComposureThreshold && composureLoad > 5) {
+  return {
+    skills,
+    phys,
+    rest,
+    composure,
+    nutrition,
+    exerciseH,
+    sleepH,
+    relaxH,
+    totalSkillH,
+    focusMult,
+    physMult,
+    restDelta,
+    composureDelta,
+    composureLoad,
+    physDecayFromRest,
+    skillWasAtCap,
+    physWasAtCap,
+    pCap,
+  };
+}
+
+// Non-mutating projection of what tomorrow's stats would be if today
+// resolved exactly as currently planned — drives the "tomorrow" preview
+// overlay on each stat bar. Injury is stochastic and deliberately not
+// previewed (see computeDayResult).
+function previewTomorrow() {
+  return computeDayResult(state.allocation, state.stats, state.injury.active, state.burnout.active);
+}
+
+function resolveDay() {
+  const a = state.allocation;
+  const s = state.stats;
+  const physioEff = upgradeEffect("physio");
+  const recoveryEff = upgradeEffect("recovery");
+  const events = [];
+
+  const result = computeDayResult(a, s, state.injury.active, state.burnout.active);
+  const trainable = trainableSkills();
+
+  // ---- The 7 case specialties ----
+  SKILL_KEYS.forEach((key) => {
+    const meta = skillMeta(key);
+    const isActive = trainable.includes(key);
+    const hours = isActive ? a.skills[key] || 0 : 0;
+    const cap = skillCap(key);
+    const before = s.skills[key];
+    s.skills[key] = result.skills[key];
+    const delta = result.skills[key] - before;
+
+    if (hours >= BAL.skillDecayThresholdHours) {
+      let note = "";
+      if (result.skillWasAtCap[key] && cap < 100) note = ` (capped at ${cap})`;
+      else if (result.focusMult < 1) note = " (burnout hurt your training)";
+      else if (result.physMult < 0.75) note = " (low physical health capped your gains)";
+      events.push({ type: delta > 0.5 ? "good" : "neutral", text: `${meta.icon} ${meta.name} (${hours}h): ${fmtSigned(delta)} skill${note}` });
+    } else if (delta < 0 && isActive) {
+      events.push({ type: "bad", text: `${meta.icon} No ${meta.name} training: skill rusted slightly (${fmtSigned(delta)})` });
+    }
+  });
+
+  // ---- Physical health ----
+  const physBefore = s.phys;
+  s.phys = result.phys;
+  const physDelta = result.phys - physBefore;
+  if (result.exerciseH > 0) {
+    let note = result.physWasAtCap && result.pCap < 100 ? ` (capped at ${result.pCap} — upgrade Sports Physio for a higher ceiling)` : "";
+    events.push({ type: physDelta > 0 ? "good" : "neutral", text: `🏃 Exercise (${result.exerciseH}h): ${fmtSigned(physDelta)} physical health${note}` });
+  }
+  if (result.physDecayFromRest > 1) {
+    events.push({ type: "bad", text: `🌙 Poor Rest is wearing down your body (${fmtSigned(-result.physDecayFromRest)} health)` });
+  }
+
+  // ---- Injury roll (only if not already injured) ----
+  if (!state.injury.active && result.exerciseH > BAL.overtrainThreshold) {
+    const injuryReduceMult = physioEff ? physioEff.injuryReduceMult : 1.0;
+    const excess = result.exerciseH - BAL.overtrainThreshold;
+    const chance = clamp(excess * BAL.injuryChancePerExcessHour * injuryReduceMult, 0, 0.6);
+    if (Math.random() < chance) {
+      const loss = randInt(BAL.injuryPhysLoss[0], BAL.injuryPhysLoss[1]);
+      const daysReduce = recoveryEff ? recoveryEff.injuryDaysReduce : 0;
+      const days = Math.max(1, randInt(BAL.injuryDaysRange[0], BAL.injuryDaysRange[1]) - daysReduce);
+      s.phys = clamp(s.phys - loss, 0, result.pCap);
+      state.injury = { active: true, daysLeft: days };
+      events.push({ type: "bad", text: `🤕 Overtraining injury! -${loss} physical health. Exercise disabled for ${days} days.` });
+    }
+  }
+
+  // ---- Nutrition ----
+  const nutritionBefore = s.nutrition;
+  s.nutrition = result.nutrition;
+  const nutritionH = a.nutrition || 0;
+  if (nutritionH >= BAL.skillDecayThresholdHours) {
+    events.push({ type: result.nutrition - nutritionBefore > 0.5 ? "good" : "neutral", text: `🥗 Nutrition (${nutritionH}h): ${fmtSigned(result.nutrition - nutritionBefore)}` });
+  } else {
+    events.push({ type: "bad", text: `🥗 Skipped Nutrition: fell to ${fmt(s.nutrition)} — tomorrow's hours may shrink` });
+  }
+
+  // ---- Rest ----
+  s.rest = result.rest;
+  if (result.sleepH < 6) {
+    events.push({ type: "bad", text: `🌙 Only slept ${result.sleepH}h: Rest dropping fast (${fmtSigned(result.restDelta)})` });
+  } else if (result.sleepH >= BAL.idealSleep) {
+    events.push({ type: "good", text: `🌙 Slept ${result.sleepH}h: well rested (Rest ${fmtSigned(result.restDelta)})` });
+  }
+
+  // ---- Composure ----
+  s.composure = result.composure;
+  if (result.relaxH < BAL.relaxComposureThreshold && result.composureLoad > 5) {
     events.push({ type: "bad", text: `🔥 Under ${BAL.relaxComposureThreshold}h relaxation: Composure fell to ${fmt(s.composure)}` });
-  } else if (relaxH >= BAL.relaxComposureThreshold) {
-    events.push({ type: "good", text: `🎮 Relaxed ${relaxH}h: Composure ${fmtSigned(composureDelta)}` });
+  } else if (result.relaxH >= BAL.relaxComposureThreshold) {
+    events.push({ type: "good", text: `🎮 Relaxed ${result.relaxH}h: Composure ${fmtSigned(result.composureDelta)}` });
   }
 
   // ---- Burnout state transitions ----
@@ -1249,8 +1315,13 @@ function totalAssigned() {
 // One row does double duty as both the stat readout (name, value/cap, bar)
 // and the time-allocation control (slider + stepper) for a single lever —
 // no more showing the same name twice in two separate sections.
-function comboRowHtml(key, { icon, label, outcomeText, value, cap, hours, maxHours, markerHours, shopTag, disabled, barClass }) {
+function comboRowHtml(key, { icon, label, outcomeText, value, previewValue, cap, hours, maxHours, markerHours, shopTag, disabled, barClass }) {
   const barPct = clamp((value / cap) * 100, 0, 100);
+  const previewPct = previewValue == null ? barPct : clamp((previewValue / cap) * 100, 0, 100);
+  const overlayLeft = Math.min(barPct, previewPct);
+  const overlayWidth = Math.abs(previewPct - barPct);
+  const overlayCls = previewPct > barPct ? "bar-preview-gain" : "bar-preview-loss";
+  const overlayHtml = overlayWidth > 0.3 ? `<div class="bar-preview ${overlayCls} bar-fill ${barClass}" style="left:${overlayLeft}%;width:${overlayWidth}%"></div>` : "";
   const mPct = markerPct(markerHours, maxHours);
   return `
   <div class="activity combo-row ${barClass === "skill" ? "skill-row" : ""}" data-act="${key}" style="${disabled ? "opacity:0.45" : ""}">
@@ -1261,7 +1332,7 @@ function comboRowHtml(key, { icon, label, outcomeText, value, cap, hours, maxHou
       <span class="combo-outcome">${outcomeText}</span>
       <span class="activity-hours"><span id="hoursVal_${key}">${hours}</span>h</span>
     </div>
-    <div class="bar combo-bar"><div class="bar-fill ${barClass}" style="width:${barPct}%"></div></div>
+    <div class="bar combo-bar"><div class="bar-fill ${barClass}" style="width:${barPct}%"></div>${overlayHtml}</div>
     <div class="stepper">
       <button class="step-btn" data-key="${key}" data-dir="-1" ${disabled ? "disabled" : ""}>−</button>
       <div class="slider-wrap">
@@ -1276,6 +1347,7 @@ function comboRowHtml(key, { icon, label, outcomeText, value, cap, hours, maxHou
 function renderPlannerRows() {
   const a = state.allocation;
   const s = state.stats;
+  const preview = previewTomorrow();
   const rows = [];
 
   trainableSkills().forEach((key) => {
@@ -1289,6 +1361,7 @@ function renderPlannerRows() {
         label: meta.name,
         outcomeText: `${fmt(s.skills[key])}/${cap}`,
         value: s.skills[key],
+        previewValue: preview.skills[key],
         cap,
         hours: a.skills[key] || 0,
         maxHours: SKILL_MAX_HOURS,
@@ -1306,6 +1379,7 @@ function renderPlannerRows() {
       label: "Exercise",
       outcomeText: `→ Health ${fmt(s.phys)}/${pCap}`,
       value: s.phys,
+      previewValue: preview.phys,
       cap: pCap,
       hours: a.exercise,
       maxHours: ACT_MAX.exercise,
@@ -1320,6 +1394,7 @@ function renderPlannerRows() {
       label: "Sleep",
       outcomeText: `→ Rest ${fmt(s.rest)}/100`,
       value: s.rest,
+      previewValue: preview.rest,
       cap: 100,
       hours: a.sleep,
       maxHours: ACT_MAX.sleep,
@@ -1333,6 +1408,7 @@ function renderPlannerRows() {
       label: "Relaxation",
       outcomeText: `→ Composure ${fmt(s.composure)}/100`,
       value: s.composure,
+      previewValue: preview.composure,
       cap: 100,
       hours: a.relax,
       maxHours: ACT_MAX.relax,
@@ -1340,12 +1416,16 @@ function renderPlannerRows() {
       barClass: "composure",
     })
   );
+  const capToday = dailyHoursCap(s.nutrition);
+  const capTomorrow = dailyHoursCap(preview.nutrition);
+  const nutritionOutcome = capTomorrow !== capToday ? `${fmt(s.nutrition)}/100 → ${capTomorrow}h tomorrow` : `${fmt(s.nutrition)}/100`;
   rows.push(
     comboRowHtml("nutrition", {
       icon: "🥗",
       label: "Nutrition",
-      outcomeText: `${fmt(s.nutrition)}/100`,
+      outcomeText: nutritionOutcome,
       value: s.nutrition,
+      previewValue: preview.nutrition,
       cap: 100,
       hours: a.nutrition,
       maxHours: ACT_MAX.nutrition,
@@ -1695,7 +1775,7 @@ function openHowTo() {
       🥗 <b>Nutrition</b> — keeps tomorrow's day at full length.
       </p>
       <p><b>It's all connected:</b> low Rest wears down Physical Health even if you train well, and low Physical Health caps how much your skill training actually helps. Training hard without Relaxation drains Composure — hit 0 and you burn out, tanking your effectiveness until it recovers.</p>
-      <p><b>Decay:</b> every stat needs upkeep or it slips. Any skill that isn't active this round rusts; an active skill still rusts below ${BAL.skillDecayThresholdHours}h of training. Exercise below ${BAL.skillDecayThresholdHours}h detrains Physical Health. Sleep below ${BAL.idealSleep}h drains Rest. Relaxation below ${BAL.relaxComposureThreshold}h drains Composure. Nutrition below ${BAL.skillDecayThresholdHours}h drains Nutrition. Each slider shows a marker at its threshold.</p>
+      <p><b>Decay:</b> every stat needs upkeep or it slips. Any skill that isn't active this round rusts; an active skill still rusts below ${BAL.skillDecayThresholdHours}h of training. Exercise below ${BAL.skillDecayThresholdHours}h detrains Physical Health. Sleep below ${BAL.idealSleep}h drains Rest. Relaxation below ${BAL.relaxComposureThreshold}h drains Composure. Nutrition below ${BAL.skillDecayThresholdHours}h drains Nutrition. Each slider shows a marker at its threshold, and each bar shows a faint preview of tomorrow's value — lighter for a gain, darker for a loss — based on your current plan.</p>
       <p><b>Rest</b> swings training itself: above ${BAL.restTrainingBoostThreshold} it's 150% effective, above ${BAL.restTrainingBoostHigh} it's 200% effective. <b>Composure</b> hits match day specifically — below ${BAL.composureMatchMid} your active skills count for only 75%, below ${BAL.composureMatchLow} just 50%. <b>Nutrition</b> sets how many hours you get at all: below ${BAL.nutritionHoursCapLow} your day shrinks to just ${BAL.dailyHoursFloor}h, sliding up to the full ${BAL.dailyHoursCeiling}h at ${BAL.nutritionHoursCapHigh}+.</p>
       <p>Overtraining physically (too much Exercise) risks injury, which locks out Exercise for several days.</p>
       <p><b>Stat ceilings:</b> each skill caps at ${BAL.skillShopCapBase} until you invest in that skill's dedicated Coach (5 levels, Coaching Shop) — but the effective ceiling is also capped by the highest league you've ever reached (peak, not current), from 60 in League 5 up to 100 in League 1. Both gates must be cleared to hit 100. Physical Health caps at ${BAL.statCapBase} until you invest in Sports Physio.</p>

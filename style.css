@@ -106,6 +106,7 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 .bar {
+  position: relative;
   height: 7px;
   border-radius: 999px;
   background: var(--bg-elev-2);
@@ -117,6 +118,19 @@ html, body {
   border-radius: 999px;
   transition: width 0.5s ease;
 }
+/* Tomorrow's projected value, layered over the current bar: a lighter
+   extension past the current fill for a gain, or a dimmed red overlay
+   marking the portion about to be lost for a decay. */
+.bar-preview {
+  position: absolute;
+  top: 0;
+  transition: left 0.2s ease, width 0.2s ease;
+}
+.bar-preview-gain { opacity: 0.4; }
+/* Dark wash rather than a red tint — a red overlay would nearly vanish
+   against the Composure bar, which is already red. Dimming reads as
+   "about to erode" against any bar color. */
+.bar-preview-loss { background: #000 !important; opacity: 0.4; }
 .bar-fill.skill { background: var(--skill); }
 .bar-fill.phys { background: var(--phys); }
 .bar-fill.nutrition { background: var(--nutrition); }
