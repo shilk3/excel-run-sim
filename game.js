@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.1.1";
+const APP_VERSION = "4.2.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -15,13 +15,12 @@ const BAL = {
   skillDecayThresholdHours: 1, // an active skill/Exercise below this hour count rusts
   skillGainBase: 0.24,
   exerciseGainBase: 0.6,
+  nutritionGainBase: 5, // per hour allocated, before diminishing returns near the cap
+  nutritionDecayFlat: 9, // lost per day when under the 1h threshold
   softFatigueCap: 8, // hours per activity before in-day fatigue kicks in
   hardFatigueCap: 12,
   fatigueMultSoft: 0.6, // effectiveness for hours between soft and hard cap
   fatigueMultHard: 0.3, // effectiveness for hours beyond hard cap
-  energyDrainPerHour: { skill: 1.0, exercise: 1.3 },
-  energyRestorePerSleepHour: 10.5,
-  relaxEnergyRestore: 1.2,
   relaxComposureRelief: 2.4,
   composureLoadPerHour: 0.85,
   restGoodSleepBonus: 3, // extra composure relief when sleepHours >= ideal
@@ -34,14 +33,19 @@ const BAL = {
   burnoutEffectivenessMult: 0.2,
   detrainThresholdHours: 1, // exercise hours below this triggers slow detraining
   detrainDecay: 0.35,
-  // Rest's training-effectiveness upside: well-rested days train harder, on
-  // top of (not instead of) Energy's own effect on focus.
+  // Rest is the only stat with a training-effectiveness effect.
   restTrainingBoostThreshold: 80, // <=80 Rest: 100% effective
   restTrainingBoostHigh: 90, // 81-90 Rest: 150%; >90 Rest: 200%
   // Composure's match-day effect: low Composure halves your skill on the
   // day it matters most, recovering in the same step pattern in reverse.
   composureMatchLow: 10, // <10 Composure: 50% skill
   composureMatchMid: 20, // 10-19: 75% skill; >=20: 100% skill
+  // Nutrition governs the total hours available to allocate each day —
+  // neglect it and the day itself gets shorter, not just less effective.
+  nutritionHoursCapLow: 40, // <=40 Nutrition: only the floor below
+  nutritionHoursCapHigh: 90, // >=90 Nutrition: the full day
+  dailyHoursFloor: 16,
+  dailyHoursCeiling: 24,
   // Season structure
   preseasonDays: 14,
   seasonRounds: 39,
@@ -170,9 +174,9 @@ Object.assign(UPGRADES, {
     name: "Nutritionist",
     icon: "🥗",
     levels: [
-      { cost: 300, decayMult: 0.85, desc: "-15% physical decay from low Rest" },
-      { cost: 650, decayMult: 0.75, desc: "-25% physical decay from low Rest" },
-      { cost: 1150, decayMult: 0.6, desc: "-40% physical decay from low Rest" },
+      { cost: 300, nutritionGainMult: 1.15, nutritionDecayMult: 0.85, desc: "+15% Nutrition gain, -15% Nutrition lost when neglected" },
+      { cost: 650, nutritionGainMult: 1.3, nutritionDecayMult: 0.7, desc: "+30% Nutrition gain, -30% Nutrition lost when neglected" },
+      { cost: 1150, nutritionGainMult: 1.5, nutritionDecayMult: 0.5, desc: "+50% Nutrition gain, -50% Nutrition lost when neglected" },
     ],
   },
   meditation: {
@@ -234,6 +238,16 @@ function composureMatchMultiplier(composure) {
   if (composure >= BAL.composureMatchMid) return 1.0;
   if (composure >= BAL.composureMatchLow) return 0.75;
   return 0.5;
+}
+// How many hours the day actually has to allocate, driven by Nutrition —
+// linear between the floor (at/below the low anchor) and a full 24h
+// (at/above the high anchor).
+function dailyHoursCap(nutrition) {
+  const { nutritionHoursCapLow: lo, nutritionHoursCapHigh: hi, dailyHoursFloor: floor, dailyHoursCeiling: ceil } = BAL;
+  if (nutrition <= lo) return floor;
+  if (nutrition >= hi) return ceil;
+  const t = (nutrition - lo) / (hi - lo);
+  return Math.round(floor + t * (ceil - floor));
 }
 
 /* ---------------------------------------------------------------------- */
@@ -347,15 +361,16 @@ function freshState() {
     stats: {
       skills: Object.fromEntries(SKILL_KEYS.map((k) => [k, 8])),
       phys: 65,
-      energy: 80,
       rest: 100, // higher = better; drains when sleep < idealSleep
       composure: 92, // higher = better; drains when relax < relaxComposureThreshold
+      nutrition: 75, // higher = better; drains below 1h/day, and governs the daily hours budget
     },
     allocation: {
       skills: Object.fromEntries(SKILL_KEYS.map((k) => [k, 0])),
       exercise: 1,
       sleep: 8,
       relax: 2,
+      nutrition: 1,
     },
     activeSkills: rollActiveSkills(), // 1-3 skills trainable this round; rerolled weekly
     skillCycleDay: 0, // days elapsed in the current 7-day skill-focus cycle
@@ -449,7 +464,7 @@ function migrateSave(parsed) {
   // exists — 5 flat levels: 300/650/1200 cumulative) since that progress
   // can't carry over 1:1 into 7 separate per-skill coaches.
   if (!parsed.stats || parsed.stats.skills === undefined) {
-    const oldStats = parsed.stats || { excel: 8, phys: 65, energy: 80, sleepDebt: 0, stress: 8 };
+    const oldStats = parsed.stats || { excel: 8, phys: 65, sleepDebt: 0, stress: 8 };
     const oldExcel = oldStats.excel !== undefined ? oldStats.excel : 8;
     // Every skill starts fresh (level 0) in the new per-skill Coaching Shop,
     // so the migrated value can't exceed the shop-base/league-cap gate any
@@ -459,7 +474,6 @@ function migrateSave(parsed) {
     parsed.stats = {
       skills: Object.fromEntries(SKILL_KEYS.map((k) => [k, seededSkill])),
       phys: oldStats.phys !== undefined ? oldStats.phys : 65,
-      energy: oldStats.energy !== undefined ? oldStats.energy : 80,
       rest: oldStats.sleepDebt !== undefined ? clamp(100 - oldStats.sleepDebt, 0, 100) : 100,
       composure: oldStats.stress !== undefined ? clamp(100 - oldStats.stress, 0, 100) : 92,
     };
@@ -478,6 +492,20 @@ function migrateSave(parsed) {
 
     parsed.activeSkills = rollActiveSkills();
     parsed.skillCycleDay = 0;
+  }
+
+  // v4.2.0 removed Energy — Rest already fully covered training
+  // effectiveness — and replaced it with Nutrition, which instead governs
+  // the day's total hours budget. There's no meaningful way to derive
+  // Nutrition from the old Energy number since they measure different
+  // things, so any save missing it just gets the same starting value a
+  // fresh career gets.
+  if (parsed.stats && parsed.stats.nutrition === undefined) {
+    delete parsed.stats.energy;
+    parsed.stats.nutrition = 75;
+  }
+  if (parsed.allocation && parsed.allocation.nutrition === undefined) {
+    parsed.allocation.nutrition = 1;
   }
 
   return parsed;
@@ -520,14 +548,6 @@ function effectiveHours(h, cfg = BAL) {
   const mid = Math.max(0, Math.min(h, hard) - soft) * cfg.fatigueMultSoft;
   const over = Math.max(0, h - hard) * cfg.fatigueMultHard;
   return base + mid + over;
-}
-
-// Composure no longer factors into training focus — it's purely a match-day
-// effect now (see composureMatchMultiplier). Rest supplies training's own
-// separate upside multiplier (see restTrainingMultiplier).
-function focusMultiplier(energy) {
-  const energyFactor = 0.4 + 0.6 * (energy / 100);
-  return clamp(energyFactor, 0.15, 1.0);
 }
 
 function physSynergy(phys) {
@@ -577,7 +597,7 @@ function resolveDay() {
   const relaxH = a.relax;
 
   const burnoutActive = state.burnout.active;
-  const focusMult = focusMultiplier(s.energy) * (burnoutActive ? BAL.burnoutEffectivenessMult : 1);
+  const focusMult = burnoutActive ? BAL.burnoutEffectivenessMult : 1;
   const physMult = physSynergy(s.phys);
   const restMult = restTrainingMultiplier(s.rest);
 
@@ -602,7 +622,7 @@ function resolveDay() {
       s.skills[key] = clamp(s.skills[key] + gain, 0, cap);
       let note = "";
       if (wasAtCap && cap < 100) note = ` (capped at ${cap})`;
-      else if (focusMult < 0.5) note = " (low energy hurt your training)";
+      else if (focusMult < 1) note = " (burnout hurt your training)";
       else if (physMult < 0.75) note = " (low physical health capped your gains)";
       events.push({ type: gain > 0.5 ? "good" : "neutral", text: `${meta.icon} ${meta.name} (${hours}h): ${fmtSigned(gain)} skill${note}` });
     } else {
@@ -620,8 +640,7 @@ function resolveDay() {
   const physWasAtCap = s.phys >= pCap - 0.05;
   const physioMult = physioEff ? 1 + physioEff.exerciseBonus : 1.0;
   const exerciseGain = effectiveHours(exerciseH) * BAL.exerciseGainBase * physioMult * restMult * physDiminish(s.phys);
-  const restDecayFactor = nutritionistEff ? nutritionistEff.decayMult : 1.0;
-  const physDecayFromRest = (100 - s.rest) * 0.045 * restDecayFactor;
+  const physDecayFromRest = (100 - s.rest) * 0.045;
   const detrainMult = recoveryEff ? recoveryEff.detrainMult : 1.0;
   const detrain = exerciseH < BAL.detrainThresholdHours ? BAL.detrainDecay * detrainMult : 0;
   const physDelta = exerciseGain - physDecayFromRest - detrain;
@@ -649,17 +668,22 @@ function resolveDay() {
     }
   }
 
-  // ---- Energy ----
-  // How rested you feel today is driven mainly by *last night's* sleep, not
-  // a slowly-accumulating bank — otherwise a well-rested surplus can quietly
-  // absorb a bad night and Energy never visibly drops. Low Rest degrades how
-  // restorative sleep is; today's activity then spends down whatever that
-  // sleep gave you.
-  const sleepQualityFactor = clamp(0.5 + 0.5 * (s.rest / 100), 0.5, 1);
-  const energyFromSleep = clamp((sleepH / BAL.idealSleep) * 100, 0, 115) * sleepQualityFactor;
-  const energySpend = totalSkillH * BAL.energyDrainPerHour.skill + exerciseH * BAL.energyDrainPerHour.exercise;
-  const relaxEnergyBonus = relaxH * BAL.relaxEnergyRestore;
-  s.energy = clamp(energyFromSleep - energySpend + relaxEnergyBonus, 0, 100);
+  // ---- Nutrition: governs today's total hours budget (see dailyHoursCap),
+  // not training effectiveness — decays below the 1h threshold same as
+  // every other trainable stat, grows with diminishing returns otherwise.
+  const nutritionH = a.nutrition || 0;
+  const nutritionCap = 100;
+  const nutritionGainMult = nutritionistEff ? nutritionistEff.nutritionGainMult : 1.0;
+  const nutritionDecayMult = nutritionistEff ? nutritionistEff.nutritionDecayMult : 1.0;
+  if (nutritionH >= BAL.skillDecayThresholdHours) {
+    const gain = effectiveHours(nutritionH) * BAL.nutritionGainBase * skillDiminish(s.nutrition) * nutritionGainMult;
+    s.nutrition = clamp(s.nutrition + gain, 0, nutritionCap);
+    events.push({ type: gain > 0.5 ? "good" : "neutral", text: `🥗 Nutrition (${nutritionH}h): ${fmtSigned(gain)}` });
+  } else {
+    const loss = BAL.nutritionDecayFlat * nutritionDecayMult;
+    s.nutrition = clamp(s.nutrition - loss, 0, nutritionCap);
+    events.push({ type: "bad", text: `🥗 Skipped Nutrition: fell to ${fmt(s.nutrition)} — tomorrow's hours may shrink` });
+  }
 
   // ---- Rest (renamed/inverted Sleep Debt: higher = better) ----
   const sleepAppMult = sleepAppEff ? sleepAppEff.sleepDebtMult : 1.0;
@@ -1075,7 +1099,7 @@ function processDayEnd() {
       // Offseason recovery — a clean slate for the new year.
       state.stats.composure = 100;
       state.stats.rest = 100;
-      state.stats.energy = 100;
+      state.stats.nutrition = 100;
       phaseEvent = `🎉 Year ${state.year} begins! A fresh ${BAL.seasonRounds}-round season has been scheduled — good luck.`;
     }
     return { matchResult, phaseEvent };
@@ -1177,7 +1201,7 @@ function phaseLabelText() {
 /* ---------------------------------------------------------------------- */
 const $ = (id) => document.getElementById(id);
 
-const ACT_MAX = { exercise: 12, sleep: 12, relax: 12 };
+const ACT_MAX = { exercise: 12, sleep: 12, relax: 12, nutrition: 4 };
 const SKILL_MAX_HOURS = 16;
 
 function markerPct(threshold, max) {
@@ -1194,8 +1218,6 @@ function renderTopbar() {
 
 function renderStats() {
   const s = state.stats;
-  setBar("energy", s.energy, 100);
-
   const banner = $("warningBanner");
   const msgs = [];
   if (state.burnout.active) msgs.push("🔥 Burnout active — training & exercise are far less effective. Relax to recover.");
@@ -1203,6 +1225,7 @@ function renderStats() {
   if (state.injury.active) msgs.push(`🤕 Injured — Exercise disabled for ${state.injury.daysLeft} more day(s).`);
   if (s.rest <= 30) msgs.push("🌙 Severely low Rest — your body is breaking down. Sleep more.");
   if (s.phys <= 20) msgs.push("💪 Physical health critically low — it's capping your training performance.");
+  if (s.nutrition <= BAL.nutritionHoursCapLow) msgs.push(`🥗 Nutrition critical — your day is capped at only ${dailyHoursCap(s.nutrition)}h. Eat better to earn more hours back.`);
 
   if (msgs.length) {
     banner.innerHTML = msgs.join("<br>");
@@ -1220,7 +1243,7 @@ function setBar(key, val, max) {
 function totalAssigned() {
   const a = state.allocation;
   const skillSum = trainableSkills().reduce((sum, k) => sum + (a.skills[k] || 0), 0);
-  return skillSum + a.exercise + a.sleep + a.relax;
+  return skillSum + a.exercise + a.sleep + a.relax + a.nutrition;
 }
 
 // One row does double duty as both the stat readout (name, value/cap, bar)
@@ -1317,16 +1340,32 @@ function renderPlannerRows() {
       barClass: "composure",
     })
   );
+  rows.push(
+    comboRowHtml("nutrition", {
+      icon: "🥗",
+      label: "Nutrition",
+      outcomeText: `${fmt(s.nutrition)}/100`,
+      value: s.nutrition,
+      cap: 100,
+      hours: a.nutrition,
+      maxHours: ACT_MAX.nutrition,
+      markerHours: BAL.skillDecayThresholdHours,
+      barClass: "nutrition",
+    })
+  );
 
   $("plannerRows").innerHTML = rows.join("");
 }
 
 function renderPlanner() {
   renderPlannerRows();
-  const left = 24 - totalAssigned();
+  const cap = dailyHoursCap(state.stats.nutrition);
+  const left = cap - totalAssigned();
   const hoursLeftEl = $("hoursLeft");
   hoursLeftEl.textContent = left;
   hoursLeftEl.classList.toggle("over", left < 0);
+  const capNoteEl = $("hoursCapNote");
+  if (capNoteEl) capNoteEl.textContent = cap < BAL.dailyHoursCeiling ? `of ${cap}h (Nutrition-capped)` : "";
 }
 
 function appendLog(html, cls) {
@@ -1584,9 +1623,9 @@ function openCareer() {
     <div class="modal-section">
       <h3>Current Stats</h3>
       <p>Physical Health: ${fmt(state.stats.phys)} / ${physCap()}${physCap() < 100 ? " (upgrade Physio for more)" : ""}<br>
-      Energy: ${fmt(state.stats.energy)} / 100<br>
       Rest: ${fmt(state.stats.rest)} / 100<br>
-      Composure: ${fmt(state.stats.composure)} / 100</p>
+      Composure: ${fmt(state.stats.composure)} / 100<br>
+      Nutrition: ${fmt(state.stats.nutrition)} / 100 (today's hours: ${dailyHoursCap(state.stats.nutrition)})</p>
     </div>`;
   openModal(html);
 }
@@ -1647,16 +1686,17 @@ function openHowTo() {
   const html = `
     <h2>How to Play</h2>
     <div class="modal-section">
-      <p>You manage a rising Excel esports competitor. Every day has 24 hours — split them across:</p>
+      <p>You manage a rising Excel esports competitor. Every day has up to 24 hours — split them across:</p>
       <p>
       📈🗺️📝🎲🔢⏱️🃏 <b>Skill Training</b> — 7 case specialties (Data, Mapping, Text, Game Logic, Math, Time, Cards). During preseason, all 7 are open for training. Once the regular season starts, only 1-3 are "active" each round, revealed at the start of that round's week — the rest can't be trained until they come up again.<br>
       🏃 <b>Exercise</b> — raises Physical Health.<br>
-      🌙 <b>Sleep</b> — restores Energy and builds Rest.<br>
-      🎮 <b>Relaxation</b> — builds Composure and prevents burnout.
+      🌙 <b>Sleep</b> — builds Rest.<br>
+      🎮 <b>Relaxation</b> — builds Composure and prevents burnout.<br>
+      🥗 <b>Nutrition</b> — keeps tomorrow's day at full length.
       </p>
       <p><b>It's all connected:</b> low Rest wears down Physical Health even if you train well, and low Physical Health caps how much your skill training actually helps. Training hard without Relaxation drains Composure — hit 0 and you burn out, tanking your effectiveness until it recovers.</p>
-      <p><b>Decay:</b> every stat needs upkeep or it slips. Any skill that isn't active this round rusts; an active skill still rusts below ${BAL.skillDecayThresholdHours}h of training. Exercise below ${BAL.skillDecayThresholdHours}h detrains Physical Health. Sleep below ${BAL.idealSleep}h drains Rest. Relaxation below ${BAL.relaxComposureThreshold}h drains Composure. Each slider shows a marker at its threshold.</p>
-      <p><b>Rest</b> also swings training itself: above ${BAL.restTrainingBoostThreshold} it's 150% effective, above ${BAL.restTrainingBoostHigh} it's 200% effective. <b>Composure</b> hits match day specifically — below ${BAL.composureMatchMid} your active skills count for only 75%, below ${BAL.composureMatchLow} just 50%.</p>
+      <p><b>Decay:</b> every stat needs upkeep or it slips. Any skill that isn't active this round rusts; an active skill still rusts below ${BAL.skillDecayThresholdHours}h of training. Exercise below ${BAL.skillDecayThresholdHours}h detrains Physical Health. Sleep below ${BAL.idealSleep}h drains Rest. Relaxation below ${BAL.relaxComposureThreshold}h drains Composure. Nutrition below ${BAL.skillDecayThresholdHours}h drains Nutrition. Each slider shows a marker at its threshold.</p>
+      <p><b>Rest</b> swings training itself: above ${BAL.restTrainingBoostThreshold} it's 150% effective, above ${BAL.restTrainingBoostHigh} it's 200% effective. <b>Composure</b> hits match day specifically — below ${BAL.composureMatchMid} your active skills count for only 75%, below ${BAL.composureMatchLow} just 50%. <b>Nutrition</b> sets how many hours you get at all: below ${BAL.nutritionHoursCapLow} your day shrinks to just ${BAL.dailyHoursFloor}h, sliding up to the full ${BAL.dailyHoursCeiling}h at ${BAL.nutritionHoursCapHigh}+.</p>
       <p>Overtraining physically (too much Exercise) risks injury, which locks out Exercise for several days.</p>
       <p><b>Stat ceilings:</b> each skill caps at ${BAL.skillShopCapBase} until you invest in that skill's dedicated Coach (5 levels, Coaching Shop) — but the effective ceiling is also capped by the highest league you've ever reached (peak, not current), from 60 in League 5 up to 100 in League 1. Both gates must be cleared to hit 100. Physical Health caps at ${BAL.statCapBase} until you invest in Sports Physio.</p>
       <p><b>The season:</b> a ${BAL.preseasonDays}-day preseason to train, then a ${BAL.seasonRounds}-round regular season — one match a week against a named rival, all scheduled in advance, each testing that week's active skills. Finish in the top ${BAL.playoffSize} of your ${BAL.seasonRounds + 1}-competitor league to reach the knockout playoffs. Lose a playoff match and you're out; win the Final and you're champion.</p>
@@ -1755,7 +1795,7 @@ function setAllocHoursRaw(key, val) {
 function setAllocation(key, val) {
   const maxForKey = isSkillKey(key) ? SKILL_MAX_HOURS : ACT_MAX[key];
   const others = totalAssigned() - getAllocHours(key);
-  const maxAllowed = Math.min(maxForKey, 24 - others);
+  const maxAllowed = Math.min(maxForKey, dailyHoursCap(state.stats.nutrition) - others);
   setAllocHoursRaw(key, clamp(val, 0, Math.max(0, maxAllowed)));
   renderPlanner();
 }

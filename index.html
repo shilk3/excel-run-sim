@@ -35,21 +35,13 @@
     </div>
   </header>
 
-  <!-- ===== Stat bars ===== -->
-  <section class="stats" id="statsSection">
-    <div class="stat" data-stat="energy">
-      <div class="stat-label"><span class="stat-icon">⚡</span>Energy<span class="stat-val" id="energyVal">0</span></div>
-      <div class="bar"><div class="bar-fill energy" id="energyBar" style="width:0%"></div></div>
-    </div>
-  </section>
-
   <div id="warningBanner" class="warning-banner hidden"></div>
 
   <!-- ===== Time allocation ===== -->
   <section class="planner">
     <div class="planner-header">
       <h2>Plan Your Day</h2>
-      <div class="hours-left">Unassigned: <span id="hoursLeft">24</span>h</div>
+      <div class="hours-left">Unassigned: <span id="hoursLeft">24</span>h <span id="hoursCapNote" class="hours-cap-note"></span></div>
     </div>
 
     <div id="plannerRows"><!-- skill + exercise/sleep/relax rows, each combining its stat readout and slider, rendered by renderPlanner() --></div>

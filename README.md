@@ -1,8 +1,8 @@
 # Cell Grind — Excel Esports Manager
 
 A mobile-first simulation game: manage a rising Excel esports competitor. Every
-day has 24 hours — split them across Skill Training, Exercise, Sleep, and
-Relaxation. Everything is connected:
+day has up to 24 hours — split them across Skill Training, Exercise, Sleep,
+Relaxation, and Nutrition. Everything is connected:
 
 - **Skill Training** raises one of 7 case specialties — Data Analysis,
   Mapping, Text Processing, Game Logic, Math & Formulas, Time & Dates, and
@@ -11,17 +11,20 @@ Relaxation. Everything is connected:
   exactly those skills. The other 4-6 sit locked and slowly rust.
 - **Exercise** raises Physical Health — but low Physical Health caps how much
   your skill training actually helps.
-- **Sleep** builds Rest and restores Energy. Skimp on sleep and Rest drains,
-  which quietly wears down your Physical Health even if you train hard.
+- **Sleep** builds Rest. Skimp on sleep and Rest drains, which quietly wears
+  down your Physical Health even if you train hard.
 - **Relaxation** builds Composure. Train hard with no downtime and Composure
   drains until you burn out, tanking your effectiveness until you recover.
+- **Nutrition** keeps tomorrow's day at full length — see below.
 - **Decay is universal**: every stat needs upkeep or it slips — an
-  inactive skill, Exercise, Sleep, or Relaxation below its threshold hours
-  (shown as a marker on each slider) causes that stat to fall instead of
-  rise.
-- **Rest** also swings training itself: well-rested days train up to 200%
+  inactive skill, Exercise, Sleep, Relaxation, or Nutrition below its
+  threshold hours (shown as a marker on each slider) causes that stat to
+  fall instead of rise.
+- **Rest** swings training itself: well-rested days train up to 200%
   as effectively. **Composure** swings match day specifically: low
   Composure can cut your active skills' effect on a match in half.
+  **Nutrition** swings how many hours you get at all: below 40 your day
+  shrinks to 16h, sliding up to a full 24h at 90+.
 - Overtrain physically and you risk an injury that locks out Exercise for
   several days.
 - Each skill caps at 50 until you invest match winnings in that skill's
