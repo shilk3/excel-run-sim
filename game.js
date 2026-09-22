@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.1.0";
+const APP_VERSION = "4.1.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1177,10 +1177,7 @@ function phaseLabelText() {
 /* ---------------------------------------------------------------------- */
 const $ = (id) => document.getElementById(id);
 
-const ACT_KEYS = ["exercise", "sleep", "relax"];
-const ACT_INPUT_IDS = { exercise: "exerciseHours", sleep: "sleepHours", relax: "relaxHours" };
 const ACT_MAX = { exercise: 12, sleep: 12, relax: 12 };
-const ACT_DECAY_MARKER = { exercise: BAL.skillDecayThresholdHours, sleep: BAL.idealSleep, relax: BAL.relaxComposureThreshold };
 const SKILL_MAX_HOURS = 16;
 
 function markerPct(threshold, max) {
@@ -1197,25 +1194,7 @@ function renderTopbar() {
 
 function renderStats() {
   const s = state.stats;
-  const trainable = trainableSkills();
-  const skillRows = trainable
-    .map((key) => {
-      const meta = skillMeta(key);
-      const cap = skillCap(key);
-      return `
-      <div class="stat" data-stat="skill-${key}">
-        <div class="stat-label"><span class="stat-icon">${meta.icon}</span>${meta.name}<span class="stat-val" id="skill_${key}Val">0</span><span class="stat-cap">/${cap}</span></div>
-        <div class="bar"><div class="bar-fill skill" id="skill_${key}Bar" style="width:0%"></div></div>
-      </div>`;
-    })
-    .join("");
-  $("skillStatRows").innerHTML = skillRows;
-  trainable.forEach((key) => setBar(`skill_${key}`, s.skills[key], skillCap(key)));
-
-  setBar("phys", s.phys, 100);
   setBar("energy", s.energy, 100);
-  setBar("rest", s.rest, 100);
-  setBar("composure", s.composure, 100);
 
   const banner = $("warningBanner");
   const msgs = [];
@@ -1244,51 +1223,106 @@ function totalAssigned() {
   return skillSum + a.exercise + a.sleep + a.relax;
 }
 
-function renderSkillActivityRows() {
+// One row does double duty as both the stat readout (name, value/cap, bar)
+// and the time-allocation control (slider + stepper) for a single lever —
+// no more showing the same name twice in two separate sections.
+function comboRowHtml(key, { icon, label, outcomeText, value, cap, hours, maxHours, markerHours, shopTag, disabled, barClass }) {
+  const barPct = clamp((value / cap) * 100, 0, 100);
+  const mPct = markerPct(markerHours, maxHours);
+  return `
+  <div class="activity combo-row ${barClass === "skill" ? "skill-row" : ""}" data-act="${key}" style="${disabled ? "opacity:0.45" : ""}">
+    <div class="activity-row">
+      <span class="activity-icon">${icon}</span>
+      <span class="activity-name">${label}</span>
+      ${shopTag || ""}
+      <span class="combo-outcome">${outcomeText}</span>
+      <span class="activity-hours"><span id="hoursVal_${key}">${hours}</span>h</span>
+    </div>
+    <div class="bar combo-bar"><div class="bar-fill ${barClass}" style="width:${barPct}%"></div></div>
+    <div class="stepper">
+      <button class="step-btn" data-key="${key}" data-dir="-1" ${disabled ? "disabled" : ""}>−</button>
+      <div class="slider-wrap">
+        <input type="range" min="0" max="${maxHours}" step="1" value="${hours}" id="hours_${key}" data-key="${key}" ${disabled ? "disabled" : ""} />
+        <div class="slider-marker" style="left:${mPct}%"></div>
+      </div>
+      <button class="step-btn" data-key="${key}" data-dir="1" ${disabled ? "disabled" : ""}>+</button>
+    </div>
+  </div>`;
+}
+
+function renderPlannerRows() {
   const a = state.allocation;
-  const rows = trainableSkills()
-    .map((key) => {
-      const meta = skillMeta(key);
-      const lvl = upgradeLevel(coachKey(key));
-      const shopTag = lvl > 0 ? `<span class="skill-shop-tag">${meta.icon}Lv${lvl}</span>` : `<span class="skill-shop-tag skill-shop-tag-none">no coach</span>`;
-      const hours = a.skills[key] || 0;
-      const pct = markerPct(BAL.skillDecayThresholdHours, SKILL_MAX_HOURS);
-      return `
-      <div class="activity skill-activity" data-skill="${key}">
-        <div class="activity-row">
-          <span class="activity-icon">${meta.icon}</span>
-          <span class="activity-name">${meta.name}</span>
-          ${shopTag}
-          <span class="activity-hours"><span id="skillHoursVal_${key}">${hours}</span>h</span>
-        </div>
-        <div class="stepper">
-          <button class="step-btn" data-skill="${key}" data-dir="-1">−</button>
-          <div class="slider-wrap">
-            <input type="range" min="0" max="${SKILL_MAX_HOURS}" step="1" value="${hours}" id="skillHours_${key}" data-skill="${key}" />
-            <div class="slider-marker" style="left:${pct}%"></div>
-          </div>
-          <button class="step-btn" data-skill="${key}" data-dir="1">+</button>
-        </div>
-      </div>`;
+  const s = state.stats;
+  const rows = [];
+
+  trainableSkills().forEach((key) => {
+    const meta = skillMeta(key);
+    const cap = skillCap(key);
+    const lvl = upgradeLevel(coachKey(key));
+    const shopTag = lvl > 0 ? `<span class="skill-shop-tag">${meta.icon}Lv${lvl}</span>` : `<span class="skill-shop-tag skill-shop-tag-none">no coach</span>`;
+    rows.push(
+      comboRowHtml(key, {
+        icon: meta.icon,
+        label: meta.name,
+        outcomeText: `${fmt(s.skills[key])}/${cap}`,
+        value: s.skills[key],
+        cap,
+        hours: a.skills[key] || 0,
+        maxHours: SKILL_MAX_HOURS,
+        markerHours: BAL.skillDecayThresholdHours,
+        shopTag,
+        barClass: "skill",
+      })
+    );
+  });
+
+  const pCap = physCap();
+  rows.push(
+    comboRowHtml("exercise", {
+      icon: "🏃",
+      label: "Exercise",
+      outcomeText: `→ Health ${fmt(s.phys)}/${pCap}`,
+      value: s.phys,
+      cap: pCap,
+      hours: a.exercise,
+      maxHours: ACT_MAX.exercise,
+      markerHours: BAL.skillDecayThresholdHours,
+      disabled: state.injury.active,
+      barClass: "phys",
     })
-    .join("");
-  $("skillActivityRows").innerHTML = rows;
+  );
+  rows.push(
+    comboRowHtml("sleep", {
+      icon: "🌙",
+      label: "Sleep",
+      outcomeText: `→ Rest ${fmt(s.rest)}/100`,
+      value: s.rest,
+      cap: 100,
+      hours: a.sleep,
+      maxHours: ACT_MAX.sleep,
+      markerHours: BAL.idealSleep,
+      barClass: "rest",
+    })
+  );
+  rows.push(
+    comboRowHtml("relax", {
+      icon: "🎮",
+      label: "Relaxation",
+      outcomeText: `→ Composure ${fmt(s.composure)}/100`,
+      value: s.composure,
+      cap: 100,
+      hours: a.relax,
+      maxHours: ACT_MAX.relax,
+      markerHours: BAL.relaxComposureThreshold,
+      barClass: "composure",
+    })
+  );
+
+  $("plannerRows").innerHTML = rows.join("");
 }
 
 function renderPlanner() {
-  const a = state.allocation;
-  renderSkillActivityRows();
-
-  ACT_KEYS.forEach((k) => {
-    $(ACT_INPUT_IDS[k]).value = a[k];
-    $(`${k}HoursVal`).textContent = a[k];
-  });
-
-  const exercise = $("exerciseHours");
-  const exerciseRow = document.querySelector('.activity[data-act="exercise"]');
-  exercise.disabled = state.injury.active;
-  exerciseRow.style.opacity = state.injury.active ? 0.45 : 1;
-
+  renderPlannerRows();
   const left = 24 - totalAssigned();
   const hoursLeftEl = $("hoursLeft");
   hoursLeftEl.textContent = left;
@@ -1727,33 +1761,20 @@ function setAllocation(key, val) {
 }
 
 function wireInputs() {
-  ACT_KEYS.forEach((k) => {
-    const input = $(ACT_INPUT_IDS[k]);
-    input.addEventListener("input", () => setAllocation(k, Number(input.value)));
-  });
-
-  document.querySelectorAll(".activity[data-act] .step-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const act = btn.getAttribute("data-act");
-      const dir = Number(btn.getAttribute("data-dir"));
-      if (act === "exercise" && state.injury.active) return;
-      setAllocation(act, state.allocation[act] + dir);
-    });
-  });
-
-  // Skill rows are rebuilt on every renderPlanner() call (their set changes
-  // weekly), so their inputs are wired via delegation on the stable
-  // container rather than direct listeners that would go stale.
-  const skillContainer = $("skillActivityRows");
-  skillContainer.addEventListener("input", (e) => {
+  // Every row (skills and exercise/sleep/relax alike) is rebuilt on every
+  // renderPlanner() call, so all inputs are wired via delegation on the
+  // stable container rather than direct listeners that would go stale.
+  const container = $("plannerRows");
+  container.addEventListener("input", (e) => {
     if (!e.target.matches("input[type=range]")) return;
-    const key = e.target.getAttribute("data-skill");
+    const key = e.target.getAttribute("data-key");
     if (key) setAllocation(key, Number(e.target.value));
   });
-  skillContainer.addEventListener("click", (e) => {
+  container.addEventListener("click", (e) => {
     const btn = e.target.closest(".step-btn");
     if (!btn) return;
-    const key = btn.getAttribute("data-skill");
+    const key = btn.getAttribute("data-key");
+    if (key === "exercise" && state.injury.active) return;
     const dir = Number(btn.getAttribute("data-dir"));
     setAllocation(key, getAllocHours(key) + dir);
   });
