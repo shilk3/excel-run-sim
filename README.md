@@ -33,15 +33,15 @@ Relaxation, and Nutrition. Everything is connected:
   up to 100 in League 1. Both gates must be cleared to hit 100. Physical
   Health caps at 70 until you invest in Sports Physio.
 - **Work** funds everything else. 9h/day, every phase, no exceptions — you
-  start with 3 lives, and the bar shows exactly what today's shortfall will
-  cost before you end the day. Come up short and you lose a chunk of a life
-  scaled to the shortfall (a near-miss costs barely anything, skipping the
-  day entirely costs a full life), regained after 3 weeks; run out of lives
-  and you're fired, and the same slider becomes a Job Search until you log
-  30 cumulative hours. Reach League 2 with $5,000 banked while employed and
-  you go pro automatically: Work drops to 5h/day of Pro Duties, same lives
-  rule. Pros also have to stay current — a new Excel technique appears
-  roughly every 30 days needing 25-40h to master (any Pro Duties hours
+  start with 3.0 chances, and the bar shows exactly what today's shortfall
+  will cost before you end the day. Come up short and you lose a chunk of a
+  chance scaled to the shortfall (a near-miss costs barely anything,
+  skipping the day entirely costs a full chance), regained after 3 weeks;
+  run out of chances and you're fired, and the same slider becomes a Job
+  Search until you log 30 cumulative hours. Reach League 2 with $5,000
+  banked while employed and you go pro automatically: Work drops to 5h/day
+  of Pro Duties, same chances rule. Pros also have to stay current — a new
+  Excel technique appears roughly every 30 days needing 25-40h to master (any Pro Duties hours
   beyond the 5h minimum go toward it); falling behind never costs you
   progress, but every not-yet-mastered technique costs 5% match performance.
 - **Cost of living**: $50/day, charged no matter what — employed or not,

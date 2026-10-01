@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.9.4";
+const APP_VERSION = "4.10.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1059,7 +1059,7 @@ function resolveEmploymentDay() {
       const label = isPro ? "Pro Duties" : "Work";
       const total = employmentStrikeCount();
       const lives = livesRemaining();
-      events.push({ type: "bad", text: `💼 Missed your ${label} hours — lost ${fmt1(amount)} ${amount === 1 ? "life" : "lives"} (${fmt1(lives)}/${BAL.strikesToFire} left).` });
+      events.push({ type: "bad", text: `💼 Missed your ${label} hours — lost ${fmt1(amount)} ${amount === 1 ? "chance" : "chances"} (${fmt1(lives)}/${fmt1(BAL.strikesToFire)} left).` });
       if (total >= BAL.strikesToFire) {
         emp.status = "unemployed";
         emp.strikes = [];
@@ -1071,8 +1071,8 @@ function resolveEmploymentDay() {
         events.push({
           type: "bad",
           text: isPro
-            ? `🔥 Out of lives — dropped by your sponsor after too many missed Pro Duties. Time to find a new job.`
-            : `🔥 Out of lives — fired after too many missed shifts. Time to find a new job.`,
+            ? `🔥 Out of chances — dropped by your sponsor after too many missed Pro Duties. Time to find a new job.`
+            : `🔥 Out of chances — fired after too many missed shifts. Time to find a new job.`,
         });
       }
     }
@@ -1747,6 +1747,7 @@ function workRowHtml() {
       icon: "🔍",
       label: "Job Search",
       outcomeText: `${fmt(emp.jobSearchHours)}/${BAL.jobSearchHoursNeeded}h`,
+      shopTag: `<span class="skill-shop-tag">Job Search</span>`,
       value: emp.jobSearchHours,
       cap: BAL.jobSearchHoursNeeded,
       hours,
@@ -1759,12 +1760,14 @@ function workRowHtml() {
   const isPro = emp.status === "pro";
   const required = isPro ? BAL.proDutyHoursRequired : BAL.workHoursRequired;
   const atRisk = hours < required;
-  const livesText = `${fmt1(livesRemaining())}/${BAL.strikesToFire} lives`;
+  const livesText = `${fmt1(livesRemaining())}/${fmt1(BAL.strikesToFire)} chances`;
   const outcomeText = (isPro ? `${livesText} · ${techniqueStatusText()}` : livesText) + (atRisk ? " ⚠️" : "");
+  const statusTag = `<span class="skill-shop-tag">${isPro ? "Esports Pro" : "Employed"}</span>`;
   return comboRowHtml("work", {
     icon: isPro ? "📱" : "💼",
     label: isPro ? "Pro Duties" : "Work",
     outcomeText,
+    shopTag: statusTag,
     value: jobSecurityPct(),
     previewValue: jobSecurityPreviewPct(hours, isPro),
     cap: 100,
@@ -2094,7 +2097,7 @@ function employmentSectionHtml() {
   const emp = state.employment;
   const lives = livesRemaining();
   const strikeLines = emp.strikes
-    .map((s) => `-${fmt1(s.amount != null ? s.amount : 1)} life on Day ${s.day} (clears Day ${s.day + BAL.strikeWindowDays})`)
+    .map((s) => `-${fmt1(s.amount != null ? s.amount : 1)} chance on Day ${s.day} (clears Day ${s.day + BAL.strikeWindowDays})`)
     .join("<br>");
 
   if (emp.status === "unemployed") {
@@ -2107,14 +2110,14 @@ function employmentSectionHtml() {
     const queueHtml = queue.length
       ? queue.map((t, i) => `${i === 0 ? "▶" : "⏸"} ${t.name}: ${fmt(t.hoursDone)}/${t.hoursNeeded}h`).join("<br>")
       : "Fully caught up — no match penalty.";
-    return `<p>🏆 <b>Pro</b> · Pro Duties ${BAL.proDutyHoursRequired}h/day required ($${fmt(emp.proPay)}/day) · ${fmt1(lives)}/${BAL.strikesToFire} lives${strikeLines ? "<br>" + strikeLines : ""}</p>
+    return `<p>🏆 <b>Pro</b> · Pro Duties ${BAL.proDutyHoursRequired}h/day required ($${fmt(emp.proPay)}/day) · ${fmt1(lives)}/${fmt1(BAL.strikesToFire)} chances${strikeLines ? "<br>" + strikeLines : ""}</p>
       <p><b>Technique queue</b> (hours above ${BAL.proDutyHoursRequired}h/day go here)${penalty > 0 ? ` — currently <b>-${penalty}%</b> match performance` : ""}:<br>${queueHtml}</p>`;
   }
 
   const goProHint = checkGoProEligible()
     ? "Thresholds met — going pro next time a day resolves."
     : `Go pro at League ${BAL.goProLeagueTier}+ and $${BAL.goProCash}+ banked (currently League ${state.leagueTier}, $${fmt(state.cash)}).`;
-  return `<p>💼 <b>Employed</b> · Work ${BAL.workHoursRequired}h/day required ($${fmt(emp.workPay)}/day) · ${fmt1(lives)}/${BAL.strikesToFire} lives${strikeLines ? "<br>" + strikeLines : ""}</p>
+  return `<p>💼 <b>Employed</b> · Work ${BAL.workHoursRequired}h/day required ($${fmt(emp.workPay)}/day) · ${fmt1(lives)}/${fmt1(BAL.strikesToFire)} chances${strikeLines ? "<br>" + strikeLines : ""}</p>
     <p>${goProHint}</p>`;
 }
 
@@ -2314,7 +2317,7 @@ function openHowTo() {
       <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken, so missing the cut isn't a worse deal than making it and getting knocked out early.</p>
       <p><b>Leagues:</b> there are ${BAL.leagueCount} leagues, League 1 at the top and League 5 at the bottom — you start in League 5. Every league has a persistent roster of named rivals whose ratings evolve from real simulated results every week, same as yours — every tier's table is live from round 1, not just visible once the season ends. Finish top ${BAL.promotionCount} of your league's table at season's end and you're promoted a tier; finish bottom ${BAL.relegationCount} and you're relegated — this applies to every competitor in every league, not just you, so the standings you see are a living world, not scenery. Check the Leagues screen any time (Menu, or the shortcut in Career) to see all ${BAL.leagueCount} tables. Promotion and relegation are based purely on table position — the playoffs are a separate prize, unrelated to which league you're in next year.</p>
       <p>Cash and Rank carry across seasons and leagues — spend cash in the Coaching Shop any time.</p>
-      <p><b>Employment:</b> your day job funds everything else, every phase, no exceptions. Work ${BAL.workHoursRequired}h/day (every phase, preseason included), starting at $${BAL.workPayMin}/day — fall short and you lose a chunk of a life scaled to the shortfall, regained ${BAL.strikeWindowDays} days later. Run out of your ${BAL.strikesToFire} lives and you're fired: the same slider becomes a Job Search, needing ${BAL.jobSearchHoursNeeded} cumulative hours (any daily amount counts) to get rehired. Reach League ${BAL.goProLeagueTier}+ with $${BAL.goProCash}+ banked while employed and you go Pro automatically — Work drops to just ${BAL.proDutyHoursRequired}h/day of Pro Duties, starting at $${BAL.proPayMin}/day, with the same lives rule and the same fallback to Job Search if you're dropped.</p>
+      <p><b>Employment:</b> your day job funds everything else, every phase, no exceptions. Work ${BAL.workHoursRequired}h/day (every phase, preseason included), starting at $${BAL.workPayMin}/day — fall short and you lose a chunk of a chance scaled to the shortfall, regained ${BAL.strikeWindowDays} days later. Run out of your ${fmt1(BAL.strikesToFire)} chances and you're fired: the same slider becomes a Job Search, needing ${BAL.jobSearchHoursNeeded} cumulative hours (any daily amount counts) to get rehired. Reach League ${BAL.goProLeagueTier}+ with $${BAL.goProCash}+ banked while employed and you go Pro automatically — Work drops to just ${BAL.proDutyHoursRequired}h/day of Pro Duties, starting at $${BAL.proPayMin}/day, with the same chances rule and the same fallback to Job Search if you're dropped.</p>
       <p><b>Pay &amp; seniority:</b> pay rises $${BAL.payRaisePerYear}/year for your first ${BAL.payRaiseMaxYears} years in a role, then holds — Work tops out at $${BAL.workPayMin + BAL.payRaisePerYear * BAL.payRaiseMaxYears}/day, Pro Duties at $${BAL.proPayMin + BAL.payRaisePerYear * BAL.payRaiseMaxYears}/day. Lose the job or get dropped from Pro and that role's pay resets to its minimum for next time — seniority isn't carried over.</p>
       <p><b>Cost of living:</b> $${BAL.dailyExpenses}/day, charged every single day no matter your employment status — stay employed and you net a profit, but lose your job and the bills don't stop, so cash actively drains while you're out of work. Each new year opens with a summary of that year's full cash flow: pay earned, match winnings, and expenses paid.</p>
       <p>Pros have one more thing to manage: staying current. Roughly every ${BAL.techniqueIntervalDays} days a new Excel technique appears that needs ${BAL.techniqueMinHours}-${BAL.techniqueMaxHours}h to master — any Pro Duties hours beyond the ${BAL.proDutyHoursRequired}h minimum go toward it. Falling behind never costs you progress (new ones just queue up), but every technique still unmastered costs ${Math.round(BAL.techniquePenaltyPerUnmastered * 100)}% match performance, stacking.</p>
