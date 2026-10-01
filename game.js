@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.5.4";
+const APP_VERSION = "4.6.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -291,8 +291,18 @@ function dailyHoursCap(nutrition) {
 function checkGoProEligible() {
   return state.leagueTier <= BAL.goProLeagueTier && state.cash >= BAL.goProCash;
 }
+// Fractional strikes for falling short of the daily requirement — indexed by
+// hours actually worked. Hand-tuned, not a formula: a near-miss costs far
+// less than blowing the day off entirely, which always costs a full strike.
+const WORK_STRIKE_TABLE = [1, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.1, 0]; // Work: 9h/day required
+const PRO_STRIKE_TABLE = [1, 0.7, 0.4, 0.2, 0.1, 0]; // Pro Duties: 5h/day required
+function strikeAmount(hours, isPro) {
+  const table = isPro ? PRO_STRIKE_TABLE : WORK_STRIKE_TABLE;
+  return table[clamp(Math.floor(hours), 0, table.length - 1)];
+}
 function employmentStrikeCount() {
-  return state.employment.strikes.length;
+  const raw = state.employment.strikes.reduce((sum, s) => sum + (s.amount != null ? s.amount : 1), 0);
+  return Math.round(raw * 10) / 10;
 }
 // A synthetic 0-100 "job security" readout for the Work/Pro Duties bar —
 // full with no strikes, shrinking toward 0 as they stack up.
@@ -727,6 +737,10 @@ function fmt(n) {
   return Math.round(n).toString();
 }
 
+function fmt1(n) {
+  return (Math.round(n * 10) / 10).toFixed(1);
+}
+
 function fmtSigned(n, decimals = 1) {
   const r = Number(n.toFixed(decimals));
   return (r >= 0 ? "+" : "") + r;
@@ -994,10 +1008,12 @@ function resolveEmploymentDay() {
         }
       }
     } else {
-      emp.strikes.push({ day: state.day });
+      const amount = strikeAmount(workH, isPro);
+      emp.strikes.push({ day: state.day, amount });
       const label = isPro ? "Pro Duties" : "Work";
-      events.push({ type: "bad", text: `💼 Missed your ${label} hours — strike ${emp.strikes.length}/${BAL.strikesToFire}.` });
-      if (emp.strikes.length >= BAL.strikesToFire) {
+      const total = employmentStrikeCount();
+      events.push({ type: "bad", text: `💼 Missed your ${label} hours — +${fmt1(amount)} strike (${fmt1(total)}/${BAL.strikesToFire}).` });
+      if (total >= BAL.strikesToFire) {
         emp.status = "unemployed";
         emp.strikes = [];
         emp.jobSearchHours = 0;
@@ -1649,7 +1665,7 @@ function workRowHtml() {
   const isPro = emp.status === "pro";
   const required = isPro ? BAL.proDutyHoursRequired : BAL.workHoursRequired;
   const atRisk = hours < required;
-  const strikesText = `${employmentStrikeCount()}/${BAL.strikesToFire} strikes`;
+  const strikesText = `${fmt1(employmentStrikeCount())}/${BAL.strikesToFire} strikes`;
   const outcomeText = (isPro ? `${strikesText} · ${techniqueStatusText()}` : strikesText) + (atRisk ? " ⚠️" : "");
   return comboRowHtml("work", {
     icon: isPro ? "📱" : "💼",
@@ -1959,7 +1975,7 @@ function openNameModal(isFirstTime) {
 function employmentSectionHtml() {
   const emp = state.employment;
   const strikeLines = emp.strikes
-    .map((s) => `Strike from Day ${s.day} (expires Day ${s.day + BAL.strikeWindowDays})`)
+    .map((s) => `+${fmt1(s.amount != null ? s.amount : 1)} strike from Day ${s.day} (expires Day ${s.day + BAL.strikeWindowDays})`)
     .join("<br>");
 
   if (emp.status === "unemployed") {
@@ -1972,14 +1988,14 @@ function employmentSectionHtml() {
     const queueHtml = queue.length
       ? queue.map((t, i) => `${i === 0 ? "▶" : "⏸"} ${t.name}: ${fmt(t.hoursDone)}/${t.hoursNeeded}h`).join("<br>")
       : "Fully caught up — no match penalty.";
-    return `<p>🏆 <b>Pro</b> · Pro Duties ${BAL.proDutyHoursRequired}h/day required ($${BAL.workDailyPay}/day) · ${employmentStrikeCount()}/${BAL.strikesToFire} strikes${strikeLines ? "<br>" + strikeLines : ""}</p>
+    return `<p>🏆 <b>Pro</b> · Pro Duties ${BAL.proDutyHoursRequired}h/day required ($${BAL.workDailyPay}/day) · ${fmt1(employmentStrikeCount())}/${BAL.strikesToFire} strikes${strikeLines ? "<br>" + strikeLines : ""}</p>
       <p><b>Technique queue</b> (hours above ${BAL.proDutyHoursRequired}h/day go here)${penalty > 0 ? ` — currently <b>-${penalty}%</b> match performance` : ""}:<br>${queueHtml}</p>`;
   }
 
   const goProHint = checkGoProEligible()
     ? "Thresholds met — going pro next time a day resolves."
     : `Go pro at League ${BAL.goProLeagueTier}+ and $${BAL.goProCash}+ banked (currently League ${state.leagueTier}, $${fmt(state.cash)}).`;
-  return `<p>💼 <b>Employed</b> · Work ${BAL.workHoursRequired}h/day required ($${BAL.workDailyPay}/day) · ${employmentStrikeCount()}/${BAL.strikesToFire} strikes${strikeLines ? "<br>" + strikeLines : ""}</p>
+  return `<p>💼 <b>Employed</b> · Work ${BAL.workHoursRequired}h/day required ($${BAL.workDailyPay}/day) · ${fmt1(employmentStrikeCount())}/${BAL.strikesToFire} strikes${strikeLines ? "<br>" + strikeLines : ""}</p>
     <p>${goProHint}</p>`;
 }
 

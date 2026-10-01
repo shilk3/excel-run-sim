@@ -32,9 +32,11 @@ Relaxation, and Nutrition. Everything is connected:
   also capped by the highest league you've ever reached, from 60 in League 5
   up to 100 in League 1. Both gates must be cleared to hit 100. Physical
   Health caps at 70 until you invest in Sports Physio.
-- **Work** funds everything else. 9h/day, every phase, no exceptions — miss
-  it and you get a strike (it clears itself after 3 weeks); 3 strikes and
-  you're fired, and the same slider becomes a Job Search until you log 30
+- **Work** funds everything else. 9h/day, every phase, no exceptions — come
+  up short and you get a partial strike that scales with the shortfall
+  (a near-miss costs barely anything, skipping the day entirely costs a
+  full strike), clearing itself after 3 weeks; 3 strikes' worth and you're
+  fired, and the same slider becomes a Job Search until you log 30
   cumulative hours. Reach League 2 with $5,000 banked while employed and you
   go pro automatically: Work drops to 5h/day of Pro Duties, same strike
   rule. Pros also have to stay current — a new Excel technique appears
