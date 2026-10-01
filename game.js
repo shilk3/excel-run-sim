@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.10.0";
+const APP_VERSION = "4.10.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1881,6 +1881,12 @@ function renderPlanner() {
   hoursLeftEl.classList.toggle("unassigned", left > 0);
   const capNoteEl = $("hoursCapNote");
   if (capNoteEl) capNoteEl.textContent = cap < BAL.dailyHoursCeiling ? `of ${cap}h (Nutrition-capped)` : "";
+  // Over-allocated (the cap can shrink overnight via Nutrition after hours
+  // were already set against yesterday's higher cap) — block ending the day
+  // until it's brought back down to the new, smaller budget.
+  const endDayBtn = $("endDayBtn");
+  endDayBtn.disabled = left < 0;
+  endDayBtn.title = left < 0 ? "Over today's hours budget — reduce allocation before ending the day" : "";
 }
 
 function appendLog(html, cls) {
@@ -2343,6 +2349,10 @@ function openInstall() {
 /* End day flow                                                           */
 /* ---------------------------------------------------------------------- */
 function endDay() {
+  // Defensive: the button is disabled whenever this is true, but guard the
+  // action itself too in case it's ever reachable another way.
+  if (dailyHoursCap(state.stats.nutrition) - totalAssigned() < 0) return;
+
   const dayHeaderHtml = `Day ${state.day} — Results`;
   const entry = { html: dayHeaderHtml, cls: "day-header" };
   state.logEntries.push(entry);
