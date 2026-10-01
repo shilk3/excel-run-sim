@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.11.0";
+const APP_VERSION = "4.11.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1767,7 +1767,8 @@ function workRowHtml() {
   const atRisk = hours < required;
   const livesText = `${fmt1(livesRemaining())}/${fmt1(BAL.strikesToFire)} chances`;
   const outcomeText = (isPro ? `${livesText} · ${techniqueStatusText()}` : livesText) + (atRisk ? " ⚠️" : "");
-  const statusTag = `<span class="skill-shop-tag">${isPro ? "Esports Pro" : "Employed"}</span>`;
+  const payPerDay = isPro ? emp.proPay : emp.workPay;
+  const statusTag = `<span class="skill-shop-tag">${isPro ? "Esports Pro" : "Employed"} · $${fmt(payPerDay)}/day</span>`;
   return comboRowHtml("work", {
     icon: isPro ? "📱" : "💼",
     label: isPro ? "Pro Duties" : "Work",
@@ -2110,9 +2111,13 @@ function employmentSectionHtml() {
   const strikeLines = emp.strikes
     .map((s) => `-${fmt1(s.amount != null ? s.amount : 1)} chance on Day ${s.day} (clears Day ${s.day + BAL.strikeWindowDays})`)
     .join("<br>");
+  // Shown regardless of status — it's charged every day no matter what, so
+  // it belongs here rather than cluttering the main planner row, which
+  // already shows the pay side of the ledger.
+  const expensesLine = `<p class="modal-sub">💸 Cost of living: $${fmt(BAL.dailyExpenses)}/day, every day, regardless of employment status.</p>`;
 
   if (emp.status === "unemployed") {
-    return `<p>🔍 <b>Unemployed</b> — job searching: ${fmt(emp.jobSearchHours)} / ${BAL.jobSearchHoursNeeded}h accumulated. Any hours allocated to the slider count, no daily minimum.</p>`;
+    return `${expensesLine}<p>🔍 <b>Unemployed</b> — job searching: ${fmt(emp.jobSearchHours)} / ${BAL.jobSearchHoursNeeded}h accumulated. Any hours allocated to the slider count, no daily minimum.</p>`;
   }
 
   if (emp.status === "pro") {
@@ -2121,14 +2126,14 @@ function employmentSectionHtml() {
     const queueHtml = queue.length
       ? queue.map((t, i) => `${i === 0 ? "▶" : "⏸"} ${t.name}: ${fmt(t.hoursDone)}/${t.hoursNeeded}h`).join("<br>")
       : "Fully caught up — no match penalty.";
-    return `<p>🏆 <b>Pro</b> · Pro Duties ${BAL.proDutyHoursRequired}h/day required ($${fmt(emp.proPay)}/day) · ${fmt1(lives)}/${fmt1(BAL.strikesToFire)} chances${strikeLines ? "<br>" + strikeLines : ""}</p>
+    return `${expensesLine}<p>🏆 <b>Pro</b> · Pro Duties ${BAL.proDutyHoursRequired}h/day required ($${fmt(emp.proPay)}/day) · ${fmt1(lives)}/${fmt1(BAL.strikesToFire)} chances${strikeLines ? "<br>" + strikeLines : ""}</p>
       <p><b>Technique queue</b> (hours above ${BAL.proDutyHoursRequired}h/day go here)${penalty > 0 ? ` — currently <b>-${penalty}%</b> match performance` : ""}:<br>${queueHtml}</p>`;
   }
 
   const goProHint = checkGoProEligible()
     ? "Thresholds met — going pro next time a day resolves."
     : `Go pro at League ${BAL.goProLeagueTier}+ and $${BAL.goProCash}+ banked (currently League ${state.leagueTier}, $${fmt(state.cash)}).`;
-  return `<p>💼 <b>Employed</b> · Work ${BAL.workHoursRequired}h/day required ($${fmt(emp.workPay)}/day) · ${fmt1(lives)}/${fmt1(BAL.strikesToFire)} chances${strikeLines ? "<br>" + strikeLines : ""}</p>
+  return `${expensesLine}<p>💼 <b>Employed</b> · Work ${BAL.workHoursRequired}h/day required ($${fmt(emp.workPay)}/day) · ${fmt1(lives)}/${fmt1(BAL.strikesToFire)} chances${strikeLines ? "<br>" + strikeLines : ""}</p>
     <p>${goProHint}</p>`;
 }
 
