@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.11.2";
+const APP_VERSION = "4.12.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1136,6 +1136,13 @@ function performanceScore() {
   return score;
 }
 
+// Your effective strength for a match right now: base rank, adjusted by
+// today's performance. The single source of truth for that adjustment, so
+// win-probability and any "what fought" display can never drift apart.
+function currentMatchRating() {
+  return state.rank + (performanceScore() - 70) * 3;
+}
+
 // Resolves one real match for the player against a specific opponent rating.
 // Used for both regular-season fixtures and playoff matches.
 // Perfect performance (100) gives a strong but no longer overwhelming form
@@ -1143,8 +1150,7 @@ function performanceScore() {
 // opponent. Shared by the real match resolution and any "what are my
 // chances" preview, so the two can never drift apart.
 function winProbabilityAgainst(opponentRating) {
-  const perf = performanceScore();
-  const matchRating = state.rank + (perf - 70) * 3;
+  const matchRating = currentMatchRating();
   return 1 / (1 + Math.pow(10, (opponentRating - matchRating) / 400));
 }
 
@@ -1160,8 +1166,12 @@ function resolveMatch(opponentRating) {
   }
 
   const perf = performanceScore();
+  const matchRating = currentMatchRating();
   const winProb = winProbabilityAgainst(opponentRating);
-  const win = Math.random() < winProb;
+  // The actual dice roll that decided it — captured so the result modal can
+  // show exactly how close (or not) the outcome was, not just the odds.
+  const roll = Math.random();
+  const win = roll < winProb;
   const K = 24;
   const actual = win ? 1 : 0;
   let ratingChange = Math.round(K * (actual - winProb));
@@ -1179,8 +1189,10 @@ function resolveMatch(opponentRating) {
     forfeit: false,
     win,
     perf,
+    matchRating: Math.round(matchRating),
     opponentRating: Math.round(opponentRating),
     winProb: Math.round(winProb * 100),
+    roll: Math.round(roll * 100),
     ratingChange,
     cashReward,
   };
@@ -1832,7 +1844,7 @@ function renderPlannerRows() {
     comboRowHtml("sleep", {
       icon: "🌙",
       label: "Sleep",
-      outcomeText: `→ Rest ${fmt(s.rest)}/100`,
+      outcomeText: `→ Rest ${fmt(s.rest)}/100 · ×${restTrainingMultiplier(s.rest).toFixed(1)} training`,
       value: s.rest,
       previewValue: preview.rest,
       cap: 100,
@@ -1846,7 +1858,7 @@ function renderPlannerRows() {
     comboRowHtml("relax", {
       icon: "🎮",
       label: "Relaxation",
-      outcomeText: `→ Composure ${fmt(s.composure)}/100`,
+      outcomeText: `→ Composure ${fmt(s.composure)}/100 · ×${composureMatchMultiplier(s.composure)} match`,
       value: s.composure,
       previewValue: preview.composure,
       cap: 100,
@@ -1959,6 +1971,8 @@ function showMatchModal(result) {
           <div><b>${fmtSigned(result.ratingChange, 0)}</b>Rank</div>
           <div><b>$${result.cashReward}</b>Prize</div>
         </div>
+        <div class="match-sub">Your match rating: ${result.matchRating} vs Opponent: ${result.opponentRating}</div>
+        <div class="match-sub">Roll: ${result.roll} (needed under ${result.winProb} to win)</div>
         <div class="match-sub">New rank: ${fmt(state.rank)}</div>
         <button class="primary-btn" id="matchOk">Continue</button>
       </div>`;
