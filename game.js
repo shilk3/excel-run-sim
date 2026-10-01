@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.15.1";
+const APP_VERSION = "4.15.2";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -2040,8 +2040,8 @@ function showMatchModal(result) {
             : ""
         }
         <div class="match-stats">
-          <div><b>${fmt(result.perf)}</b>Performance</div>
-          <div><b>${fmtSigned(result.ratingChange, 0)}</b>Rank</div>
+          <div><b>${fmt(result.perf)}/100</b>Performance</div>
+          <div><b>${fmt(state.rank - result.ratingChange)}→${fmt(state.rank)}</b>Rank</div>
           <div><b>$${result.cashReward}</b>Prize</div>
         </div>
         <div class="match-sub">Performance = Skill ${fmt(result.breakdown.weighted.skill)} (55%) + Health ${fmt(
