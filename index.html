@@ -23,16 +23,18 @@
 
   <!-- ===== Top bar ===== -->
   <header class="topbar">
-    <div class="topbar-left">
+    <div class="topbar-top">
       <div class="brand">Cell Grind</div>
+      <div class="topbar-right">
+        <button class="chip" id="cashChip" title="Prize money">💰 <span id="cashVal">0</span></button>
+        <button class="chip" id="rankChip" title="Rank rating">🏆 <span id="rankVal">800</span></button>
+        <button class="icon-btn" id="menuBtn" aria-label="Menu">☰</button>
+      </div>
+    </div>
+    <div class="topbar-info">
       <div class="day-counter">Y<span id="yearNum">1</span> · <span id="phaseLabel">Preseason</span></div>
       <div class="match-counter" id="matchCounter">Season starts in 14d</div>
       <div class="match-counter" id="matchCounter2"></div>
-    </div>
-    <div class="topbar-right">
-      <button class="chip" id="cashChip" title="Prize money">💰 <span id="cashVal">0</span></button>
-      <button class="chip" id="rankChip" title="Rank rating">🏆 <span id="rankVal">800</span></button>
-      <button class="icon-btn" id="menuBtn" aria-label="Menu">☰</button>
     </div>
   </header>
 
