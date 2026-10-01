@@ -169,7 +169,8 @@ html, body {
 }
 .planner-header h2 { font-size: 15px; margin: 0; }
 .hours-left { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
-.hours-left.over { color: var(--danger); font-weight: 700; }
+#hoursLeft.over { color: var(--danger); font-weight: 700; }
+#hoursLeft.unassigned { color: var(--warn); font-weight: 700; }
 .hours-cap-note { color: var(--warn); }
 
 .activity { padding: 6px 0; border-top: 1px solid var(--border); }

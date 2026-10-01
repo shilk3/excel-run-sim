@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.9.1";
+const APP_VERSION = "4.9.2";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1862,6 +1862,7 @@ function renderPlanner() {
   const hoursLeftEl = $("hoursLeft");
   hoursLeftEl.textContent = left;
   hoursLeftEl.classList.toggle("over", left < 0);
+  hoursLeftEl.classList.toggle("unassigned", left > 0);
   const capNoteEl = $("hoursCapNote");
   if (capNoteEl) capNoteEl.textContent = cap < BAL.dailyHoursCeiling ? `of ${cap}h (Nutrition-capped)` : "";
 }
