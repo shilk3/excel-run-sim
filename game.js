@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.14.1";
+const APP_VERSION = "4.14.2";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -709,6 +709,15 @@ function migrateSave(parsed) {
 
     const playerWinsSoFar = (parsed.seasonResults || []).filter((r) => r.win).length;
     parsed.leaguePoints[tier].player = playerWinsSoFar * 3;
+  }
+
+  // skillCycleDay and phaseDay always advance together outside preseason —
+  // same every-day increment, same reset-at-7 (every phase length is a
+  // multiple of 7 by design). A save written while a prior bug let them
+  // drift (the weekly skill reveal landing a day before that week's match)
+  // gets them realigned here instead of carrying the offset forever.
+  if (parsed.seasonPhase && parsed.seasonPhase !== "preseason" && parsed.skillCycleDay !== parsed.phaseDay) {
+    parsed.skillCycleDay = parsed.phaseDay;
   }
 
   return parsed;
@@ -1656,10 +1665,14 @@ function getNextMatchInfo() {
 // revealed only now, at the end of the previous cycle, never in advance.
 // Hours pending on the old active skills are cleared since they're about to
 // become untrainable; the player reassigns under the new focus.
-function advanceSkillCycle() {
+function advanceSkillCycle(wasPreseason) {
   // Preseason trains everything (see trainableSkills()), so the weekly
-  // reveal is frozen until the regular season actually begins.
-  if (isPreseason()) return null;
+  // reveal is frozen until the regular season actually begins. Takes the
+  // caller's pre-processDayEnd() snapshot rather than checking isPreseason()
+  // live — processDayEnd() runs first now and can flip seasonPhase to
+  // "regular" on this exact call, which would make this check fire a day
+  // early and permanently offset skillCycleDay from phaseDay from then on.
+  if (wasPreseason) return null;
   state.skillCycleDay += 1;
   if (state.skillCycleDay < 7) return null;
   state.skillCycleDay = 0;
@@ -2430,6 +2443,11 @@ function endDay() {
     appendLog(e.html, e.cls);
   });
 
+  // Snapshot before processDayEnd() can flip seasonPhase (e.g. preseason ->
+  // regular right on this call) out from under advanceSkillCycle()'s own
+  // preseason check below.
+  const wasPreseason = isPreseason();
+
   // Resolve this week's match (if today's the day) before the skill focus
   // rerolls — the match grades the skills actually trained this week, not
   // whatever gets revealed for the week ahead.
@@ -2452,7 +2470,7 @@ function endDay() {
     appendLog(e.html, e.cls);
   }
 
-  const skillCycleEvent = advanceSkillCycle();
+  const skillCycleEvent = advanceSkillCycle(wasPreseason);
   if (skillCycleEvent) {
     const e = { html: skillCycleEvent, cls: "event-season" };
     state.logEntries.push(e);
