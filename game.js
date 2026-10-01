@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.9.2";
+const APP_VERSION = "4.9.3";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -2222,10 +2222,15 @@ function leagueTableHtml(tier) {
   } else {
     return `<p class="modal-sub">Not yet available — this table fills in once this league's first round resolves.</p>`;
   }
+  // League 1 is already the top — no promotion zone. League 5 is already
+  // the bottom — no relegation zone. Matches applyPromotionRelegation()'s
+  // own tier > 1 / tier < leagueCount gating exactly.
+  const showPromo = tier > 1;
+  const showReleg = tier < BAL.leagueCount;
   const rows = standings
     .map((t, i) => {
       const pos = i + 1;
-      const zone = pos <= BAL.promotionCount ? "zone-promo" : pos > standings.length - BAL.relegationCount ? "zone-releg" : "";
+      const zone = showPromo && pos <= BAL.promotionCount ? "zone-promo" : showReleg && pos > standings.length - BAL.relegationCount ? "zone-releg" : "";
       return `
       <div class="league-row ${zone} ${t.isPlayer ? "league-row-you" : ""}">
         <span class="league-pos">${pos}</span>
@@ -2235,6 +2240,10 @@ function leagueTableHtml(tier) {
       </div>`;
     })
     .join("");
+  const legendParts = [];
+  if (showPromo) legendParts.push(`<span class="legend-dot legend-promo"></span> Promotion zone`);
+  if (showReleg) legendParts.push(`<span class="legend-dot legend-releg"></span> Relegation zone`);
+  const legend = legendParts.length ? `<p class="modal-sub league-legend">${legendParts.join(" · ")}</p>` : "";
   return `
     <p class="modal-sub">${noteText}</p>
     <div class="league-table-header">
@@ -2244,7 +2253,7 @@ function leagueTableHtml(tier) {
       <span class="league-points">Pts</span>
     </div>
     <div class="league-table">${rows}</div>
-    <p class="modal-sub league-legend"><span class="legend-dot legend-promo"></span> Promotion zone · <span class="legend-dot legend-releg"></span> Relegation zone</p>`;
+    ${legend}`;
 }
 
 function openLeagues(startTier) {
