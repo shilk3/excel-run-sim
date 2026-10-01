@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.9.0";
+const APP_VERSION = "4.9.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1691,8 +1691,10 @@ function comboRowHtml(key, { icon, label, outcomeText, value, previewValue, cap,
   const previewPct = previewValue == null ? barPct : clamp((previewValue / cap) * 100, 0, 100);
   const overlayLeft = Math.min(barPct, previewPct);
   const overlayWidth = Math.abs(previewPct - barPct);
+  // Always green for a gain, always red for a loss — not tinted by the
+  // bar's own color — so direction reads at a glance.
   const overlayCls = previewPct > barPct ? "bar-preview-gain" : "bar-preview-loss";
-  const overlayHtml = overlayWidth > 0.3 ? `<div class="bar-preview ${overlayCls} bar-fill ${barClass}" style="left:${overlayLeft}%;width:${overlayWidth}%"></div>` : "";
+  const overlayHtml = overlayWidth > 0.3 ? `<div class="bar-preview ${overlayCls} bar-fill" style="left:${overlayLeft}%;width:${overlayWidth}%"></div>` : "";
   const mPct = markerPct(markerHours, maxHours);
   // Tint the slider track itself so meeting (or missing) a stat's decay
   // threshold reads at a glance, not just from the marker tick.

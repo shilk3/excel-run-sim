@@ -119,19 +119,19 @@ html, body {
   border-radius: 999px;
   transition: width 0.5s ease;
 }
-/* Tomorrow's projected value, layered over the current bar: a lighter
-   extension past the current fill for a gain, or a dimmed red overlay
-   marking the portion about to be lost for a decay. */
+/* Tomorrow's projected value, layered over the current bar: always green
+   for a gain and always red for a decay, regardless of the bar's own
+   color, so direction reads at a glance without checking the number. */
 .bar-preview {
   position: absolute;
   top: 0;
   transition: left 0.2s ease, width 0.2s ease;
 }
-.bar-preview-gain { opacity: 0.4; }
-/* Dark wash rather than a red tint — a red overlay would nearly vanish
-   against the Composure bar, which is already red. Dimming reads as
-   "about to erode" against any bar color. */
-.bar-preview-loss { background: #000 !important; opacity: 0.4; }
+.bar-preview-gain { background: var(--skill) !important; opacity: 0.55; }
+/* A darker, more saturated red than the Composure bar's own (lighter)
+   red — same hue family would otherwise nearly vanish on that bar, so
+   the loss overlay leans darker to stay legible there too. */
+.bar-preview-loss { background: #e03131 !important; opacity: 0.6; }
 .bar-fill.skill { background: var(--skill); }
 .bar-fill.phys { background: var(--phys); }
 .bar-fill.nutrition { background: var(--nutrition); }
