@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.15.3";
+const APP_VERSION = "4.15.4";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1961,7 +1961,7 @@ function renderPlanner() {
   // The "why" (Nutrition) lives on Nutrition's own row now — this just
   // states the number so the header stays one line.
   const capNoteEl = $("hoursCapNote");
-  if (capNoteEl) capNoteEl.textContent = cap < BAL.dailyHoursCeiling ? `of ${cap}h` : "";
+  if (capNoteEl) capNoteEl.textContent = cap < BAL.dailyHoursCeiling ? ` of ${cap}h` : "";
   // Over-allocated (the cap can shrink overnight via Nutrition after hours
   // were already set against yesterday's higher cap) — block ending the day
   // until it's brought back down to the new, smaller budget.

@@ -33,7 +33,10 @@
     </div>
     <div class="topbar-info">
       <div class="match-counter" id="matchCounter">Y1 · League 5 · Preseason · Season starts in 14d</div>
-      <div class="match-counter match-counter-sub" id="matchCounter2"></div>
+      <div class="topbar-sub-row">
+        <div class="match-counter match-counter-sub" id="matchCounter2"></div>
+        <div class="hours-left topbar-hours">Unassigned: <span id="hoursLeft">24</span>h<span id="hoursCapNote" class="hours-cap-note"></span></div>
+      </div>
     </div>
   </header>
 
@@ -43,7 +46,6 @@
   <section class="planner">
     <div class="planner-header">
       <h2>Plan Your Day</h2>
-      <div class="hours-left">Unassigned: <span id="hoursLeft">24</span>h <span id="hoursCapNote" class="hours-cap-note"></span></div>
     </div>
 
     <div id="plannerRows"><!-- skill + exercise/sleep/relax rows, each combining its stat readout and slider, rendered by renderPlanner() --></div>
