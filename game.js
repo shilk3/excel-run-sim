@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.5.3";
+const APP_VERSION = "4.5.4";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1467,7 +1467,9 @@ function getNextMatchInfo() {
         ? `Rd ${roundNum} TODAY vs ${fixture.name} · ${winPct}%`
         : `Rd ${roundNum}/${BAL.seasonRounds} vs ${fixture.name} · ${winPct}% · ${daysUntil}d`,
       labelLine1: daysUntil <= 0 ? `Rd ${roundNum} TODAY vs ${fixture.name}` : `Rd ${roundNum}/${BAL.seasonRounds} vs ${fixture.name}`,
-      labelLine2: daysUntil <= 0 ? `${winPct}% win chance` : `${winPct}% win · ${daysUntil}d`,
+      labelLine2: daysUntil <= 0
+        ? `${winPct}% chance of winning today's battle`
+        : `${winPct}% chance of winning next battle in ${daysUntil}d`,
     };
   }
   if (s.seasonPhase === "playoffs") {
@@ -1490,7 +1492,9 @@ function getNextMatchInfo() {
         ? `${roundName} TODAY vs ${opp ? opp.name : "?"}${winPct != null ? " · " + winPct + "%" : ""}`
         : `${roundName} vs ${opp ? opp.name : "?"}${winPct != null ? " · " + winPct + "%" : ""} · ${daysUntil}d`,
       labelLine1: daysUntil <= 0 ? `${roundName} TODAY vs ${opp ? opp.name : "?"}` : `${roundName} vs ${opp ? opp.name : "?"}`,
-      labelLine2: winPct != null ? (daysUntil <= 0 ? `${winPct}% win chance` : `${winPct}% win · ${daysUntil}d`) : `${daysUntil}d`,
+      labelLine2: winPct != null
+        ? (daysUntil <= 0 ? `${winPct}% chance of winning today's battle` : `${winPct}% chance of winning next battle in ${daysUntil}d`)
+        : `${daysUntil}d`,
     };
   }
   if (s.seasonPhase === "offseason") {
@@ -1525,7 +1529,7 @@ function advanceSkillCycle() {
 
 function phaseLabelText() {
   const s = state;
-  const league = `L${s.leagueTier} · `;
+  const league = `League ${s.leagueTier} · `;
   if (s.seasonPhase === "preseason") return league + "Preseason";
   if (s.seasonPhase === "regular") return league + "Regular";
   if (s.seasonPhase === "playoffs") return league + "Playoffs";
