@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.14.2";
+const APP_VERSION = "4.15.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1459,6 +1459,11 @@ function processDayEnd() {
     if (state.phaseDay >= BAL.roundIntervalDays) {
       state.phaseDay = 0;
       const fixture = state.schedule[state.roundIndex];
+      // Table position before this round's results land, for the match
+      // summary's "moved from X to Y" — rank/rating alone don't tell you
+      // where you actually sit in the table.
+      const standingsBefore = buildStandingsFromPoints(state.leagueTier);
+      const positionBefore = standingsBefore.findIndex((r) => r.isPlayer) + 1;
       matchResult = resolveMatch(fixture.rating);
       matchResult.opponentName = fixture.name;
       matchResult.roundLabel = `Round ${state.roundIndex + 1}/${BAL.seasonRounds}`;
@@ -1475,6 +1480,10 @@ function processDayEnd() {
       for (let tier = 1; tier <= BAL.leagueCount; tier++) {
         resolveLeagueRoundForTier(tier, state.roundIndex);
       }
+      const standingsAfter = buildStandingsFromPoints(state.leagueTier);
+      matchResult.positionBefore = positionBefore;
+      matchResult.positionAfter = standingsAfter.findIndex((r) => r.isPlayer) + 1;
+      matchResult.leagueSize = standingsAfter.length;
       state.roundIndex += 1;
 
       if (state.roundIndex >= BAL.seasonRounds) {
@@ -1999,6 +2008,11 @@ function showMatchModal(result) {
       <div class="match-card">
         <div class="match-result loss">FORFEIT</div>
         <div class="match-sub">${context ? context + " — " : ""}${result.text}</div>
+        ${
+          typeof result.positionAfter === "number"
+            ? `<div class="match-sub">League table: #${result.positionBefore} → #${result.positionAfter} of ${result.leagueSize}</div>`
+            : ""
+        }
         <button class="primary-btn" id="matchOk">Continue</button>
       </div>`;
   } else {
@@ -2006,6 +2020,11 @@ function showMatchModal(result) {
       <div class="match-card">
         <div class="match-result ${result.win ? "win" : "loss"}">${result.win ? "VICTORY" : "DEFEAT"}</div>
         <div class="match-sub">${context ? context + "<br>" : ""}Opponent rating: ${result.opponentRating} · You had a ${result.winProb}% win chance</div>
+        ${
+          typeof result.positionAfter === "number"
+            ? `<div class="match-sub">League table: #${result.positionBefore} → #${result.positionAfter} of ${result.leagueSize}</div>`
+            : ""
+        }
         <div class="match-stats">
           <div><b>${fmt(result.perf)}</b>Performance</div>
           <div><b>${fmtSigned(result.ratingChange, 0)}</b>Rank</div>
