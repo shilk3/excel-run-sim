@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.15.2";
+const APP_VERSION = "4.15.3";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1806,8 +1806,8 @@ function workRowHtml() {
       icon: "🔍",
       label: "Job Search",
       outcomeText: `${fmt(emp.jobSearchHours)}/${BAL.jobSearchHoursNeeded}h`,
-      shopTag: `<span class="skill-shop-tag">Job Search</span>`,
       value: emp.jobSearchHours,
+      previewValue: Math.min(emp.jobSearchHours + hours, BAL.jobSearchHoursNeeded),
       cap: BAL.jobSearchHoursNeeded,
       hours,
       maxHours,
