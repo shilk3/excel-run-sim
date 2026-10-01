@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.12.0";
+const APP_VERSION = "4.12.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1857,7 +1857,7 @@ function renderPlannerRows() {
   rows.push(
     comboRowHtml("relax", {
       icon: "🎮",
-      label: "Relaxation",
+      label: "Relax",
       outcomeText: `→ Composure ${fmt(s.composure)}/100 · ×${composureMatchMultiplier(s.composure)} match`,
       value: s.composure,
       previewValue: preview.composure,
