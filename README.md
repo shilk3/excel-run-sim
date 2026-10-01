@@ -34,16 +34,19 @@ Relaxation, and Nutrition. Everything is connected:
   Health caps at 70 until you invest in Sports Physio.
 - **Work** funds everything else. 9h/day, every phase, no exceptions — you
   start with 3.0 chances, and the bar shows exactly what today's shortfall
-  will cost before you end the day. Come up short and you lose a chunk of a
-  chance scaled to the shortfall (a near-miss costs barely anything,
-  skipping the day entirely costs a full chance), regained after 3 weeks;
-  run out of chances and you're fired, and the same slider becomes a Job
-  Search until you log 30 cumulative hours. Reach League 2 with $5,000
-  banked while employed and you go pro automatically: Work drops to 5h/day
-  of Pro Duties, same chances rule. Pros also have to stay current — a new
-  Excel technique appears roughly every 30 days needing 25-40h to master (any Pro Duties hours
-  beyond the 5h minimum go toward it); falling behind never costs you
-  progress, but every not-yet-mastered technique costs 5% match performance.
+  will cost before you end the day. Pay is tied to still *having* the job,
+  not to hitting the exact hour target every day: come up short and you
+  lose a chunk of a chance scaled to the shortfall (a near-miss costs
+  barely anything, skipping the day entirely costs a full chance,
+  regained after 3 weeks), but you're still paid in full. Only running out
+  of chances actually costs you income — you're fired, and the same slider
+  becomes a Job Search until you log 30 cumulative hours. Reach League 2
+  with $5,000 banked while employed and you go pro automatically: Work
+  drops to 5h/day of Pro Duties, same chances rule. Pros also have to stay
+  current — a new Excel technique appears roughly every 30 days needing
+  25-40h to master (any Pro Duties hours beyond the 5h minimum go toward
+  it); falling behind never costs you progress, but every not-yet-mastered
+  technique costs 5% match performance.
 - **Cost of living**: $50/day, charged no matter what — employed or not,
   every phase. Pay isn't flat: Work starts at $70/day and Pro Duties at
   $100/day, each rising $10/year for your first 5 years in that role before
