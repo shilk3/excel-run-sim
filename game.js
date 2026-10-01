@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.14.0";
+const APP_VERSION = "4.14.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1844,11 +1844,15 @@ function renderPlannerRows() {
   });
 
   const pCap = physCap();
+  // Poor Rest drains Physical Health on its own, independent of Exercise —
+  // without this note, Health can visibly keep dropping even with hours
+  // allocated here, which reads as a bug rather than the Sleep tie-in it is.
+  const restDrag = preview.physDecayFromRest > 1 ? ` · Rest −${fmt1(preview.physDecayFromRest)}` : "";
   rows.push(
     comboRowHtml("exercise", {
       icon: "🏃",
       label: "Gym",
-      outcomeText: `→ Health ${fmt(s.phys)}/${pCap} · ×${physSynergy(s.phys).toFixed(2)} skill`,
+      outcomeText: `→ Health ${fmt(s.phys)}/${pCap} · ×${physSynergy(s.phys).toFixed(2)} skill${restDrag}`,
       value: s.phys,
       previewValue: preview.phys,
       cap: pCap,
