@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.4.1";
+const APP_VERSION = "4.5.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -373,18 +373,51 @@ function rankToLeagueTier(rank) {
   return 5;
 }
 
-// Pulls the current 39 other members of the given league tier from the
-// persistent roster and shuffles them into this season's fixture order.
-function buildLeagueSchedule(rivals, leagueTier) {
-  const others = rivals.filter((r) => r.league === leagueTier);
-  const shuffled = others.slice();
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = randInt(0, i);
-    const tmp = shuffled[i];
-    shuffled[i] = shuffled[j];
-    shuffled[j] = tmp;
+// Standard circle-method round-robin: N members (even), N-1 rounds, every
+// member paired with every other exactly once, once per round. Members mix
+// numeric rival ids and the "player" sentinel for whichever tier they're in.
+function generateRoundRobinSchedule(memberIds) {
+  const n = memberIds.length;
+  const rounds = [];
+  const fixed = memberIds[0];
+  const rotating = memberIds.slice(1);
+  for (let r = 0; r < n - 1; r++) {
+    const ring = [fixed, ...rotating];
+    const pairs = [];
+    for (let i = 0; i < n / 2; i++) {
+      pairs.push([ring[i], ring[n - 1 - i]]);
+    }
+    rounds.push(pairs);
+    rotating.unshift(rotating.pop());
   }
-  return shuffled.map((r) => ({ rivalId: r.id, name: r.name, rating: r.rating, played: false, win: null }));
+  return rounds;
+}
+
+// Builds a fresh round-robin schedule and a zeroed points table for every
+// league tier at once (not just the player's) — this is what makes every
+// league's standings live and visible from round 1, rather than only
+// computable in one bulk pass once a season ends. Also derives the
+// player's own 39-fixture schedule from their tier's round-robin so the
+// rest of the game (getNextMatchInfo, processDayEnd, etc.) is unaffected.
+function buildSeasonLeagueData(rivals, leagueTier) {
+  const roundRobins = {};
+  const points = {};
+  for (let tier = 1; tier <= BAL.leagueCount; tier++) {
+    const memberIds = rivals.filter((r) => r.league === tier).map((r) => r.id);
+    if (tier === leagueTier) memberIds.push("player");
+    roundRobins[tier] = generateRoundRobinSchedule(memberIds);
+    points[tier] = {};
+    memberIds.forEach((id) => {
+      points[tier][id] = 0;
+    });
+  }
+  const schedule = roundRobins[leagueTier].map((round) => {
+    const pair = round.find((p) => p.includes("player"));
+    const rivalId = pair[0] === "player" ? pair[1] : pair[0];
+    const rival = rivals.find((r) => r.id === rivalId);
+    return { rivalId, name: rival.name, rating: rival.rating, played: false, win: null };
+  });
+  return { roundRobins, points, schedule };
 }
 
 function findRival(id) {
@@ -397,6 +430,7 @@ function findRival(id) {
 function freshState() {
   const leagueTier = 5;
   const rivals = generateRivalRoster(leagueTier);
+  const leagueData = buildSeasonLeagueData(rivals, leagueTier);
   return {
     day: 1, // total career days played — flavor/log only
     playerName: null,
@@ -407,8 +441,10 @@ function freshState() {
     leagueTier, // 1 (top) - 5 (bottom); new careers start at the bottom
     peakLeagueTier: leagueTier, // numerically lowest (best) tier ever reached
     rivals, // 199 persistent named rivals, spanning all 5 leagues
-    leagueStandings: { 1: null, 2: null, 3: null, 4: null, 5: null }, // last completed season per tier, for the Leagues viewer
-    schedule: buildLeagueSchedule(rivals, leagueTier),
+    leagueStandings: { 1: null, 2: null, 3: null, 4: null, 5: null }, // last fully completed season per tier
+    leagueRoundRobins: leagueData.roundRobins, // this season's full fixture list per tier, all 5 at once
+    leaguePoints: leagueData.points, // this season's live running points per tier, updated every round
+    schedule: leagueData.schedule,
     seasonResults: [], // { opponent, win } per completed regular-season round
     lastStandings: null,
     lastPlayerPosition: null,
@@ -521,7 +557,10 @@ function migrateSave(parsed) {
     parsed.offseasonDays = BAL.offseasonDays;
     parsed.offseasonReason = null;
     parsed.playoff = null;
-    parsed.schedule = buildLeagueSchedule(rivals, tier);
+    const leagueData = buildSeasonLeagueData(rivals, tier);
+    parsed.schedule = leagueData.schedule;
+    parsed.leagueRoundRobins = leagueData.roundRobins;
+    parsed.leaguePoints = leagueData.points;
   }
 
   // v4.0.0 replaced the single Excel Skill stat with 7 case specialties
@@ -596,6 +635,31 @@ function migrateSave(parsed) {
   }
   if (parsed.allocation && parsed.allocation.work === undefined) {
     parsed.allocation.work = BAL.workHoursRequired;
+  }
+
+  // v4.5.0 replaced "simulate every league in one bulk pass at season end"
+  // with a real week-by-week round-robin for all 5 tiers, so standings are
+  // live and visible from round 1 instead of hidden for an entire 39-round
+  // season. Any save missing that structure gets a fresh one for its
+  // current league: there's no way to recover what the old random-shuffle
+  // schedule would have played next, so only the unplayed tail of the
+  // fixture list is replaced — already-played rounds and their results
+  // stay exactly as recorded. The player's own points so far are credited
+  // from their real record; other members start this season's live table
+  // at 0, since the old model never tracked interim standings for anyone
+  // but the player.
+  if (!parsed.leagueRoundRobins || !parsed.leaguePoints) {
+    const tier = parsed.leagueTier;
+    const leagueData = buildSeasonLeagueData(parsed.rivals, tier);
+    parsed.leagueRoundRobins = leagueData.roundRobins;
+    parsed.leaguePoints = leagueData.points;
+
+    const playedCount = parsed.roundIndex || 0;
+    const oldSchedule = parsed.schedule || [];
+    parsed.schedule = oldSchedule.slice(0, playedCount).concat(leagueData.schedule.slice(playedCount));
+
+    const playerWinsSoFar = (parsed.seasonResults || []).filter((r) => r.win).length;
+    parsed.leaguePoints[tier].player = playerWinsSoFar * 3;
   }
 
   return parsed;
@@ -1002,6 +1066,16 @@ function performanceScore() {
 
 // Resolves one real match for the player against a specific opponent rating.
 // Used for both regular-season fixtures and playoff matches.
+// Perfect performance (100) gives a strong but no longer overwhelming form
+// bonus — enough to matter, not enough to guarantee a win against a tough
+// opponent. Shared by the real match resolution and any "what are my
+// chances" preview, so the two can never drift apart.
+function winProbabilityAgainst(opponentRating) {
+  const perf = performanceScore();
+  const matchRating = state.rank + (perf - 70) * 3;
+  return 1 / (1 + Math.pow(10, (opponentRating - matchRating) / 400));
+}
+
 function resolveMatch(opponentRating) {
   const managerEff = upgradeEffect("manager");
   const rankLossMult = managerEff ? managerEff.rankLossMult : 1.0;
@@ -1014,11 +1088,7 @@ function resolveMatch(opponentRating) {
   }
 
   const perf = performanceScore();
-  // Perfect performance (100) gives a strong but no longer overwhelming form
-  // bonus — enough to matter, not enough to guarantee a win against a tough
-  // opponent.
-  const matchRating = state.rank + (perf - 70) * 3;
-  const winProb = 1 / (1 + Math.pow(10, (opponentRating - matchRating) / 400));
+  const winProb = winProbabilityAgainst(opponentRating);
   const win = Math.random() < winProb;
   const K = 24;
   const actual = win ? 1 : 0;
@@ -1073,41 +1143,38 @@ function resolveNpcMatch(rivalA, rivalB) {
   return aWon;
 }
 
-// Simulates a full round-robin (every pair plays once) for a league tier
-// that doesn't contain the player, returning that tier's final standings.
-function simulateLeagueRoundRobin(tier) {
-  const members = state.rivals.filter((r) => r.league === tier);
-  const points = new Map(members.map((r) => [r.id, 0]));
-  for (let i = 0; i < members.length; i++) {
-    for (let j = i + 1; j < members.length; j++) {
-      const aWon = resolveNpcMatch(members[i], members[j]);
-      const winner = aWon ? members[i] : members[j];
-      points.set(winner.id, points.get(winner.id) + 3);
-    }
-  }
-  return members
-    .map((r) => ({ name: r.name, rating: r.rating, points: points.get(r.id), isPlayer: false, rivalId: r.id }))
-    .sort((a, b) => b.points - a.points || b.rating - a.rating);
+// Resolves every NPC-vs-NPC pair in this tier's round-robin round (the
+// player's own pairing, if this is their tier, is resolved separately via
+// resolveMatch()) and tallies points — called every week for all 5 tiers in
+// lockstep, so every league's table is live all season, never just a single
+// bulk computation sprung at season's end.
+function resolveLeagueRoundForTier(tier, roundIndex) {
+  const round = state.leagueRoundRobins[tier] && state.leagueRoundRobins[tier][roundIndex];
+  if (!round) return;
+  round.forEach(([a, b]) => {
+    if (a === "player" || b === "player") return;
+    const rivalA = findRival(a);
+    const rivalB = findRival(b);
+    if (!rivalA || !rivalB) return;
+    const aWon = resolveNpcMatch(rivalA, rivalB);
+    const winnerId = aWon ? a : b;
+    state.leaguePoints[tier][winnerId] = (state.leaguePoints[tier][winnerId] || 0) + 3;
+  });
 }
 
-// Same idea for the player's own league: the player's 39 real match results
-// are already known (state.seasonResults), so only the 39x38/2 NPC-vs-NPC
-// pairs among their rivals need simulating; the player's record merges in
-// directly rather than being re-simulated.
-function simulatePlayerLeagueStandings() {
-  const members = state.rivals.filter((r) => r.league === state.leagueTier);
-  const points = new Map(members.map((r) => [r.id, 0]));
-  for (let i = 0; i < members.length; i++) {
-    for (let j = i + 1; j < members.length; j++) {
-      const aWon = resolveNpcMatch(members[i], members[j]);
-      const winner = aWon ? members[i] : members[j];
-      points.set(winner.id, points.get(winner.id) + 3);
-    }
+// Reads a tier's current standings straight from the live points table —
+// valid at any time, whether mid-season (a true "right now" snapshot) or
+// after round 39 (the final result), since points only reset when a new
+// season's round-robin is built.
+function buildStandingsFromPoints(tier) {
+  const points = state.leaguePoints[tier] || {};
+  const standings = state.rivals
+    .filter((r) => r.league === tier)
+    .map((r) => ({ name: r.name, rating: r.rating, points: points[r.id] || 0, isPlayer: false, rivalId: r.id }));
+  if (tier === state.leagueTier) {
+    standings.push({ name: state.playerName || "You", rating: state.rank, points: points.player || 0, isPlayer: true, rivalId: null });
   }
-  const npcStandings = members.map((r) => ({ name: r.name, rating: r.rating, points: points.get(r.id), isPlayer: false, rivalId: r.id }));
-  const playerWins = state.seasonResults.filter((r) => r.win).length;
-  const playerEntry = { name: state.playerName || "You", rating: state.rank, points: playerWins * 3, isPlayer: true, rivalId: null };
-  return [...npcStandings, playerEntry].sort((a, b) => b.points - a.points || b.rating - a.rating);
+  return standings.sort((a, b) => b.points - a.points || b.rating - a.rating);
 }
 
 // Promotes the top BAL.promotionCount and relegates the bottom
@@ -1161,13 +1228,13 @@ function applyPromotionRelegation(allStandings) {
   return playerNewTier;
 }
 
-// Called once the player's 39th regular-season match resolves. Simulates a
-// full round-robin for every league (not just the player's), so the whole
-// 200-competitor world — all 5 tables — advances together every season.
+// Called once the player's 39th regular-season match resolves. Every
+// league's points have already accumulated live, round by round, all
+// season — this just reads the final tally and applies promotion/relegation.
 function processLeagueSeasonEnd() {
   const allStandings = {};
   for (let tier = 1; tier <= BAL.leagueCount; tier++) {
-    allStandings[tier] = tier === state.leagueTier ? simulatePlayerLeagueStandings() : simulateLeagueRoundRobin(tier);
+    allStandings[tier] = buildStandingsFromPoints(tier);
   }
 
   const playerStandings = allStandings[state.leagueTier];
@@ -1285,6 +1352,15 @@ function processDayEnd() {
       fixture.played = true;
       fixture.win = win;
       state.seasonResults.push({ opponent: fixture.name, win });
+      // Credit the winner of the player's own match too — the rival still
+      // earns their 3 points when they beat the player, same as any other
+      // pairing, so their spot in the table reflects every result.
+      const pointsTier = state.leaguePoints[state.leagueTier];
+      if (win) pointsTier.player = (pointsTier.player || 0) + 3;
+      else pointsTier[fixture.rivalId] = (pointsTier[fixture.rivalId] || 0) + 3;
+      for (let tier = 1; tier <= BAL.leagueCount; tier++) {
+        resolveLeagueRoundForTier(tier, state.roundIndex);
+      }
       state.roundIndex += 1;
 
       if (state.roundIndex >= BAL.seasonRounds) {
@@ -1338,7 +1414,10 @@ function processDayEnd() {
       state.seasonPhase = "preseason";
       state.roundIndex = 0;
       state.seasonResults = [];
-      state.schedule = buildLeagueSchedule(state.rivals, state.leagueTier);
+      const newLeagueData = buildSeasonLeagueData(state.rivals, state.leagueTier);
+      state.schedule = newLeagueData.schedule;
+      state.leagueRoundRobins = newLeagueData.roundRobins;
+      state.leaguePoints = newLeagueData.points;
       state.playoff = null;
       // Offseason recovery — a clean slate for the new year.
       state.stats.composure = 100;
@@ -1375,13 +1454,18 @@ function getNextMatchInfo() {
     if (!fixture) return { kind: "regular-end", label: "Season wrapping up…" };
     const roundNum = s.roundIndex + 1;
     const diff = difficultyLabel(fixture.rating, s.rank);
+    const winPct = Math.round(winProbabilityAgainst(fixture.rating) * 100);
     return {
       kind: "fixture",
       daysUntil,
       opponentName: fixture.name,
       opponentRating: Math.round(fixture.rating),
+      opponentRivalId: fixture.rivalId,
       difficulty: diff,
-      label: daysUntil <= 0 ? `Round ${roundNum} today vs ${fixture.name}! (${diff})` : `Round ${roundNum}/${BAL.seasonRounds} in ${daysUntil}d vs ${fixture.name} (${diff})`,
+      winPct,
+      label: daysUntil <= 0
+        ? `Rd ${roundNum} TODAY vs ${fixture.name} · ${winPct}%`
+        : `Rd ${roundNum}/${BAL.seasonRounds} vs ${fixture.name} · ${winPct}% · ${daysUntil}d`,
     };
   }
   if (s.seasonPhase === "playoffs") {
@@ -1391,13 +1475,18 @@ function getNextMatchInfo() {
     const opp = idx >= 0 ? p.currentRound[idx % 2 === 0 ? idx + 1 : idx - 1] : null;
     const roundName = PLAYOFF_ROUND_NAMES[p.stage];
     const diff = opp ? difficultyLabel(opp.rating, s.rank) : null;
+    const winPct = opp ? Math.round(winProbabilityAgainst(opp.rating) * 100) : null;
     return {
       kind: "playoff",
       daysUntil,
       opponentName: opp ? opp.name : "?",
       opponentRating: opp ? Math.round(opp.rating) : null,
+      opponentRivalId: opp ? opp.rivalId : null,
       difficulty: diff,
-      label: daysUntil <= 0 ? `${roundName} today vs ${opp ? opp.name : "?"}! (${diff})` : `${roundName} in ${daysUntil}d vs ${opp ? opp.name : "?"} (${diff})`,
+      winPct,
+      label: daysUntil <= 0
+        ? `${roundName} TODAY vs ${opp ? opp.name : "?"}${winPct != null ? " · " + winPct + "%" : ""}`
+        : `${roundName} vs ${opp ? opp.name : "?"}${winPct != null ? " · " + winPct + "%" : ""} · ${daysUntil}d`,
     };
   }
   if (s.seasonPhase === "offseason") {
@@ -1432,11 +1521,11 @@ function advanceSkillCycle() {
 
 function phaseLabelText() {
   const s = state;
-  const league = `League ${s.leagueTier} · `;
+  const league = `L${s.leagueTier} · `;
   if (s.seasonPhase === "preseason") return league + "Preseason";
-  if (s.seasonPhase === "regular") return league + "Regular Season";
+  if (s.seasonPhase === "regular") return league + "Regular";
   if (s.seasonPhase === "playoffs") return league + "Playoffs";
-  if (s.seasonPhase === "offseason") return league + (s.offseasonReason === "missed" ? "Training Camp" : "Offseason");
+  if (s.seasonPhase === "offseason") return league + (s.offseasonReason === "missed" ? "Camp" : "Offseason");
   return "";
 }
 
@@ -1889,7 +1978,24 @@ function openCareer() {
   const info = getNextMatchInfo();
   let nextSection;
   if (info.kind === "fixture" || info.kind === "playoff") {
-    nextSection = `<p>${info.label}<br>Opponent rating: ${info.opponentRating}<br>Your performance score right now: ${fmt(performanceScore())} / 100</p>`;
+    const rival = info.opponentRivalId != null ? findRival(info.opponentRivalId) : null;
+    const opponentExtra = rival
+      ? ` · League ${rival.league} · Record ${rival.wins}-${rival.losses}`
+      : "";
+    const skillsForMatch = state.activeSkills
+      .map((k) => {
+        const meta = skillMeta(k);
+        return `${meta.icon} ${meta.name}: ${fmt(state.stats.skills[k])}/${skillCap(k)}`;
+      })
+      .join(" · ");
+    nextSection = `
+      <p>${info.label}</p>
+      <div class="callout">
+        <div class="callout-label">Tested this match</div>
+        <div>${skillsForMatch}</div>
+      </div>
+      <p><b>Opponent:</b> ${info.opponentName} · Rating ${info.opponentRating}${opponentExtra}<br>
+      <b>Your odds:</b> ${info.winPct}% win chance (performance ${fmt(performanceScore())}/100)</p>`;
   } else {
     nextSection = `<p>${info.label}</p>`;
   }
@@ -1930,6 +2036,7 @@ function openCareer() {
       <h3>This Season</h3>
       <p>Year ${state.year} · League ${state.leagueTier} · Round ${seasonPlayed}/${BAL.seasonRounds} · Record ${seasonWins}-${seasonPlayed - seasonWins}<br>
       Highest league reached: League ${state.peakLeagueTier}</p>
+      <div class="menu-row" id="viewLeaguesLink"><span>📊 View League Standings</span><span class="arrow">›</span></div>
     </div>
     ${playoffSection}
     ${standingsSection}
@@ -1945,13 +2052,18 @@ function openCareer() {
     </div>
     <div class="modal-section">
       <h3>Skills — ${isPreseason() ? "preseason: train anything" : `this week's focus: ${state.activeSkills.map((k) => skillMeta(k).name).join(", ")}`}</h3>
-      <p>
       ${SKILLS.map((sk) => {
         const cap = skillCap(sk.key);
-        const active = trainableSkills().includes(sk.key) ? " 🟢" : "";
-        return `${sk.icon} ${sk.name}: ${fmt(state.stats.skills[sk.key])} / ${cap}${active}`;
-      }).join("<br>")}
-      </p>
+        const val = state.stats.skills[sk.key];
+        const pct = clamp((val / cap) * 100, 0, 100);
+        const active = trainableSkills().includes(sk.key);
+        const lvl = upgradeLevel(coachKey(sk.key));
+        return `
+        <div class="skill-row-detail ${active ? "skill-row-detail-active" : ""}">
+          <div class="skill-row-detail-label"><span>${sk.icon} ${sk.name}${active ? " 🟢" : ""}</span><span>${fmt(val)}/${cap}${lvl > 0 ? ` · Coach Lv${lvl}` : ""}</span></div>
+          <div class="bar"><div class="bar-fill skill" style="width:${pct}%"></div></div>
+        </div>`;
+      }).join("")}
     </div>
     <div class="modal-section">
       <h3>Current Stats</h3>
@@ -1961,12 +2073,23 @@ function openCareer() {
       Nutrition: ${fmt(state.stats.nutrition)} / 100 (today's hours: ${dailyHoursCap(state.stats.nutrition)})</p>
     </div>`;
   openModal(html);
+  $("viewLeaguesLink").addEventListener("click", () => openLeagues(state.leagueTier));
 }
 
 function leagueTableHtml(tier) {
-  const standings = state.leagueStandings[tier];
-  if (!standings) {
-    return `<p class="modal-sub">Not yet available — this table fills in once a season completes while you're in (or have been in) League ${tier}.</p>`;
+  let standings;
+  let noteText;
+  if (state.roundIndex > 0) {
+    // Live: every league's round-robin resolves in lockstep every week, so
+    // this is a real "right now" snapshot, not just a post-season report —
+    // and once round 39 has resolved it's already the final table too.
+    standings = buildStandingsFromPoints(tier);
+    noteText = state.roundIndex >= BAL.seasonRounds ? "Final standings" : `Live — through round ${state.roundIndex}/${BAL.seasonRounds}`;
+  } else if (state.leagueStandings[tier]) {
+    standings = state.leagueStandings[tier];
+    noteText = "Last season's final standings";
+  } else {
+    return `<p class="modal-sub">Not yet available — this table fills in once this league's first round resolves.</p>`;
   }
   const rows = standings
     .map((t, i) => {
@@ -1982,6 +2105,7 @@ function leagueTableHtml(tier) {
     })
     .join("");
   return `
+    <p class="modal-sub">${noteText}</p>
     <div class="league-table-header">
       <span class="league-pos">#</span>
       <span class="league-name">Name</span>
@@ -2035,7 +2159,7 @@ function openHowTo() {
       <p><b>Stat ceilings:</b> each skill caps at ${BAL.skillShopCapBase} until you invest in that skill's dedicated Coach (5 levels, Coaching Shop) — but the effective ceiling is also capped by the highest league you've ever reached (peak, not current), from 60 in League 5 up to 100 in League 1. Both gates must be cleared to hit 100. Physical Health caps at ${BAL.statCapBase} until you invest in Sports Physio.</p>
       <p><b>The season:</b> a ${BAL.preseasonDays}-day preseason to train, then a ${BAL.seasonRounds}-round regular season — one match a week against a named rival, all scheduled in advance, each testing that week's active skills. Finish in the top ${BAL.playoffSize} of your ${BAL.seasonRounds + 1}-competitor league to reach the knockout playoffs. Lose a playoff match and you're out; win the Final and you're champion.</p>
       <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken, so missing the cut isn't a worse deal than making it and getting knocked out early.</p>
-      <p><b>Leagues:</b> there are ${BAL.leagueCount} leagues, League 1 at the top and League 5 at the bottom — you start in League 5. Every league has a persistent roster of named rivals whose ratings evolve from real simulated results year after year, same as yours. Finish top ${BAL.promotionCount} of your league's table at season's end and you're promoted a tier; finish bottom ${BAL.relegationCount} and you're relegated — this applies to every competitor in every league, not just you, so the standings you see are a living world, not scenery. Check the Leagues screen any time to see all ${BAL.leagueCount} tables. Promotion and relegation are based purely on table position — the playoffs are a separate prize, unrelated to which league you're in next year.</p>
+      <p><b>Leagues:</b> there are ${BAL.leagueCount} leagues, League 1 at the top and League 5 at the bottom — you start in League 5. Every league has a persistent roster of named rivals whose ratings evolve from real simulated results every week, same as yours — every tier's table is live from round 1, not just visible once the season ends. Finish top ${BAL.promotionCount} of your league's table at season's end and you're promoted a tier; finish bottom ${BAL.relegationCount} and you're relegated — this applies to every competitor in every league, not just you, so the standings you see are a living world, not scenery. Check the Leagues screen any time (Menu, or the shortcut in Career) to see all ${BAL.leagueCount} tables. Promotion and relegation are based purely on table position — the playoffs are a separate prize, unrelated to which league you're in next year.</p>
       <p>Cash and Rank carry across seasons and leagues — spend cash in the Coaching Shop any time.</p>
       <p><b>Employment:</b> your day job funds everything else, every phase, no exceptions. Work ${BAL.workHoursRequired}h/day (every phase, preseason included) for $${BAL.workDailyPay}/day — miss it and you get a strike, which clears itself ${BAL.strikeWindowDays} days later. ${BAL.strikesToFire} strikes at once and you're fired: the same slider becomes a Job Search, needing ${BAL.jobSearchHoursNeeded} cumulative hours (any daily amount counts) to get rehired. Reach League ${BAL.goProLeagueTier}+ with $${BAL.goProCash}+ banked while employed and you go Pro automatically — Work drops to just ${BAL.proDutyHoursRequired}h/day of Pro Duties, with the same strike rule and the same fallback to Job Search if you're dropped.</p>
       <p>Pros have one more thing to manage: staying current. Roughly every ${BAL.techniqueIntervalDays} days a new Excel technique appears that needs ${BAL.techniqueMinHours}-${BAL.techniqueMaxHours}h to master — any Pro Duties hours beyond the ${BAL.proDutyHoursRequired}h minimum go toward it. Falling behind never costs you progress (new ones just queue up), but every technique still unmastered costs ${Math.round(BAL.techniquePenaltyPerUnmastered * 100)}% match performance, stacking.</p>
