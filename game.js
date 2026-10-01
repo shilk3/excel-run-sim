@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.15.0";
+const APP_VERSION = "4.15.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -897,6 +897,7 @@ function computeDayResult(allocation, stats, injuryActive, burnoutActive) {
     restDelta,
     composureDelta,
     composureLoad,
+    composurePenaltyFromRest,
     physDecayFromRest,
     skillWasAtCap,
     physWasAtCap,
@@ -1899,11 +1900,24 @@ function renderPlannerRows() {
       barClass: "rest",
     })
   );
+  // Composure moves from more than just Relax hours — a good night's Sleep
+  // (>=idealSleep) grants a flat relief bonus on its own, and low Rest bleeds
+  // it down independent of Relax too. Without this, Composure can visibly
+  // rise (or fall) with hours that look "not enough" on this row alone.
+  // Only room for one note before the row overflows, so show whichever is
+  // the bigger factor today, and drop "match" to make space for it.
+  const sleepBonus = preview.sleepH >= BAL.idealSleep ? BAL.restGoodSleepBonus : 0;
+  const composureRestDrag = preview.composurePenaltyFromRest > 1 ? preview.composurePenaltyFromRest : 0;
+  let composureNote = "";
+  if (sleepBonus > 0 || composureRestDrag > 0) {
+    composureNote = sleepBonus >= composureRestDrag ? ` · Sleep +${sleepBonus}` : ` · Rest −${fmt1(composureRestDrag)}`;
+  }
+  const matchSuffix = composureNote ? "" : " match";
   rows.push(
     comboRowHtml("relax", {
       icon: "🎮",
       label: "Relax",
-      outcomeText: `→ Composure ${fmt(s.composure)}/100 · ×${composureMatchMultiplier(s.composure)} match`,
+      outcomeText: `→ Composure ${fmt(s.composure)}/100 · ×${composureMatchMultiplier(s.composure)}${matchSuffix}${composureNote}`,
       value: s.composure,
       previewValue: preview.composure,
       cap: 100,
