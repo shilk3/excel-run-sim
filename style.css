@@ -247,7 +247,12 @@ input[type="range"] {
   border-radius: 999px;
   background: var(--bg-elev-2);
   outline: none;
+  transition: background-color 0.2s ease;
 }
+/* A light tint on the track itself shows at a glance whether today's hours
+   clear the stat's decay/requirement threshold, independent of bar color. */
+input[type="range"].slider-meets { background: rgba(52, 208, 160, 0.3); }
+input[type="range"].slider-under { background: rgba(255, 93, 93, 0.3); }
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   width: 22px;

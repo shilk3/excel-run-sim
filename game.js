@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.4.0";
+const APP_VERSION = "4.4.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1501,6 +1501,10 @@ function comboRowHtml(key, { icon, label, outcomeText, value, previewValue, cap,
   const overlayCls = previewPct > barPct ? "bar-preview-gain" : "bar-preview-loss";
   const overlayHtml = overlayWidth > 0.3 ? `<div class="bar-preview ${overlayCls} bar-fill ${barClass}" style="left:${overlayLeft}%;width:${overlayWidth}%"></div>` : "";
   const mPct = markerPct(markerHours, maxHours);
+  // Tint the slider track itself so meeting (or missing) a stat's decay
+  // threshold reads at a glance, not just from the marker tick.
+  const meetsMarker = markerHours > 0 ? hours >= markerHours : null;
+  const sliderCls = meetsMarker === null ? "" : meetsMarker ? "slider-meets" : "slider-under";
   return `
   <div class="activity combo-row ${barClass === "skill" ? "skill-row" : ""}" data-act="${key}" style="${disabled ? "opacity:0.45" : ""}">
     <div class="activity-row">
@@ -1514,7 +1518,7 @@ function comboRowHtml(key, { icon, label, outcomeText, value, previewValue, cap,
     <div class="stepper">
       <button class="step-btn" data-key="${key}" data-dir="-1" ${disabled ? "disabled" : ""}>−</button>
       <div class="slider-wrap">
-        <input type="range" min="0" max="${maxHours}" step="1" value="${hours}" id="hours_${key}" data-key="${key}" ${disabled ? "disabled" : ""} />
+        <input type="range" class="${sliderCls}" min="0" max="${maxHours}" step="1" value="${hours}" id="hours_${key}" data-key="${key}" ${disabled ? "disabled" : ""} />
         <div class="slider-marker" style="left:${mPct}%"></div>
       </div>
       <button class="step-btn" data-key="${key}" data-dir="1" ${disabled ? "disabled" : ""}>+</button>
