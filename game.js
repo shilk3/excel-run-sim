@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.11.1";
+const APP_VERSION = "4.11.2";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1765,10 +1765,10 @@ function workRowHtml() {
   const isPro = emp.status === "pro";
   const required = isPro ? BAL.proDutyHoursRequired : BAL.workHoursRequired;
   const atRisk = hours < required;
-  const livesText = `${fmt1(livesRemaining())}/${fmt1(BAL.strikesToFire)} chances`;
-  const outcomeText = (isPro ? `${livesText} · ${techniqueStatusText()}` : livesText) + (atRisk ? " ⚠️" : "");
+  const livesText = `${fmt1(livesRemaining())}/${fmt1(BAL.strikesToFire)} left`;
+  const outcomeText = (atRisk ? "⚠️ " : "") + (isPro ? `${livesText} · ${techniqueStatusText()}` : livesText);
   const payPerDay = isPro ? emp.proPay : emp.workPay;
-  const statusTag = `<span class="skill-shop-tag">${isPro ? "Esports Pro" : "Employed"} · $${fmt(payPerDay)}/day</span>`;
+  const statusTag = `<span class="skill-shop-tag">${isPro ? "Pro" : "Employed"} · $${fmt(payPerDay)}/d</span>`;
   return comboRowHtml("work", {
     icon: isPro ? "📱" : "💼",
     label: isPro ? "Pro Duties" : "Work",
