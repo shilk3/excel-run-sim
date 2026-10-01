@@ -44,6 +44,12 @@ Relaxation, and Nutrition. Everything is connected:
   roughly every 30 days needing 25-40h to master (any Pro Duties hours
   beyond the 5h minimum go toward it); falling behind never costs you
   progress, but every not-yet-mastered technique costs 5% match performance.
+- **Cost of living**: $50/day, charged no matter what — employed or not,
+  every phase. Work/Pro Duties pay $70/day, so staying employed nets a
+  profit, but lose your job and the bills don't stop: cash actively drains
+  while you're out of work. Every new year opens with a cash-flow summary
+  of the year just finished — pay earned, match winnings, expenses paid,
+  and the net.
 
 **The season**: a 14-day preseason to train, then a 39-round regular season —
 one match a week against a named rival, the full schedule known in advance.

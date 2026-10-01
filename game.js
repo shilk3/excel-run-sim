@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.7.0";
+const APP_VERSION = "4.8.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -76,7 +76,9 @@ const BAL = {
   // only what's "required" and what it's called changes with status.
   workHoursRequired: 9, // Employed: Work hours/day required to avoid a strike
   proDutyHoursRequired: 5, // Pro: Pro Duties hours/day required; hours above this master techniques
-  workDailyPay: 20, // cash earned per day the requirement is met, Employed or Pro alike
+  workDailyPay: 70, // cash earned per day the requirement is met, Employed or Pro alike
+  dailyExpenses: 50, // cost of living, charged every single day regardless of employment status —
+  // this is what makes losing your job actually cost you money, not just stall your income
   strikeWindowDays: 21, // 3 weeks — each strike expires this many days after it's earned
   strikesToFire: 3,
   jobSearchHoursNeeded: 30, // Unemployed: cumulative hours (any daily amount counts) to get re-hired
@@ -481,6 +483,7 @@ function freshState() {
     peakRank: 480,
     wins: 0,
     losses: 0,
+    yearCashFlow: { workPay: 0, matchCash: 0, expenses: 0 }, // resets every year; summarized at year-end
     stats: {
       skills: Object.fromEntries(SKILL_KEYS.map((k) => [k, 8])),
       phys: 65,
@@ -991,6 +994,11 @@ function resolveEmploymentDay() {
   const workH = state.allocation.work || 0;
   const events = [];
 
+  // Cost of living — charged every day no matter what, employed or not, so
+  // losing your job actually drains cash instead of just stalling income.
+  state.cash -= BAL.dailyExpenses;
+  state.yearCashFlow.expenses += BAL.dailyExpenses;
+
   emp.strikes = emp.strikes.filter((s) => state.day - s.day < BAL.strikeWindowDays);
 
   if (emp.status === "unemployed") {
@@ -1007,6 +1015,7 @@ function resolveEmploymentDay() {
     const required = isPro ? BAL.proDutyHoursRequired : BAL.workHoursRequired;
     if (workH >= required) {
       state.cash += BAL.workDailyPay;
+      state.yearCashFlow.workPay += BAL.workDailyPay;
       if (isPro) {
         const extra = workH - required;
         if (extra > 0 && emp.techniqueQueue.length > 0) {
@@ -1130,6 +1139,7 @@ function resolveMatch(opponentRating) {
 
   const cashReward = Math.round((win ? 150 + state.rank / 10 : 40) * cashBonusMult);
   state.cash += cashReward;
+  state.yearCashFlow.matchCash += cashReward;
   if (win) state.wins += 1;
   else state.losses += 1;
 
@@ -1356,11 +1366,12 @@ function resolvePlayoffRound() {
 /* Season/day phase engine                                                */
 /* ---------------------------------------------------------------------- */
 // Advances the season state machine by one day. Call after resolveDay().
-// Returns { matchResult, phaseEvent } — either may be null.
+// Returns { matchResult, phaseEvent, yearSummary } — any may be null.
 function processDayEnd() {
   state.phaseDay += 1;
   let matchResult = null;
   let phaseEvent = null;
+  let yearSummary = null;
 
   if (state.seasonPhase === "preseason") {
     if (state.phaseDay >= BAL.preseasonDays) {
@@ -1369,7 +1380,7 @@ function processDayEnd() {
       state.roundIndex = 0;
       phaseEvent = `🏁 Preseason over — the ${BAL.seasonRounds}-round regular season begins.`;
     }
-    return { matchResult, phaseEvent };
+    return { matchResult, phaseEvent, yearSummary };
   }
 
   if (state.seasonPhase === "regular") {
@@ -1420,7 +1431,7 @@ function processDayEnd() {
         }
       }
     }
-    return { matchResult, phaseEvent };
+    return { matchResult, phaseEvent, yearSummary };
   }
 
   if (state.seasonPhase === "playoffs") {
@@ -1435,11 +1446,24 @@ function processDayEnd() {
         state.offseasonReason = "playoffs";
       }
     }
-    return { matchResult, phaseEvent };
+    return { matchResult, phaseEvent, yearSummary };
   }
 
   if (state.seasonPhase === "offseason") {
     if (state.phaseDay >= (state.offseasonDays || BAL.offseasonDays)) {
+      const flow = state.yearCashFlow;
+      const income = flow.workPay + flow.matchCash;
+      yearSummary = {
+        year: state.year,
+        workPay: flow.workPay,
+        matchCash: flow.matchCash,
+        income,
+        expenses: flow.expenses,
+        net: income - flow.expenses,
+        cashNow: state.cash,
+      };
+      state.yearCashFlow = { workPay: 0, matchCash: 0, expenses: 0 };
+
       state.phaseDay = 0;
       state.year += 1;
       state.seasonPhase = "preseason";
@@ -1456,10 +1480,10 @@ function processDayEnd() {
       state.stats.nutrition = 100;
       phaseEvent = `🎉 Year ${state.year} begins! A fresh ${BAL.seasonRounds}-round season has been scheduled — good luck.`;
     }
-    return { matchResult, phaseEvent };
+    return { matchResult, phaseEvent, yearSummary };
   }
 
-  return { matchResult, phaseEvent };
+  return { matchResult, phaseEvent, yearSummary };
 }
 
 // Qualitative read on a specific known opponent vs the player's current
@@ -1873,6 +1897,27 @@ function showMatchModal(result) {
 }
 
 /* ---------------------------------------------------------------------- */
+/* Year-end cash flow summary — shown right as a new year begins          */
+/* ---------------------------------------------------------------------- */
+function showYearSummaryModal(summary) {
+  const html = `
+    <div class="match-card">
+      <div class="match-result neutral">YEAR ${summary.year} COMPLETE</div>
+      <div class="match-sub">Cash flow for the year — this is what a new year starting means</div>
+      <div class="match-stats">
+        <div><b>$${fmt(summary.workPay)}</b>Work/Pro pay</div>
+        <div><b>$${fmt(summary.matchCash)}</b>Match winnings</div>
+        <div><b>-$${fmt(summary.expenses)}</b>Expenses</div>
+      </div>
+      <div class="match-sub">Net for the year: <b style="color:${summary.net >= 0 ? "var(--accent)" : "var(--danger)"}">${fmtSigned(summary.net, 0)}</b></div>
+      <div class="match-sub">Cash now: $${fmt(summary.cashNow)}</div>
+      <button class="primary-btn" id="yearSummaryOk">Continue</button>
+    </div>`;
+  openModal(html);
+  $("yearSummaryOk").addEventListener("click", closeModal);
+}
+
+/* ---------------------------------------------------------------------- */
 /* Shop / Menu                                                            */
 /* ---------------------------------------------------------------------- */
 function shopItemHtml(key, u) {
@@ -2203,7 +2248,8 @@ function openHowTo() {
       <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken, so missing the cut isn't a worse deal than making it and getting knocked out early.</p>
       <p><b>Leagues:</b> there are ${BAL.leagueCount} leagues, League 1 at the top and League 5 at the bottom — you start in League 5. Every league has a persistent roster of named rivals whose ratings evolve from real simulated results every week, same as yours — every tier's table is live from round 1, not just visible once the season ends. Finish top ${BAL.promotionCount} of your league's table at season's end and you're promoted a tier; finish bottom ${BAL.relegationCount} and you're relegated — this applies to every competitor in every league, not just you, so the standings you see are a living world, not scenery. Check the Leagues screen any time (Menu, or the shortcut in Career) to see all ${BAL.leagueCount} tables. Promotion and relegation are based purely on table position — the playoffs are a separate prize, unrelated to which league you're in next year.</p>
       <p>Cash and Rank carry across seasons and leagues — spend cash in the Coaching Shop any time.</p>
-      <p><b>Employment:</b> your day job funds everything else, every phase, no exceptions. Work ${BAL.workHoursRequired}h/day (every phase, preseason included) for $${BAL.workDailyPay}/day — miss it and you get a strike, which clears itself ${BAL.strikeWindowDays} days later. ${BAL.strikesToFire} strikes at once and you're fired: the same slider becomes a Job Search, needing ${BAL.jobSearchHoursNeeded} cumulative hours (any daily amount counts) to get rehired. Reach League ${BAL.goProLeagueTier}+ with $${BAL.goProCash}+ banked while employed and you go Pro automatically — Work drops to just ${BAL.proDutyHoursRequired}h/day of Pro Duties, with the same strike rule and the same fallback to Job Search if you're dropped.</p>
+      <p><b>Employment:</b> your day job funds everything else, every phase, no exceptions. Work ${BAL.workHoursRequired}h/day (every phase, preseason included) for $${BAL.workDailyPay}/day — fall short and you lose a chunk of a life scaled to the shortfall, regained ${BAL.strikeWindowDays} days later. Run out of your ${BAL.strikesToFire} lives and you're fired: the same slider becomes a Job Search, needing ${BAL.jobSearchHoursNeeded} cumulative hours (any daily amount counts) to get rehired. Reach League ${BAL.goProLeagueTier}+ with $${BAL.goProCash}+ banked while employed and you go Pro automatically — Work drops to just ${BAL.proDutyHoursRequired}h/day of Pro Duties, with the same lives rule and the same fallback to Job Search if you're dropped.</p>
+      <p><b>Cost of living:</b> $${BAL.dailyExpenses}/day, charged every single day no matter your employment status — stay employed and you net a profit, but lose your job and the bills don't stop, so cash actively drains while you're out of work. Each new year opens with a summary of that year's full cash flow: pay earned, match winnings, and expenses paid.</p>
       <p>Pros have one more thing to manage: staying current. Roughly every ${BAL.techniqueIntervalDays} days a new Excel technique appears that needs ${BAL.techniqueMinHours}-${BAL.techniqueMaxHours}h to master — any Pro Duties hours beyond the ${BAL.proDutyHoursRequired}h minimum go toward it. Falling behind never costs you progress (new ones just queue up), but every technique still unmastered costs ${Math.round(BAL.techniquePenaltyPerUnmastered * 100)}% match performance, stacking.</p>
     </div>`;
   openModal(html);
@@ -2255,7 +2301,7 @@ function endDay() {
     appendLog(e.html, e.cls);
   }
 
-  const { matchResult, phaseEvent } = processDayEnd();
+  const { matchResult, phaseEvent, yearSummary } = processDayEnd();
 
   if (matchResult) {
     const oppText = matchResult.opponentName ? ` vs ${matchResult.opponentName}` : "";
@@ -2274,6 +2320,13 @@ function endDay() {
     appendLog(e.html, e.cls);
   }
 
+  if (yearSummary) {
+    const summary = `💰 Year ${yearSummary.year} cash flow: +$${fmt(yearSummary.workPay)} work, +$${fmt(yearSummary.matchCash)} matches, -$${fmt(yearSummary.expenses)} expenses → net ${fmtSigned(yearSummary.net, 0)}.`;
+    const e = { html: summary, cls: "event-season" };
+    state.logEntries.push(e);
+    appendLog(e.html, e.cls);
+  }
+
   state.day += 1;
   const saved = saveState();
   showSaveToast(saved);
@@ -2286,6 +2339,8 @@ function endDay() {
 
   if (matchResult) {
     showMatchModal(matchResult);
+  } else if (yearSummary) {
+    showYearSummaryModal(yearSummary);
   }
 }
 
