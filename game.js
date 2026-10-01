@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.12.1";
+const APP_VERSION = "4.13.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1828,8 +1828,8 @@ function renderPlannerRows() {
   rows.push(
     comboRowHtml("exercise", {
       icon: "🏃",
-      label: "Exercise",
-      outcomeText: `→ Health ${fmt(s.phys)}/${pCap}`,
+      label: "Gym",
+      outcomeText: `→ Health ${fmt(s.phys)}/${pCap} · ×${physSynergy(s.phys).toFixed(2)} skill`,
       value: s.phys,
       previewValue: preview.phys,
       cap: pCap,
@@ -1870,11 +1870,13 @@ function renderPlannerRows() {
   );
   const capToday = dailyHoursCap(s.nutrition);
   const capTomorrow = dailyHoursCap(preview.nutrition);
-  const nutritionOutcome = capTomorrow !== capToday ? `${fmt(s.nutrition)}/100 → ${capTomorrow}h tomorrow` : `${fmt(s.nutrition)}/100`;
+  let nutritionOutcome = `${fmt(s.nutrition)}/100`;
+  if (capToday < BAL.dailyHoursCeiling) nutritionOutcome += ` · ${capToday}h today`;
+  if (capTomorrow !== capToday) nutritionOutcome += ` → ${capTomorrow}h tomorrow`;
   rows.push(
     comboRowHtml("nutrition", {
       icon: "🥗",
-      label: "Nutrition",
+      label: "Food",
       outcomeText: nutritionOutcome,
       value: s.nutrition,
       previewValue: preview.nutrition,
@@ -1897,8 +1899,10 @@ function renderPlanner() {
   hoursLeftEl.textContent = left;
   hoursLeftEl.classList.toggle("over", left < 0);
   hoursLeftEl.classList.toggle("unassigned", left > 0);
+  // The "why" (Nutrition) lives on Nutrition's own row now — this just
+  // states the number so the header stays one line.
   const capNoteEl = $("hoursCapNote");
-  if (capNoteEl) capNoteEl.textContent = cap < BAL.dailyHoursCeiling ? `of ${cap}h (Nutrition-capped)` : "";
+  if (capNoteEl) capNoteEl.textContent = cap < BAL.dailyHoursCeiling ? `of ${cap}h` : "";
   // Over-allocated (the cap can shrink overnight via Nutrition after hours
   // were already set against yesterday's higher cap) — block ending the day
   // until it's brought back down to the new, smaller budget.
