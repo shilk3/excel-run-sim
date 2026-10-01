@@ -45,11 +45,13 @@ Relaxation, and Nutrition. Everything is connected:
   beyond the 5h minimum go toward it); falling behind never costs you
   progress, but every not-yet-mastered technique costs 5% match performance.
 - **Cost of living**: $50/day, charged no matter what — employed or not,
-  every phase. Work/Pro Duties pay $70/day, so staying employed nets a
-  profit, but lose your job and the bills don't stop: cash actively drains
-  while you're out of work. Every new year opens with a cash-flow summary
-  of the year just finished — pay earned, match winnings, expenses paid,
-  and the net.
+  every phase. Pay isn't flat: Work starts at $70/day and Pro Duties at
+  $100/day, each rising $10/year for your first 5 years in that role before
+  plateauing at $120 and $150. Lose the job or get dropped from Pro and
+  that role's pay resets to its minimum for next time — seniority isn't
+  carried over. Every new year opens with a cash-flow summary of the year
+  just finished — pay earned, match winnings, expenses paid, the net, and
+  any raise you just earned.
 
 **The season**: a 14-day preseason to train, then a 39-round regular season —
 one match a week against a named rival, the full schedule known in advance.
