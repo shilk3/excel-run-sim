@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.13.1";
+const APP_VERSION = "4.14.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1119,21 +1119,38 @@ function activeSkillAverage() {
   return sum / active.length;
 }
 
-function performanceScore() {
+// Single source of truth for what a match performance score is made of, so
+// the result modal can show the breakdown instead of just the final number
+// (skill isn't the whole story — Physical Health, Composure and Rest all
+// weigh in too).
+function performanceBreakdown() {
   const s = state.stats;
   // Low Composure hits you hardest where it matters most: match day. This
   // stacks on top of (doesn't replace) Composure's own weighted contribution
   // below, same as before.
-  const skillComponent = activeSkillAverage() * composureMatchMultiplier(s.composure);
-  let score = clamp(skillComponent * 0.55 + s.phys * 0.25 + s.composure * 0.15 + s.rest * 0.05, 0, 100);
+  const composureMult = composureMatchMultiplier(s.composure);
+  const skillComponent = activeSkillAverage() * composureMult;
+  const weighted = {
+    skill: skillComponent * 0.55,
+    phys: s.phys * 0.25,
+    composure: s.composure * 0.15,
+    rest: s.rest * 0.05,
+  };
+  let score = clamp(weighted.skill + weighted.phys + weighted.composure + weighted.rest, 0, 100);
   // Pros who fall behind on current technique compete at a real disadvantage
   // — every not-yet-mastered entry in the queue costs match performance,
   // not training. Capped so a long backlog can't go negative.
+  let techniquePenaltyMult = 1;
   if (state.employment.status === "pro" && state.employment.techniqueQueue.length > 0) {
     const penalty = Math.min(1, state.employment.techniqueQueue.length * BAL.techniquePenaltyPerUnmastered);
-    score *= 1 - penalty;
+    techniquePenaltyMult = 1 - penalty;
+    score *= techniquePenaltyMult;
   }
-  return score;
+  return { weighted, composureMult, techniquePenaltyMult, score };
+}
+
+function performanceScore() {
+  return performanceBreakdown().score;
 }
 
 // Your effective strength for a match right now: base rank, adjusted by
@@ -1165,7 +1182,8 @@ function resolveMatch(opponentRating) {
     return { forfeit: true, win: false, text: `You're injured and had to forfeit. Rank -${loss}.`, opponentRating: Math.round(opponentRating) };
   }
 
-  const perf = performanceScore();
+  const breakdown = performanceBreakdown();
+  const perf = breakdown.score;
   const matchRating = currentMatchRating();
   const winProb = winProbabilityAgainst(opponentRating);
   // The actual dice roll that decided it — captured so the result modal can
@@ -1189,6 +1207,7 @@ function resolveMatch(opponentRating) {
     forfeit: false,
     win,
     perf,
+    breakdown,
     matchRating: Math.round(matchRating),
     opponentRating: Math.round(opponentRating),
     winProb: Math.round(winProb * 100),
@@ -1975,8 +1994,13 @@ function showMatchModal(result) {
           <div><b>${fmtSigned(result.ratingChange, 0)}</b>Rank</div>
           <div><b>$${result.cashReward}</b>Prize</div>
         </div>
+        <div class="match-sub">Performance = Skill ${fmt(result.breakdown.weighted.skill)} (55%) + Health ${fmt(
+      result.breakdown.weighted.phys
+    )} (25%) + Composure ${fmt(result.breakdown.weighted.composure)} (15%) + Rest ${fmt(result.breakdown.weighted.rest)} (5%)${
+      result.breakdown.techniquePenaltyMult < 1 ? ` · ×${result.breakdown.techniquePenaltyMult.toFixed(2)} unmastered techniques` : ""
+    }</div>
         <div class="match-sub">Your match rating: ${result.matchRating} vs Opponent: ${result.opponentRating}</div>
-        <div class="match-sub">Roll: ${result.roll} (needed under ${result.winProb} to win)</div>
+        <div class="match-sub">Win roll: ${result.roll}/100, needed under ${result.winProb} — one random roll decides every match, weighted by your win chance, so an upset either way is always possible.</div>
         <div class="match-sub">New rank: ${fmt(state.rank)}</div>
         <button class="primary-btn" id="matchOk">Continue</button>
       </div>`;
