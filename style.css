@@ -63,6 +63,7 @@ html, body {
   text-overflow: ellipsis;
   max-width: 220px;
 }
+.match-counter:empty { display: none; }
 .topbar-right { display: flex; align-items: center; gap: 8px; }
 .chip {
   background: var(--bg-elev);

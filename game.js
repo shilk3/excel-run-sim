@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.5.0";
+const APP_VERSION = "4.5.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1466,6 +1466,8 @@ function getNextMatchInfo() {
       label: daysUntil <= 0
         ? `Rd ${roundNum} TODAY vs ${fixture.name} · ${winPct}%`
         : `Rd ${roundNum}/${BAL.seasonRounds} vs ${fixture.name} · ${winPct}% · ${daysUntil}d`,
+      labelLine1: daysUntil <= 0 ? `Rd ${roundNum} TODAY vs ${fixture.name}` : `Rd ${roundNum}/${BAL.seasonRounds} vs ${fixture.name}`,
+      labelLine2: daysUntil <= 0 ? `${winPct}% win chance` : `${winPct}% win · ${daysUntil}d`,
     };
   }
   if (s.seasonPhase === "playoffs") {
@@ -1487,6 +1489,8 @@ function getNextMatchInfo() {
       label: daysUntil <= 0
         ? `${roundName} TODAY vs ${opp ? opp.name : "?"}${winPct != null ? " · " + winPct + "%" : ""}`
         : `${roundName} vs ${opp ? opp.name : "?"}${winPct != null ? " · " + winPct + "%" : ""} · ${daysUntil}d`,
+      labelLine1: daysUntil <= 0 ? `${roundName} TODAY vs ${opp ? opp.name : "?"}` : `${roundName} vs ${opp ? opp.name : "?"}`,
+      labelLine2: winPct != null ? (daysUntil <= 0 ? `${winPct}% win chance` : `${winPct}% win · ${daysUntil}d`) : `${daysUntil}d`,
     };
   }
   if (s.seasonPhase === "offseason") {
@@ -1546,7 +1550,9 @@ function renderTopbar() {
   $("cashVal").textContent = fmt(state.cash);
   $("rankVal").textContent = fmt(state.rank);
   $("phaseLabel").textContent = phaseLabelText();
-  $("matchCounter").textContent = getNextMatchInfo().label;
+  const info = getNextMatchInfo();
+  $("matchCounter").textContent = info.labelLine1 || info.label;
+  $("matchCounter2").textContent = info.labelLine1 ? (info.labelLine2 || "") : "";
 }
 
 function renderStats() {
