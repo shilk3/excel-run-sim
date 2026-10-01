@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.5.2";
+const APP_VERSION = "4.5.3";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1546,12 +1546,11 @@ function markerPct(threshold, max) {
 }
 
 function renderTopbar() {
-  $("yearNum").textContent = state.year;
   $("cashVal").textContent = fmt(state.cash);
   $("rankVal").textContent = fmt(state.rank);
-  $("phaseLabel").textContent = phaseLabelText();
   const info = getNextMatchInfo();
-  $("matchCounter").textContent = info.labelLine1 || info.label;
+  const phase = `Y${state.year} · ${phaseLabelText()}`;
+  $("matchCounter").textContent = `${phase} · ${info.labelLine1 || info.label}`;
   $("matchCounter2").textContent = info.labelLine1 ? (info.labelLine2 || "") : "";
 }
 
