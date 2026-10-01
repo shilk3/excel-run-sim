@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.9.3";
+const APP_VERSION = "4.9.4";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1537,11 +1537,19 @@ function difficultyLabel(opponentRating, rank) {
   return "Elite";
 }
 
+// Phrases a days-until countdown for the topbar/Career "next up" text.
+// 1 day away means ending today's day is what triggers it, so "after
+// today" reads clearer in context than "in 1d" — everything else is
+// spelled out in full rather than abbreviated ("in 3 days", not "in 3d").
+function daysUntilPhrase(daysUntil) {
+  return daysUntil === 1 ? "after today" : `in ${daysUntil} days`;
+}
+
 function getNextMatchInfo() {
   const s = state;
   if (s.seasonPhase === "preseason") {
     const daysUntil = BAL.preseasonDays - s.phaseDay;
-    return { kind: "preseason", label: `Season starts in ${daysUntil}d` };
+    return { kind: "preseason", label: `Season starts ${daysUntilPhrase(daysUntil)}` };
   }
   if (s.seasonPhase === "regular") {
     const daysUntil = BAL.roundIntervalDays - s.phaseDay;
@@ -1550,21 +1558,24 @@ function getNextMatchInfo() {
     const roundNum = s.roundIndex + 1;
     const diff = difficultyLabel(fixture.rating, s.rank);
     const winPct = Math.round(winProbabilityAgainst(fixture.rating) * 100);
+    const oppRating = Math.round(fixture.rating);
     return {
       kind: "fixture",
       daysUntil,
       opponentName: fixture.name,
-      opponentRating: Math.round(fixture.rating),
+      opponentRating: oppRating,
       opponentRivalId: fixture.rivalId,
       difficulty: diff,
       winPct,
       label: daysUntil <= 0
         ? `Rd ${roundNum} TODAY vs ${fixture.name} · ${winPct}%`
-        : `Rd ${roundNum}/${BAL.seasonRounds} vs ${fixture.name} · ${winPct}% · ${daysUntil}d`,
-      labelLine1: daysUntil <= 0 ? `Rd ${roundNum} TODAY vs ${fixture.name}` : `Rd ${roundNum}/${BAL.seasonRounds} vs ${fixture.name}`,
+        : `Rd ${roundNum}/${BAL.seasonRounds} vs ${fixture.name} · ${winPct}% · ${daysUntilPhrase(daysUntil)}`,
+      labelLine1: daysUntil <= 0
+        ? `Rd ${roundNum} TODAY vs ${fixture.name} (${oppRating})`
+        : `Rd ${roundNum}/${BAL.seasonRounds} vs ${fixture.name} (${oppRating})`,
       labelLine2: daysUntil <= 0
         ? `${winPct}% chance of winning today's battle`
-        : `${winPct}% chance of winning next battle in ${daysUntil}d`,
+        : `${winPct}% chance of winning next battle ${daysUntilPhrase(daysUntil)}`,
     };
   }
   if (s.seasonPhase === "playoffs") {
@@ -1575,21 +1586,23 @@ function getNextMatchInfo() {
     const roundName = PLAYOFF_ROUND_NAMES[p.stage];
     const diff = opp ? difficultyLabel(opp.rating, s.rank) : null;
     const winPct = opp ? Math.round(winProbabilityAgainst(opp.rating) * 100) : null;
+    const oppRating = opp ? Math.round(opp.rating) : null;
+    const oppTag = opp ? `${opp.name} (${oppRating})` : "?";
     return {
       kind: "playoff",
       daysUntil,
       opponentName: opp ? opp.name : "?",
-      opponentRating: opp ? Math.round(opp.rating) : null,
+      opponentRating: oppRating,
       opponentRivalId: opp ? opp.rivalId : null,
       difficulty: diff,
       winPct,
       label: daysUntil <= 0
         ? `${roundName} TODAY vs ${opp ? opp.name : "?"}${winPct != null ? " · " + winPct + "%" : ""}`
-        : `${roundName} vs ${opp ? opp.name : "?"}${winPct != null ? " · " + winPct + "%" : ""} · ${daysUntil}d`,
-      labelLine1: daysUntil <= 0 ? `${roundName} TODAY vs ${opp ? opp.name : "?"}` : `${roundName} vs ${opp ? opp.name : "?"}`,
+        : `${roundName} vs ${opp ? opp.name : "?"}${winPct != null ? " · " + winPct + "%" : ""} · ${daysUntilPhrase(daysUntil)}`,
+      labelLine1: daysUntil <= 0 ? `${roundName} TODAY vs ${oppTag}` : `${roundName} vs ${oppTag}`,
       labelLine2: winPct != null
-        ? (daysUntil <= 0 ? `${winPct}% chance of winning today's battle` : `${winPct}% chance of winning next battle in ${daysUntil}d`)
-        : `${daysUntil}d`,
+        ? (daysUntil <= 0 ? `${winPct}% chance of winning today's battle` : `${winPct}% chance of winning next battle ${daysUntilPhrase(daysUntil)}`)
+        : daysUntilPhrase(daysUntil),
     };
   }
   if (s.seasonPhase === "offseason") {
@@ -1598,7 +1611,7 @@ function getNextMatchInfo() {
     if (s.offseasonReason === "missed") outcome = "Training camp";
     else if (s.playoff && s.playoff.champion) outcome = "🏆 Champion!";
     else if (s.playoff && s.playoff.eliminated) outcome = "Eliminated";
-    return { kind: "offseason", daysUntil, label: `${outcome} — Year ${s.year + 1} in ${daysUntil}d` };
+    return { kind: "offseason", daysUntil, label: `${outcome} — Year ${s.year + 1} ${daysUntilPhrase(daysUntil)}` };
   }
   return { kind: "unknown", label: "" };
 }
