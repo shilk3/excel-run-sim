@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.13.0";
+const APP_VERSION = "4.13.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -2402,13 +2402,9 @@ function endDay() {
     appendLog(e.html, e.cls);
   });
 
-  const skillCycleEvent = advanceSkillCycle();
-  if (skillCycleEvent) {
-    const e = { html: skillCycleEvent, cls: "event-season" };
-    state.logEntries.push(e);
-    appendLog(e.html, e.cls);
-  }
-
+  // Resolve this week's match (if today's the day) before the skill focus
+  // rerolls — the match grades the skills actually trained this week, not
+  // whatever gets revealed for the week ahead.
   const { matchResult, phaseEvent, yearSummary } = processDayEnd();
 
   if (matchResult) {
@@ -2424,6 +2420,13 @@ function endDay() {
 
   if (phaseEvent) {
     const e = { html: phaseEvent, cls: "event-season" };
+    state.logEntries.push(e);
+    appendLog(e.html, e.cls);
+  }
+
+  const skillCycleEvent = advanceSkillCycle();
+  if (skillCycleEvent) {
+    const e = { html: skillCycleEvent, cls: "event-season" };
     state.logEntries.push(e);
     appendLog(e.html, e.cls);
   }
