@@ -3,14 +3,14 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.3.0";
+const APP_VERSION = "4.4.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
 /* Balance constants — tune game feel here                                */
 /* ---------------------------------------------------------------------- */
 const BAL = {
-  idealSleep: 8, // also the Rest decay threshold: sleep below this drains Rest
+  idealSleep: 7, // also the Rest decay threshold: sleep below this drains Rest
   relaxComposureThreshold: 3, // Composure's decay threshold, in relaxation hours
   skillDecayThresholdHours: 1, // an active skill/Exercise below this hour count rusts
   skillGainBase: 0.24,
@@ -71,7 +71,42 @@ const BAL = {
   leagueSize: 40,
   promotionCount: 4,
   relegationCount: 4,
+  // Employment: a mandatory day job funds the whole career until you can
+  // go pro. Work/Pro Duties share one slider and one strike system —
+  // only what's "required" and what it's called changes with status.
+  workHoursRequired: 9, // Employed: Work hours/day required to avoid a strike
+  proDutyHoursRequired: 5, // Pro: Pro Duties hours/day required; hours above this master techniques
+  workDailyPay: 20, // cash earned per day the requirement is met, Employed or Pro alike
+  strikeWindowDays: 21, // 3 weeks — each strike expires this many days after it's earned
+  strikesToFire: 3,
+  jobSearchHoursNeeded: 30, // Unemployed: cumulative hours (any daily amount counts) to get re-hired
+  goProLeagueTier: 2, // Employed + leagueTier <= this + cash >= goProCash -> Pro, automatically
+  goProCash: 5000,
+  // Pros must stay current: a new technique queues up periodically: only
+  // the front of the queue is "in progress" at once, taking hours above
+  // the Pro Duties minimum. Falling behind never loses progress, but every
+  // not-yet-mastered technique costs match performance.
+  techniqueIntervalDays: 30,
+  techniqueMinHours: 25,
+  techniqueMaxHours: 40,
+  techniquePenaltyPerUnmastered: 0.05,
 };
+
+// Flavor pool for technique-queue entries — real Excel features, cycled
+// without repeating one already in the queue.
+const EXCEL_TECHNIQUES = [
+  "XLOOKUP", "Dynamic Arrays", "LAMBDA Functions", "Power Query", "Power Pivot",
+  "FILTER & SORT Functions", "LET Functions", "Spill Ranges", "Data Tables",
+  "Conditional Formatting Rules", "Array Formulas", "Pivot Table Slicers",
+  "What-If Analysis", "Macros & VBA Basics", "Named Ranges", "INDEX-MATCH Mastery",
+  "TEXTSPLIT & TEXTJOIN", "XMATCH", "Structured Table References", "Power Automate Flows",
+];
+function pickTechniqueName() {
+  const inQueue = new Set(state.employment.techniqueQueue.map((t) => t.name));
+  const pool = EXCEL_TECHNIQUES.filter((n) => !inQueue.has(n));
+  const choices = pool.length ? pool : EXCEL_TECHNIQUES;
+  return choices[randInt(0, choices.length - 1)];
+}
 
 // Skill cap granted by the highest league tier ever reached (1 = top).
 const LEAGUE_SKILL_CAP = { 1: 100, 2: 90, 3: 80, 4: 70, 5: 60 };
@@ -251,6 +286,34 @@ function dailyHoursCap(nutrition) {
 }
 
 /* ---------------------------------------------------------------------- */
+/* Employment: Work -> Pro, with Unemployed as the failure/recovery state  */
+/* ---------------------------------------------------------------------- */
+function checkGoProEligible() {
+  return state.leagueTier <= BAL.goProLeagueTier && state.cash >= BAL.goProCash;
+}
+function employmentStrikeCount() {
+  return state.employment.strikes.length;
+}
+// A synthetic 0-100 "job security" readout for the Work/Pro Duties bar —
+// full with no strikes, shrinking toward 0 as they stack up.
+function jobSecurityPct() {
+  return clamp(((BAL.strikesToFire - employmentStrikeCount()) / BAL.strikesToFire) * 100, 0, 100);
+}
+function workMaxHours() {
+  const st = state.employment.status;
+  if (st === "pro") return 12; // 5 required + headroom to push a technique
+  if (st === "unemployed") return 16; // no requirement, just a generous daily ceiling
+  return BAL.workHoursRequired; // Employed: no benefit to going beyond the requirement
+}
+function techniqueStatusText() {
+  const q = state.employment.techniqueQueue;
+  if (!q.length) return "caught up";
+  const cur = q[0];
+  const behind = q.length > 1 ? ` (+${q.length - 1} queued)` : "";
+  return `${cur.name} ${fmt(cur.hoursDone)}/${cur.hoursNeeded}h${behind}`;
+}
+
+/* ---------------------------------------------------------------------- */
 /* Opponent name generation                                               */
 /* ---------------------------------------------------------------------- */
 const NAME_PARTS_A = [
@@ -368,9 +431,17 @@ function freshState() {
     allocation: {
       skills: Object.fromEntries(SKILL_KEYS.map((k) => [k, 0])),
       exercise: 1,
-      sleep: 8,
+      sleep: 7,
       relax: 2,
       nutrition: 1,
+      work: BAL.workHoursRequired,
+    },
+    employment: {
+      status: "employed", // "employed" | "unemployed" | "pro"
+      strikes: [], // [{day}] — each expires strikeWindowDays after it's earned
+      jobSearchHours: 0, // Unemployed: cumulative progress toward jobSearchHoursNeeded
+      techniqueQueue: [], // Pro: [{name, hoursNeeded, hoursDone}], FIFO — only the front is "in progress"
+      techniqueDayCounter: 0, // days elapsed toward the next technique; only ticks while Pro
     },
     activeSkills: rollActiveSkills(), // 1-3 skills trainable this round; rerolled weekly
     skillCycleDay: 0, // days elapsed in the current 7-day skill-focus cycle
@@ -506,6 +577,25 @@ function migrateSave(parsed) {
   }
   if (parsed.allocation && parsed.allocation.nutrition === undefined) {
     parsed.allocation.nutrition = 1;
+  }
+
+  // v4.4.0 added mandatory employment (Work -> Pro, with Unemployed as the
+  // recovery state). Every existing career just starts Employed — there's
+  // no prior data to derive a status from, and starting employed means no
+  // save is retroactively punished by a surprise strike. Any save already
+  // meeting the go-pro thresholds is promoted automatically the next time
+  // a day resolves, same as a freshly-qualifying career.
+  if (!parsed.employment) {
+    parsed.employment = {
+      status: "employed",
+      strikes: [],
+      jobSearchHours: 0,
+      techniqueQueue: [],
+      techniqueDayCounter: 0,
+    };
+  }
+  if (parsed.allocation && parsed.allocation.work === undefined) {
+    parsed.allocation.work = BAL.workHoursRequired;
   }
 
   return parsed;
@@ -801,6 +891,86 @@ function resolveDay() {
   return events;
 }
 
+// Resolves one day of Work / Job Search / Pro Duties. Kept separate from
+// resolveDay() since it mutates state.employment (a whole status machine,
+// not a decaying stat) and generates its own log events.
+function resolveEmploymentDay() {
+  const emp = state.employment;
+  const workH = state.allocation.work || 0;
+  const events = [];
+
+  emp.strikes = emp.strikes.filter((s) => state.day - s.day < BAL.strikeWindowDays);
+
+  if (emp.status === "unemployed") {
+    emp.jobSearchHours += workH;
+    if (emp.jobSearchHours >= BAL.jobSearchHoursNeeded) {
+      emp.status = "employed";
+      emp.jobSearchHours = 0;
+      events.push({ type: "good", text: `💼 Found a new job! Work resumes at ${BAL.workHoursRequired}h/day.` });
+    } else if (workH > 0) {
+      events.push({ type: "neutral", text: `🔍 Job search: ${fmt(emp.jobSearchHours)}/${BAL.jobSearchHoursNeeded}h` });
+    }
+  } else {
+    const isPro = emp.status === "pro";
+    const required = isPro ? BAL.proDutyHoursRequired : BAL.workHoursRequired;
+    if (workH >= required) {
+      state.cash += BAL.workDailyPay;
+      if (isPro) {
+        const extra = workH - required;
+        if (extra > 0 && emp.techniqueQueue.length > 0) {
+          const current = emp.techniqueQueue[0];
+          current.hoursDone = Math.min(current.hoursNeeded, current.hoursDone + extra);
+          if (current.hoursDone >= current.hoursNeeded) {
+            emp.techniqueQueue.shift();
+            events.push({
+              type: "good",
+              text: `📘 Mastered ${current.name}!${emp.techniqueQueue.length ? " Next up: " + emp.techniqueQueue[0].name + "." : " You're fully caught up."}`,
+            });
+          }
+        }
+      }
+    } else {
+      emp.strikes.push({ day: state.day });
+      const label = isPro ? "Pro Duties" : "Work";
+      events.push({ type: "bad", text: `💼 Missed your ${label} hours — strike ${emp.strikes.length}/${BAL.strikesToFire}.` });
+      if (emp.strikes.length >= BAL.strikesToFire) {
+        emp.status = "unemployed";
+        emp.strikes = [];
+        emp.jobSearchHours = 0;
+        events.push({
+          type: "bad",
+          text: isPro
+            ? `🔥 Dropped by your sponsor after too many missed Pro Duties. Time to find a new job.`
+            : `🔥 Fired after too many missed shifts. Time to find a new job.`,
+        });
+      }
+    }
+
+    if (isPro && emp.status === "pro") {
+      emp.techniqueDayCounter += 1;
+      if (emp.techniqueDayCounter >= BAL.techniqueIntervalDays) {
+        emp.techniqueDayCounter = 0;
+        const name = pickTechniqueName();
+        const hoursNeeded = randInt(BAL.techniqueMinHours, BAL.techniqueMaxHours);
+        emp.techniqueQueue.push({ name, hoursNeeded, hoursDone: 0 });
+        events.push({ type: "neutral", text: `📘 New technique to master: ${name} (${hoursNeeded}h).` });
+      }
+    }
+  }
+
+  if (emp.status === "employed" && checkGoProEligible()) {
+    emp.status = "pro";
+    emp.strikes = [];
+    emp.techniqueDayCounter = 0;
+    events.push({
+      type: "good",
+      text: `🏆 You've gone PRO! Sponsorship replaces your day job — Pro Duties are just ${BAL.proDutyHoursRequired}h/day, but you'll need to keep up with new techniques.`,
+    });
+  }
+
+  return events;
+}
+
 /* ---------------------------------------------------------------------- */
 /* Match simulation                                                       */
 /* ---------------------------------------------------------------------- */
@@ -819,7 +989,15 @@ function performanceScore() {
   // stacks on top of (doesn't replace) Composure's own weighted contribution
   // below, same as before.
   const skillComponent = activeSkillAverage() * composureMatchMultiplier(s.composure);
-  return clamp(skillComponent * 0.55 + s.phys * 0.25 + s.composure * 0.15 + s.rest * 0.05, 0, 100);
+  let score = clamp(skillComponent * 0.55 + s.phys * 0.25 + s.composure * 0.15 + s.rest * 0.05, 0, 100);
+  // Pros who fall behind on current technique compete at a real disadvantage
+  // — every not-yet-mastered entry in the queue costs match performance,
+  // not training. Capped so a long backlog can't go negative.
+  if (state.employment.status === "pro" && state.employment.techniqueQueue.length > 0) {
+    const penalty = Math.min(1, state.employment.techniqueQueue.length * BAL.techniquePenaltyPerUnmastered);
+    score *= 1 - penalty;
+  }
+  return score;
 }
 
 // Resolves one real match for the player against a specific opponent rating.
@@ -1309,7 +1487,7 @@ function setBar(key, val, max) {
 function totalAssigned() {
   const a = state.allocation;
   const skillSum = trainableSkills().reduce((sum, k) => sum + (a.skills[k] || 0), 0);
-  return skillSum + a.exercise + a.sleep + a.relax + a.nutrition;
+  return skillSum + a.exercise + a.sleep + a.relax + a.nutrition + (a.work || 0);
 }
 
 // One row does double duty as both the stat readout (name, value/cap, bar)
@@ -1344,11 +1522,51 @@ function comboRowHtml(key, { icon, label, outcomeText, value, previewValue, cap,
   </div>`;
 }
 
+// Work / Job Search / Pro Duties share one slider and one row — only what
+// it's called, what it requires, and what its bar means change with status.
+function workRowHtml() {
+  const emp = state.employment;
+  const a = state.allocation;
+  const hours = a.work || 0;
+  const maxHours = workMaxHours();
+
+  if (emp.status === "unemployed") {
+    return comboRowHtml("work", {
+      icon: "🔍",
+      label: "Job Search",
+      outcomeText: `${fmt(emp.jobSearchHours)}/${BAL.jobSearchHoursNeeded}h`,
+      value: emp.jobSearchHours,
+      cap: BAL.jobSearchHoursNeeded,
+      hours,
+      maxHours,
+      markerHours: 0,
+      barClass: "work",
+    });
+  }
+
+  const isPro = emp.status === "pro";
+  const required = isPro ? BAL.proDutyHoursRequired : BAL.workHoursRequired;
+  const atRisk = hours < required;
+  const strikesText = `${employmentStrikeCount()}/${BAL.strikesToFire} strikes`;
+  const outcomeText = (isPro ? `${strikesText} · ${techniqueStatusText()}` : strikesText) + (atRisk ? " ⚠️" : "");
+  return comboRowHtml("work", {
+    icon: isPro ? "📱" : "💼",
+    label: isPro ? "Pro Duties" : "Work",
+    outcomeText,
+    value: jobSecurityPct(),
+    cap: 100,
+    hours,
+    maxHours,
+    markerHours: required,
+    barClass: "work",
+  });
+}
+
 function renderPlannerRows() {
   const a = state.allocation;
   const s = state.stats;
   const preview = previewTomorrow();
-  const rows = [];
+  const rows = [workRowHtml()];
 
   trainableSkills().forEach((key) => {
     const meta = skillMeta(key);
@@ -1636,6 +1854,33 @@ function openNameModal(isFirstTime) {
   });
 }
 
+function employmentSectionHtml() {
+  const emp = state.employment;
+  const strikeLines = emp.strikes
+    .map((s) => `Strike from Day ${s.day} (expires Day ${s.day + BAL.strikeWindowDays})`)
+    .join("<br>");
+
+  if (emp.status === "unemployed") {
+    return `<p>🔍 <b>Unemployed</b> — job searching: ${fmt(emp.jobSearchHours)} / ${BAL.jobSearchHoursNeeded}h accumulated. Any hours allocated to the slider count, no daily minimum.</p>`;
+  }
+
+  if (emp.status === "pro") {
+    const queue = emp.techniqueQueue;
+    const penalty = Math.round(Math.min(1, queue.length * BAL.techniquePenaltyPerUnmastered) * 100);
+    const queueHtml = queue.length
+      ? queue.map((t, i) => `${i === 0 ? "▶" : "⏸"} ${t.name}: ${fmt(t.hoursDone)}/${t.hoursNeeded}h`).join("<br>")
+      : "Fully caught up — no match penalty.";
+    return `<p>🏆 <b>Pro</b> · Pro Duties ${BAL.proDutyHoursRequired}h/day required ($${BAL.workDailyPay}/day) · ${employmentStrikeCount()}/${BAL.strikesToFire} strikes${strikeLines ? "<br>" + strikeLines : ""}</p>
+      <p><b>Technique queue</b> (hours above ${BAL.proDutyHoursRequired}h/day go here)${penalty > 0 ? ` — currently <b>-${penalty}%</b> match performance` : ""}:<br>${queueHtml}</p>`;
+  }
+
+  const goProHint = checkGoProEligible()
+    ? "Thresholds met — going pro next time a day resolves."
+    : `Go pro at League ${BAL.goProLeagueTier}+ and $${BAL.goProCash}+ banked (currently League ${state.leagueTier}, $${fmt(state.cash)}).`;
+  return `<p>💼 <b>Employed</b> · Work ${BAL.workHoursRequired}h/day required ($${BAL.workDailyPay}/day) · ${employmentStrikeCount()}/${BAL.strikesToFire} strikes${strikeLines ? "<br>" + strikeLines : ""}</p>
+    <p>${goProHint}</p>`;
+}
+
 function openCareer() {
   const info = getNextMatchInfo();
   let nextSection;
@@ -1689,6 +1934,10 @@ function openCareer() {
       <p>${state.playerName || "Player"} · Rank ${fmt(state.rank)} (peak ${fmt(state.peakRank)})<br>
       All-time: ${state.wins}W – ${state.losses}L<br>
       Cash: $${fmt(state.cash)}</p>
+    </div>
+    <div class="modal-section">
+      <h3>Employment</h3>
+      ${employmentSectionHtml()}
     </div>
     <div class="modal-section">
       <h3>Skills — ${isPreseason() ? "preseason: train anything" : `this week's focus: ${state.activeSkills.map((k) => skillMeta(k).name).join(", ")}`}</h3>
@@ -1772,7 +2021,8 @@ function openHowTo() {
       🏃 <b>Exercise</b> — raises Physical Health.<br>
       🌙 <b>Sleep</b> — builds Rest.<br>
       🎮 <b>Relaxation</b> — builds Composure and prevents burnout.<br>
-      🥗 <b>Nutrition</b> — keeps tomorrow's day at full length.
+      🥗 <b>Nutrition</b> — keeps tomorrow's day at full length.<br>
+      💼 <b>Work</b> — pays the bills and keeps you employed.
       </p>
       <p><b>It's all connected:</b> low Rest wears down Physical Health even if you train well, and low Physical Health caps how much your skill training actually helps. Training hard without Relaxation drains Composure — hit 0 and you burn out, tanking your effectiveness until it recovers.</p>
       <p><b>Decay:</b> every stat needs upkeep or it slips. Any skill that isn't active this round rusts; an active skill still rusts below ${BAL.skillDecayThresholdHours}h of training. Exercise below ${BAL.skillDecayThresholdHours}h detrains Physical Health. Sleep below ${BAL.idealSleep}h drains Rest. Relaxation below ${BAL.relaxComposureThreshold}h drains Composure. Nutrition below ${BAL.skillDecayThresholdHours}h drains Nutrition. Each slider shows a marker at its threshold, and each bar shows a faint preview of tomorrow's value — lighter for a gain, darker for a loss — based on your current plan.</p>
@@ -1783,6 +2033,8 @@ function openHowTo() {
       <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken, so missing the cut isn't a worse deal than making it and getting knocked out early.</p>
       <p><b>Leagues:</b> there are ${BAL.leagueCount} leagues, League 1 at the top and League 5 at the bottom — you start in League 5. Every league has a persistent roster of named rivals whose ratings evolve from real simulated results year after year, same as yours. Finish top ${BAL.promotionCount} of your league's table at season's end and you're promoted a tier; finish bottom ${BAL.relegationCount} and you're relegated — this applies to every competitor in every league, not just you, so the standings you see are a living world, not scenery. Check the Leagues screen any time to see all ${BAL.leagueCount} tables. Promotion and relegation are based purely on table position — the playoffs are a separate prize, unrelated to which league you're in next year.</p>
       <p>Cash and Rank carry across seasons and leagues — spend cash in the Coaching Shop any time.</p>
+      <p><b>Employment:</b> your day job funds everything else, every phase, no exceptions. Work ${BAL.workHoursRequired}h/day (every phase, preseason included) for $${BAL.workDailyPay}/day — miss it and you get a strike, which clears itself ${BAL.strikeWindowDays} days later. ${BAL.strikesToFire} strikes at once and you're fired: the same slider becomes a Job Search, needing ${BAL.jobSearchHoursNeeded} cumulative hours (any daily amount counts) to get rehired. Reach League ${BAL.goProLeagueTier}+ with $${BAL.goProCash}+ banked while employed and you go Pro automatically — Work drops to just ${BAL.proDutyHoursRequired}h/day of Pro Duties, with the same strike rule and the same fallback to Job Search if you're dropped.</p>
+      <p>Pros have one more thing to manage: staying current. Roughly every ${BAL.techniqueIntervalDays} days a new Excel technique appears that needs ${BAL.techniqueMinHours}-${BAL.techniqueMaxHours}h to master — any Pro Duties hours beyond the ${BAL.proDutyHoursRequired}h minimum go toward it. Falling behind never costs you progress (new ones just queue up), but every technique still unmastered costs ${Math.round(BAL.techniquePenaltyPerUnmastered * 100)}% match performance, stacking.</p>
     </div>`;
   openModal(html);
 }
@@ -1812,6 +2064,14 @@ function endDay() {
 
   const events = resolveDay();
   events.forEach((ev) => {
+    const cls = ev.type === "good" ? "event-good" : ev.type === "bad" ? "event-bad" : "";
+    const e = { html: ev.text, cls };
+    state.logEntries.push(e);
+    appendLog(e.html, e.cls);
+  });
+
+  const employmentEvents = resolveEmploymentDay();
+  employmentEvents.forEach((ev) => {
     const cls = ev.type === "good" ? "event-good" : ev.type === "bad" ? "event-bad" : "";
     const e = { html: ev.text, cls };
     state.logEntries.push(e);
@@ -1873,7 +2133,7 @@ function setAllocHoursRaw(key, val) {
   else state.allocation[key] = val;
 }
 function setAllocation(key, val) {
-  const maxForKey = isSkillKey(key) ? SKILL_MAX_HOURS : ACT_MAX[key];
+  const maxForKey = isSkillKey(key) ? SKILL_MAX_HOURS : key === "work" ? workMaxHours() : ACT_MAX[key];
   const others = totalAssigned() - getAllocHours(key);
   const maxAllowed = Math.min(maxForKey, dailyHoursCap(state.stats.nutrition) - others);
   setAllocHoursRaw(key, clamp(val, 0, Math.max(0, maxAllowed)));

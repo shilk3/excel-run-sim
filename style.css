@@ -10,6 +10,7 @@
   --nutrition: #ffcc4d;
   --rest: #b892ff;
   --composure: #ff6b6b;
+  --work: #ff9f43;
   --accent: #34d0a0;
   --danger: #ff5d5d;
   --warn: #ffb020;
@@ -134,6 +135,7 @@ html, body {
 .bar-fill.skill { background: var(--skill); }
 .bar-fill.phys { background: var(--phys); }
 .bar-fill.nutrition { background: var(--nutrition); }
+.bar-fill.work { background: var(--work); }
 .bar-fill.rest { background: var(--rest); }
 .bar-fill.composure { background: var(--composure); }
 .stat-cap { color: var(--text-dim); font-weight: 400; font-size: 11px; margin-left: 1px; }
@@ -259,6 +261,7 @@ input[type="range"]::-webkit-slider-thumb {
 .activity[data-act="exercise"] input[type="range"]::-webkit-slider-thumb { background: var(--phys); box-shadow: 0 0 0 1px var(--phys); }
 .activity[data-act="sleep"] input[type="range"]::-webkit-slider-thumb { background: var(--rest); box-shadow: 0 0 0 1px var(--rest); }
 .activity[data-act="relax"] input[type="range"]::-webkit-slider-thumb { background: var(--composure); box-shadow: 0 0 0 1px var(--composure); }
+.activity[data-act="work"] input[type="range"]::-webkit-slider-thumb { background: var(--work); box-shadow: 0 0 0 1px var(--work); }
 .activity[data-act="nutrition"] input[type="range"]::-webkit-slider-thumb { background: var(--nutrition); box-shadow: 0 0 0 1px var(--nutrition); }
 
 .end-day-btn {
