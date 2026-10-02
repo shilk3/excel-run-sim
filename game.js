@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.19.0";
+const APP_VERSION = "4.20.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -24,8 +24,8 @@ const BAL = {
   relaxComposureRelief: 2.4,
   composureLoadPerHour: 0.85,
   restGoodSleepBonus: 3, // extra composure relief when sleepHours >= ideal
-  overtrainThreshold: 10, // exercise hours before injury risk starts
-  injuryChancePerExcessHour: 0.045,
+  injuryChancePerHour: 0.025, // every Gym hour adds this much injury chance that day — only 0h is risk-free
+  gymMaxHours: 8,
   injuryPhysLoss: [15, 25],
   injuryDaysRange: [3, 5],
   burnoutComposureThreshold: 0,
@@ -221,7 +221,7 @@ Object.assign(UPGRADES, {
   },
   sleepApp: {
     name: "Sleep Coach App",
-    icon: "📱",
+    icon: "💤",
     levels: [
       { cost: 250, sleepDebtMult: 0.85, desc: "-15% Rest lost from poor sleep" },
       { cost: 550, sleepDebtMult: 0.75, desc: "-25% Rest lost from poor sleep" },
@@ -257,7 +257,7 @@ Object.assign(UPGRADES, {
   },
   manager: {
     name: "Team Manager",
-    icon: "💼",
+    icon: "🧑‍💼",
     levels: [
       { cost: 400, rankLossMult: 0.9, cashBonusMult: 1.0, desc: "-10% rating lost on defeat" },
       { cost: 800, rankLossMult: 0.8, cashBonusMult: 1.05, desc: "-20% rating lost on defeat, +5% prize money" },
@@ -272,6 +272,13 @@ function upgradeLevel(key) {
 function upgradeEffect(key) {
   const lvl = upgradeLevel(key);
   return lvl > 0 ? UPGRADES[key].levels[lvl - 1] : null;
+}
+// Today's injury chance from Gym hours — shared by the roll in resolveDay()
+// and the "#% 🤕" readout on the Gym row so the two always agree.
+function injuryChance(gymHours) {
+  const physioEff = upgradeEffect("physio");
+  const mult = physioEff ? physioEff.injuryReduceMult : 1.0;
+  return clamp(gymHours * BAL.injuryChancePerHour * mult, 0, 1);
 }
 function physCap() {
   return BAL.statCapBase + BAL.statCapPerLevel * upgradeLevel("physio");
@@ -736,6 +743,8 @@ function migrateSave(parsed) {
   // Injured saves from before the Gym slider was cleared on injury still
   // have hours locked in it — free them.
   if (parsed.injury && parsed.injury.active && parsed.allocation) parsed.allocation.exercise = 0;
+  // The Gym slider's max dropped from 12h to 8h.
+  if (parsed.allocation) parsed.allocation.exercise = Math.min(parsed.allocation.exercise || 0, BAL.gymMaxHours);
   // A rehire used to keep Job Search's up-to-16h on a Work slider that caps
   // at 9, counting phantom hours against the day (and blocking End Day).
   if (parsed.allocation && parsed.employment) {
@@ -819,6 +828,13 @@ function randInt(lo, hi) {
 
 function fmt(n) {
   return Math.round(n).toString();
+}
+
+// Short percentage for tight rows: one decimal under 10% ("2.5%"), whole
+// numbers from 10% up ("13%"), so it never grows past 4 characters.
+function fmtPct(fraction) {
+  const pct = fraction * 100;
+  return pct < 10 ? `${+pct.toFixed(1)}%` : `${Math.round(pct)}%`;
 }
 
 function fmtMoney(n) {
@@ -961,7 +977,6 @@ function previewTomorrow() {
 function resolveDay() {
   const a = state.allocation;
   const s = state.stats;
-  const physioEff = upgradeEffect("physio");
   const recoveryEff = upgradeEffect("recovery");
   const events = [];
   // An injury picked up today starts counting down tomorrow — otherwise a
@@ -1005,11 +1020,8 @@ function resolveDay() {
   }
 
   // ---- Injury roll (only if not already injured) ----
-  if (!state.injury.active && result.exerciseH > BAL.overtrainThreshold) {
-    const injuryReduceMult = physioEff ? physioEff.injuryReduceMult : 1.0;
-    const excess = result.exerciseH - BAL.overtrainThreshold;
-    const chance = clamp(excess * BAL.injuryChancePerExcessHour * injuryReduceMult, 0, 0.6);
-    if (Math.random() < chance) {
+  if (!state.injury.active && result.exerciseH > 0) {
+    if (Math.random() < injuryChance(result.exerciseH)) {
       const loss = randInt(BAL.injuryPhysLoss[0], BAL.injuryPhysLoss[1]);
       const daysReduce = recoveryEff ? recoveryEff.injuryDaysReduce : 0;
       const days = Math.max(1, randInt(BAL.injuryDaysRange[0], BAL.injuryDaysRange[1]) - daysReduce);
@@ -1018,7 +1030,7 @@ function resolveDay() {
       // The Gym slider locks while injured — free its hours rather than
       // leaving them stuck in the day's budget doing nothing.
       state.allocation.exercise = 0;
-      events.push({ type: "bad", text: `🤕 Overtraining injury! -${loss} Health. Gym locked for ${days} ${days === 1 ? "day" : "days"}.` });
+      events.push({ type: "bad", text: `🤕 Gym injury! -${loss} Health. Gym locked for ${days} ${days === 1 ? "day" : "days"}.` });
     }
   }
 
@@ -1262,13 +1274,6 @@ function resolveMatch(opponentRating) {
   const cashBonusMult = managerEff ? managerEff.cashBonusMult : 1.0;
   const rankBefore = state.rank;
 
-  if (state.injury.active) {
-    const loss = Math.round(10 * rankLossMult);
-    state.rank = clamp(state.rank - loss, BAL.ratingMin, BAL.ratingMax);
-    state.losses += 1;
-    return { forfeit: true, win: false, text: `You're injured and had to forfeit. Rating −${loss}.`, opponentRating: Math.round(opponentRating), rankBefore };
-  }
-
   const breakdown = performanceBreakdown();
   const perf = breakdown.score;
   const matchRating = currentMatchRating();
@@ -1291,7 +1296,6 @@ function resolveMatch(opponentRating) {
   else state.losses += 1;
 
   return {
-    forfeit: false,
     win,
     perf,
     breakdown,
@@ -1533,8 +1537,8 @@ function resolvePlayoffRound() {
       matchResult = resolveMatch(liveOpponentRating(opp));
       matchResult.opponentName = opp.name;
       matchResult.roundLabel = roundName;
-      const win = !matchResult.forfeit && matchResult.win;
-      recordRivalResultVsPlayer(opp.rivalId, win, matchResult.forfeit ? matchResult.rankBefore : matchResult.matchRating);
+      const win = matchResult.win;
+      recordRivalResultVsPlayer(opp.rivalId, win, matchResult.matchRating);
       winners.push(win ? player : opp);
       summary = win ? `🏆 ${roundName} WIN vs ${opp.name}!` : `💔 Eliminated in the ${roundName} by ${opp.name}.`;
       if (!win) p.eliminated = true;
@@ -1614,8 +1618,8 @@ function processDayEnd() {
       matchResult = resolveMatch(liveOpponentRating(fixture));
       matchResult.opponentName = fixture.name;
       matchResult.roundLabel = `Round ${state.roundIndex + 1}/${BAL.seasonRounds}`;
-      const win = !matchResult.forfeit && matchResult.win;
-      recordRivalResultVsPlayer(fixture.rivalId, win, matchResult.forfeit ? matchResult.rankBefore : matchResult.matchRating);
+      const win = matchResult.win;
+      recordRivalResultVsPlayer(fixture.rivalId, win, matchResult.matchRating);
       fixture.played = true;
       fixture.win = win;
       state.seasonResults.push({ opponent: fixture.name, win });
@@ -1860,7 +1864,7 @@ function phaseLabelText() {
 /* ---------------------------------------------------------------------- */
 const $ = (id) => document.getElementById(id);
 
-const ACT_MAX = { exercise: 12, sleep: 12, relax: 12, nutrition: 4 };
+const ACT_MAX = { exercise: BAL.gymMaxHours, sleep: 12, relax: 12, nutrition: 4 };
 const SKILL_MAX_HOURS = 16;
 
 function markerPct(threshold, max) {
@@ -2024,15 +2028,18 @@ function renderPlannerRows() {
   });
 
   const pCap = physCap();
-  // Poor Rest drains Physical Health on its own, independent of Exercise —
-  // without this note, Health can visibly keep dropping even with hours
-  // allocated here, which reads as a bug rather than the Sleep tie-in it is.
-  const restDrag = preview.physDecayFromRest > 1 ? ` · Rest −${fmt1(preview.physDecayFromRest)}` : "";
+  // Room for one note plus the injury readout before the row overflows.
+  // The note is "Rest −N" when poor Rest is draining Health (otherwise
+  // Health can keep dropping with Gym hours in, which reads as a bug), else
+  // the skill multiplier. While injured the readout shows days left instead.
+  const gymNote = preview.physDecayFromRest > 1 ? `Rest −${fmt1(preview.physDecayFromRest)}` : `×${physSynergy(s.phys).toFixed(2)} skill`;
+  const risk = injuryChance(a.exercise);
+  const injuryText = state.injury.active ? ` · 🤕 ${state.injury.daysLeft}d` : risk > 0 ? ` · ${fmtPct(risk)} 🤕` : "";
   rows.push(
     comboRowHtml("exercise", {
       icon: "🏃",
       label: "Gym",
-      outcomeText: `→ Health ${fmt(s.phys)}/${pCap} · ×${physSynergy(s.phys).toFixed(2)} skill${restDrag}`,
+      outcomeText: `Health ${fmt(s.phys)}/${pCap} · ${gymNote}${injuryText}`,
       value: s.phys,
       previewValue: preview.phys,
       cap: pCap,
@@ -2047,7 +2054,7 @@ function renderPlannerRows() {
     comboRowHtml("sleep", {
       icon: "🌙",
       label: "Sleep",
-      outcomeText: `→ Rest ${fmt(s.rest)}/100 · ×${restTrainingMultiplier(s.rest).toFixed(1)} training`,
+      outcomeText: `Rest ${fmt(s.rest)}/100 · ×${restTrainingMultiplier(s.rest).toFixed(1)} training`,
       value: s.rest,
       previewValue: preview.rest,
       cap: 100,
@@ -2074,7 +2081,7 @@ function renderPlannerRows() {
     comboRowHtml("relax", {
       icon: "🎮",
       label: "Relax",
-      outcomeText: `→ Composure ${fmt(s.composure)}/100 · ×${composureMatchMultiplier(s.composure)}${matchSuffix}${composureNote}`,
+      outcomeText: `Composure ${fmt(s.composure)}/100 · ×${composureMatchMultiplier(s.composure)}${matchSuffix}${composureNote}`,
       value: s.composure,
       previewValue: preview.composure,
       cap: 100,
@@ -2172,22 +2179,8 @@ $("modalOverlay").addEventListener("click", (e) => {
 /* Match modal                                                            */
 /* ---------------------------------------------------------------------- */
 function showMatchModal(result) {
-  let html;
   const context = result.roundLabel ? `${result.roundLabel}${result.opponentName ? " vs " + result.opponentName : ""}` : "";
-  if (result.forfeit) {
-    html = `
-      <div class="match-card">
-        <div class="match-result loss">FORFEIT</div>
-        <div class="match-sub">${context ? context + " — " : ""}${result.text}</div>
-        ${
-          typeof result.positionAfter === "number"
-            ? `<div class="match-sub">League table: #${result.positionBefore} → #${result.positionAfter} of ${result.leagueSize}</div>`
-            : ""
-        }
-        <button class="primary-btn" id="matchOk">Continue</button>
-      </div>`;
-  } else {
-    html = `
+  const html = `
       <div class="match-card">
         <div class="match-result ${result.win ? "win" : "loss"}">${result.win ? "VICTORY" : "DEFEAT"}</div>
         <div class="match-sub">${context ? context + "<br>" : ""}Opponent rating: ${result.opponentRating} · You had a ${result.winProb}% win chance</div>
@@ -2211,7 +2204,6 @@ function showMatchModal(result) {
         ${result.championBonus ? `<div class="match-sub">👑 Champion bonus: +$${result.championBonus.cash} · +${result.championBonus.rating} rating</div>` : ""}
         <button class="primary-btn" id="matchOk">Continue</button>
       </div>`;
-  }
   openModal(html);
   $("matchOk").addEventListener("click", closeModal);
 }
@@ -2604,7 +2596,7 @@ function openHowTo() {
       <p><b>It's all connected:</b> low Rest wears down Physical Health even if you train well, and low Physical Health caps how much your skill training actually helps. Training hard without Relax drains Composure — hit 0 and you burn out, tanking your effectiveness until it recovers.</p>
       <p><b>Decay:</b> every stat needs upkeep or it slips. Any skill that isn't active this round rusts; an active skill still rusts below ${BAL.skillDecayThresholdHours}h of training. Gym below ${BAL.skillDecayThresholdHours}h detrains Physical Health. Sleep below ${BAL.idealSleep}h drains Rest. Relax below ${BAL.relaxComposureThreshold}h drains Composure. Food below ${BAL.skillDecayThresholdHours}h drains Nutrition. Each slider shows a marker at its threshold, and each bar previews tomorrow's value based on your current plan — green for a gain, red for a loss.</p>
       <p><b>Rest</b> swings training itself: above ${BAL.restTrainingBoostThreshold} it's 150% effective, above ${BAL.restTrainingBoostHigh} it's 200% effective. <b>Composure</b> hits match day specifically — below ${BAL.composureMatchMid} your active skills count for only 75%, below ${BAL.composureMatchLow} just 50%. <b>Nutrition</b> sets how many hours you get at all: below ${BAL.nutritionHoursCapLow} your day shrinks to just ${BAL.dailyHoursFloor}h, sliding up to the full ${BAL.dailyHoursCeiling}h at ${BAL.nutritionHoursCapHigh}+.</p>
-      <p>Overtraining physically (too many Gym hours) risks injury, which locks the Gym for several days.</p>
+      <p><b>Gym injuries:</b> every Gym hour adds a ${+(BAL.injuryChancePerHour * 100).toFixed(1)}% chance of injury that day, so only a 0h day is risk-free — ${BAL.gymMaxHours}h (the most you can do) is a ${+(BAL.gymMaxHours * BAL.injuryChancePerHour * 100).toFixed(1)}% chance. The Gym row shows today's risk as <b>#% 🤕</b>. Sports Physio cuts that risk by 20%, 35% or 50%. An injury costs ${BAL.injuryPhysLoss[0]}–${BAL.injuryPhysLoss[1]} Health and locks the Gym for ${BAL.injuryDaysRange[0]}–${BAL.injuryDaysRange[1]} days (Recovery Program takes 1–3 days off, minimum 1); the row shows <b>🤕 #d</b> while it heals. Injuries never stop you playing matches — they only shut the Gym.</p>
       <p><b>Stat ceilings:</b> each skill caps at ${BAL.skillShopCapBase} until you invest in that skill's dedicated Coach (5 levels, Coaching Shop) — but the effective ceiling is also capped by the highest league you've ever reached (peak, not current), from 60 in League 5 up to 100 in League 1. Both gates must be cleared to hit 100. Physical Health caps at ${BAL.statCapBase} until you invest in Sports Physio.</p>
       <p><b>The season:</b> a ${BAL.preseasonDays}-day preseason to train, then a ${BAL.seasonRounds}-round regular season — one match a week against a named rival, all scheduled in advance, each testing that week's active skills. Finish in the top ${BAL.playoffSize} of your ${BAL.seasonRounds + 1}-competitor league to reach the knockout playoffs. Lose a playoff match and you're out; win the Final and you're champion.</p>
       <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken, so missing the cut isn't a worse deal than making it and getting knocked out early.</p>
@@ -2674,9 +2666,7 @@ function endDay() {
   if (matchResult) {
     const oppText = matchResult.opponentName ? ` vs ${matchResult.opponentName}` : "";
     const label = matchResult.roundLabel || "Match";
-    const summary = matchResult.forfeit
-      ? `🏆 ${label} forfeited (injured)${oppText}. Rating ${fmt(matchResult.rankBefore)} → ${fmt(state.rank)}.`
-      : `🏆 ${label}${oppText} (${matchResult.opponentRating}) — ${matchResult.win ? "WON" : "LOST"}. Rating ${fmt(matchResult.rankBefore)} → ${fmt(state.rank)}. +$${matchResult.cashReward}.`;
+    const summary = `🏆 ${label}${oppText} (${matchResult.opponentRating}) — ${matchResult.win ? "WON" : "LOST"}. Rating ${fmt(matchResult.rankBefore)} → ${fmt(state.rank)}. +$${matchResult.cashReward}.`;
     const e = { html: summary, cls: "event-match" };
     state.logEntries.push(e);
     appendLog(e.html, e.cls);

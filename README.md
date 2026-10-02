@@ -27,8 +27,9 @@ Relax, and Food. Everything is connected:
   Composure can cut your active skills' effect on a match in half.
   **Nutrition** swings how many hours you get at all: below 40 your day
   shrinks to 16h, sliding up to a full 24h at 90+.
-- Overtrain physically and you risk an injury that locks the Gym for
-  several days.
+- Every Gym hour carries a 2.5% injury chance that day (8h, the max, is
+  20%; Sports Physio cuts it). An injury costs 15–25 Health and locks the
+  Gym for 3–5 days, but never stops you playing matches.
 - Each skill caps at 50 until you invest match winnings in that skill's
   dedicated Coach (5 levels, Coaching Shop) — and the effective ceiling is
   also capped by the highest league you've ever reached, from 60 in League 5
