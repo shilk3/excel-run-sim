@@ -242,6 +242,7 @@ html, body {
   white-space: nowrap;
 }
 .skill-shop-tag-none { opacity: 0.6; font-weight: 600; }
+.skill-shop-tag-negative { color: var(--danger); }
 .step-btn {
   width: 34px;
   height: 34px;

@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.17.1";
+const APP_VERSION = "4.18.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -205,9 +205,9 @@ Object.assign(UPGRADES, {
     name: "Sports Physio",
     icon: "🩺",
     levels: [
-      { cost: 300, injuryReduceMult: 0.8, exerciseBonus: 0.05, desc: "-20% injury risk, +5% Exercise gains, health ceiling 80" },
-      { cost: 650, injuryReduceMult: 0.65, exerciseBonus: 0.1, desc: "-35% injury risk, +10% Exercise gains, health ceiling 90" },
-      { cost: 1200, injuryReduceMult: 0.5, exerciseBonus: 0.18, desc: "-50% injury risk, +18% Exercise gains, health ceiling 100" },
+      { cost: 300, injuryReduceMult: 0.8, exerciseBonus: 0.05, desc: "-20% injury risk, +5% Gym gains, Health ceiling 80" },
+      { cost: 650, injuryReduceMult: 0.65, exerciseBonus: 0.1, desc: "-35% injury risk, +10% Gym gains, Health ceiling 90" },
+      { cost: 1200, injuryReduceMult: 0.5, exerciseBonus: 0.18, desc: "-50% injury risk, +18% Gym gains, Health ceiling 100" },
     ],
   },
   sleepApp: {
@@ -232,9 +232,9 @@ Object.assign(UPGRADES, {
     name: "Meditation Coach",
     icon: "🧘",
     levels: [
-      { cost: 200, reliefMult: 1.2, desc: "+20% Composure relief from Relaxation" },
-      { cost: 450, reliefMult: 1.4, desc: "+40% Composure relief from Relaxation" },
-      { cost: 850, reliefMult: 1.65, desc: "+65% Composure relief from Relaxation" },
+      { cost: 200, reliefMult: 1.2, desc: "+20% Composure relief from Relax" },
+      { cost: 450, reliefMult: 1.4, desc: "+40% Composure relief from Relax" },
+      { cost: 850, reliefMult: 1.65, desc: "+65% Composure relief from Relax" },
     ],
   },
   recovery: {
@@ -250,9 +250,9 @@ Object.assign(UPGRADES, {
     name: "Team Manager",
     icon: "💼",
     levels: [
-      { cost: 400, rankLossMult: 0.9, cashBonusMult: 1.0, desc: "-10% rank lost on defeat" },
-      { cost: 800, rankLossMult: 0.8, cashBonusMult: 1.05, desc: "-20% rank lost on defeat, +5% prize money" },
-      { cost: 1500, rankLossMult: 0.65, cashBonusMult: 1.1, desc: "-35% rank lost on defeat, +10% prize money" },
+      { cost: 400, rankLossMult: 0.9, cashBonusMult: 1.0, desc: "-10% rating lost on defeat" },
+      { cost: 800, rankLossMult: 0.8, cashBonusMult: 1.05, desc: "-20% rating lost on defeat, +5% prize money" },
+      { cost: 1500, rankLossMult: 0.65, cashBonusMult: 1.1, desc: "-35% rating lost on defeat, +10% prize money" },
     ],
   },
 });
@@ -337,8 +337,7 @@ function jobSecurityPreviewPct(hours, isPro) {
   const previewLives = clamp(livesRemaining() - loss, 0, BAL.strikesToFire);
   return clamp((previewLives / BAL.strikesToFire) * 100, 0, 100);
 }
-function workMaxHours() {
-  const st = state.employment.status;
+function workMaxHours(st = state.employment.status) {
   if (st === "pro") return 12; // 5 required + headroom to push a technique
   if (st === "unemployed") return 16; // no requirement, just a generous daily ceiling
   return BAL.workHoursRequired; // Employed: no benefit to going beyond the requirement
@@ -725,6 +724,15 @@ function migrateSave(parsed) {
   }
   if (parsed.playoffChampions === undefined) parsed.playoffChampions = null;
 
+  // Injured saves from before the Gym slider was cleared on injury still
+  // have hours locked in it — free them.
+  if (parsed.injury && parsed.injury.active && parsed.allocation) parsed.allocation.exercise = 0;
+  // A rehire used to keep Job Search's up-to-16h on a Work slider that caps
+  // at 9, counting phantom hours against the day (and blocking End Day).
+  if (parsed.allocation && parsed.employment) {
+    parsed.allocation.work = Math.min(parsed.allocation.work || 0, workMaxHours(parsed.employment.status));
+  }
+
   // skillCycleDay and phaseDay always advance together outside preseason —
   // same every-day increment, same reset-at-7 (every phase length is a
   // multiple of 7 by design). A save written while a prior bug let them
@@ -750,8 +758,13 @@ function loadState() {
   }
 }
 
+// Only the last 200 entries are ever shown; without a cap the saved log
+// grows ~180KB a year and eventually fills localStorage.
+const LOG_KEEP = 300;
+
 function saveState() {
   if (!STORAGE_OK) return false;
+  if (state.logEntries.length > LOG_KEEP) state.logEntries = state.logEntries.slice(-LOG_KEEP);
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(state));
     return true;
@@ -797,6 +810,15 @@ function randInt(lo, hi) {
 
 function fmt(n) {
   return Math.round(n).toString();
+}
+
+function fmtMoney(n) {
+  return `${n < 0 ? "−" : ""}$${fmt(Math.abs(n))}`;
+}
+
+// The player's name is the only user-typed text that reaches innerHTML.
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
 
 function fmt1(n) {
@@ -933,6 +955,9 @@ function resolveDay() {
   const physioEff = upgradeEffect("physio");
   const recoveryEff = upgradeEffect("recovery");
   const events = [];
+  // An injury picked up today starts counting down tomorrow — otherwise a
+  // "3 day" injury only locks the Gym for 2, and a 1-day one for none.
+  const wasInjured = state.injury.active;
 
   const result = computeDayResult(a, s, state.injury.active, state.burnout.active);
   const trainable = trainableSkills();
@@ -951,7 +976,7 @@ function resolveDay() {
       let note = "";
       if (result.skillWasAtCap[key] && cap < 100) note = ` (capped at ${cap})`;
       else if (result.focusMult < 1) note = " (burnout hurt your training)";
-      else if (result.physMult < 0.75) note = " (low physical health capped your gains)";
+      else if (result.physMult < 0.75) note = " (low Health capped your gains)";
       events.push({ type: delta > 0.5 ? "good" : "neutral", text: `${meta.icon} ${meta.name} (${hours}h): ${fmtSigned(delta)} skill${note}` });
     } else if (delta < 0 && isActive) {
       events.push({ type: "bad", text: `${meta.icon} No ${meta.name} training: skill rusted slightly (${fmtSigned(delta)})` });
@@ -964,10 +989,10 @@ function resolveDay() {
   const physDelta = result.phys - physBefore;
   if (result.exerciseH > 0) {
     let note = result.physWasAtCap && result.pCap < 100 ? ` (capped at ${result.pCap} — upgrade Sports Physio for a higher ceiling)` : "";
-    events.push({ type: physDelta > 0 ? "good" : "neutral", text: `🏃 Exercise (${result.exerciseH}h): ${fmtSigned(physDelta)} physical health${note}` });
+    events.push({ type: physDelta > 0 ? "good" : "neutral", text: `🏃 Gym (${result.exerciseH}h): Health ${fmtSigned(physDelta)}${note}` });
   }
   if (result.physDecayFromRest > 1) {
-    events.push({ type: "bad", text: `🌙 Poor Rest is wearing down your body (${fmtSigned(-result.physDecayFromRest)} health)` });
+    events.push({ type: "bad", text: `🌙 Poor Rest is wearing down your body (Health ${fmtSigned(-result.physDecayFromRest)})` });
   }
 
   // ---- Injury roll (only if not already injured) ----
@@ -981,7 +1006,10 @@ function resolveDay() {
       const days = Math.max(1, randInt(BAL.injuryDaysRange[0], BAL.injuryDaysRange[1]) - daysReduce);
       s.phys = clamp(s.phys - loss, 0, result.pCap);
       state.injury = { active: true, daysLeft: days };
-      events.push({ type: "bad", text: `🤕 Overtraining injury! -${loss} physical health. Exercise disabled for ${days} days.` });
+      // The Gym slider locks while injured — free its hours rather than
+      // leaving them stuck in the day's budget doing nothing.
+      state.allocation.exercise = 0;
+      events.push({ type: "bad", text: `🤕 Overtraining injury! -${loss} Health. Gym locked for ${days} ${days === 1 ? "day" : "days"}.` });
     }
   }
 
@@ -990,9 +1018,9 @@ function resolveDay() {
   s.nutrition = result.nutrition;
   const nutritionH = a.nutrition || 0;
   if (nutritionH >= BAL.skillDecayThresholdHours) {
-    events.push({ type: result.nutrition - nutritionBefore > 0.5 ? "good" : "neutral", text: `🥗 Nutrition (${nutritionH}h): ${fmtSigned(result.nutrition - nutritionBefore)}` });
+    events.push({ type: result.nutrition - nutritionBefore > 0.5 ? "good" : "neutral", text: `🥗 Food (${nutritionH}h): Nutrition ${fmtSigned(result.nutrition - nutritionBefore)}` });
   } else {
-    events.push({ type: "bad", text: `🥗 Skipped Nutrition: fell to ${fmt(s.nutrition)} — tomorrow's hours may shrink` });
+    events.push({ type: "bad", text: `🥗 Skipped Food: Nutrition fell to ${fmt(s.nutrition)} — tomorrow's hours may shrink` });
   }
 
   // ---- Rest ----
@@ -1006,7 +1034,7 @@ function resolveDay() {
   // ---- Composure ----
   s.composure = result.composure;
   if (result.relaxH < BAL.relaxComposureThreshold && result.composureLoad > 5) {
-    events.push({ type: "bad", text: `🔥 Under ${BAL.relaxComposureThreshold}h relaxation: Composure fell to ${fmt(s.composure)}` });
+    events.push({ type: "bad", text: `🔥 Under ${BAL.relaxComposureThreshold}h Relax: Composure fell to ${fmt(s.composure)}` });
   } else if (result.relaxH >= BAL.relaxComposureThreshold) {
     events.push({ type: "good", text: `🎮 Relaxed ${result.relaxH}h: Composure ${fmtSigned(result.composureDelta)}` });
   }
@@ -1014,18 +1042,18 @@ function resolveDay() {
   // ---- Burnout state transitions ----
   if (!state.burnout.active && s.composure <= BAL.burnoutComposureThreshold) {
     state.burnout = { active: true, daysLeft: 1 };
-    events.push({ type: "bad", text: `⚠️ BURNOUT! You've pushed too hard with too little rest. Training and exercise are far less effective until your Composure recovers — relax more.` });
+    events.push({ type: "bad", text: `⚠️ BURNOUT! You've pushed too hard with too little rest. Training and the Gym are far less effective until your Composure recovers — Relax more.` });
   } else if (state.burnout.active && s.composure >= BAL.burnoutRecoverThreshold) {
     state.burnout = { active: false, daysLeft: 0 };
     events.push({ type: "good", text: `✅ Recovered from burnout. You're focused again.` });
   }
 
   // ---- Injury countdown ----
-  if (state.injury.active) {
+  if (wasInjured && state.injury.active) {
     state.injury.daysLeft -= 1;
     if (state.injury.daysLeft <= 0) {
       state.injury = { active: false, daysLeft: 0 };
-      events.push({ type: "good", text: `✅ Injury healed. Exercise is available again.` });
+      events.push({ type: "good", text: `✅ Injury healed. The Gym is open again.` });
     }
   }
 
@@ -1052,6 +1080,9 @@ function resolveEmploymentDay() {
     if (emp.jobSearchHours >= BAL.jobSearchHoursNeeded) {
       emp.status = "employed";
       emp.jobSearchHours = 0;
+      // Job Search allows up to 16h but Work caps at its 9h requirement, so
+      // reset to exactly that rather than leaving extra hours stranded.
+      state.allocation.work = BAL.workHoursRequired;
       events.push({ type: "good", text: `💼 Found a new job! Work resumes at ${BAL.workHoursRequired}h/day.` });
     } else if (workH > 0) {
       events.push({ type: "neutral", text: `🔍 Job search: ${fmt(emp.jobSearchHours)}/${BAL.jobSearchHoursNeeded}h` });
@@ -1122,12 +1153,14 @@ function resolveEmploymentDay() {
     emp.status = "pro";
     emp.strikes = [];
     emp.techniqueDayCounter = 0;
+    state.allocation.work = BAL.proDutyHoursRequired;
     events.push({
       type: "good",
       text: `🏆 You've gone PRO! Sponsorship replaces your day job — Pro Duties are just ${BAL.proDutyHoursRequired}h/day, but you'll need to keep up with new techniques.`,
     });
   }
 
+  state.allocation.work = Math.min(state.allocation.work || 0, workMaxHours());
   return events;
 }
 
@@ -1195,15 +1228,36 @@ function winProbabilityAgainst(opponentRating) {
   return 1 / (1 + Math.pow(10, (opponentRating - matchRating) / 400));
 }
 
+// Fixtures and bracket slots copy a rival's rating when they're built, but
+// the rival keeps playing (and moving) after that — always read it live so
+// the odds, the topbar and the league table all agree.
+function liveOpponentRating(entry) {
+  const rival = entry && entry.rivalId != null ? findRival(entry.rivalId) : null;
+  return rival ? rival.rating : entry.rating;
+}
+
+// The player's opponent is a real rival too: their rating and lifetime
+// record move with this result, same as any rival-vs-rival match.
+function recordRivalResultVsPlayer(rivalId, playerWon, playerRating) {
+  const rival = findRival(rivalId);
+  if (!rival) return;
+  const change = eloChange(rival.rating, playerRating, !playerWon);
+  rival.rating = clamp(rival.rating + change, 300, 3000);
+  if (playerWon) rival.losses += 1;
+  else rival.wins += 1;
+}
+
 function resolveMatch(opponentRating) {
   const managerEff = upgradeEffect("manager");
   const rankLossMult = managerEff ? managerEff.rankLossMult : 1.0;
   const cashBonusMult = managerEff ? managerEff.cashBonusMult : 1.0;
+  const rankBefore = state.rank;
 
   if (state.injury.active) {
     const loss = Math.round(10 * rankLossMult);
     state.rank = Math.max(400, state.rank - loss);
-    return { forfeit: true, win: false, text: `You're injured and had to forfeit. Rank -${loss}.`, opponentRating: Math.round(opponentRating) };
+    state.losses += 1;
+    return { forfeit: true, win: false, text: `You're injured and had to forfeit. Rating −${loss}.`, opponentRating: Math.round(opponentRating), rankBefore };
   }
 
   const breakdown = performanceBreakdown();
@@ -1237,6 +1291,7 @@ function resolveMatch(opponentRating) {
     winProb: Math.round(winProb * 100),
     roll: Math.round(roll * 100),
     ratingChange,
+    rankBefore,
     cashReward,
   };
 }
@@ -1300,7 +1355,7 @@ function buildStandingsFromPoints(tier) {
     .filter((r) => r.league === tier)
     .map((r) => ({ name: r.name, rating: r.rating, points: points[r.id] || 0, isPlayer: false, rivalId: r.id }));
   if (tier === state.leagueTier) {
-    standings.push({ name: state.playerName || "You", rating: state.rank, points: points.player || 0, isPlayer: true, rivalId: null });
+    standings.push({ name: escapeHtml(state.playerName || "You"), rating: state.rank, points: points.player || 0, isPlayer: true, rivalId: null });
   }
   return standings.sort((a, b) => b.points - a.points || b.rating - a.rating);
 }
@@ -1466,10 +1521,11 @@ function resolvePlayoffRound() {
     if (teamA.isPlayer || teamB.isPlayer) {
       const player = teamA.isPlayer ? teamA : teamB;
       const opp = teamA.isPlayer ? teamB : teamA;
-      matchResult = resolveMatch(opp.rating);
+      matchResult = resolveMatch(liveOpponentRating(opp));
       matchResult.opponentName = opp.name;
       matchResult.roundLabel = roundName;
       const win = !matchResult.forfeit && matchResult.win;
+      recordRivalResultVsPlayer(opp.rivalId, win, matchResult.forfeit ? matchResult.rankBefore : matchResult.matchRating);
       winners.push(win ? player : opp);
       summary = win ? `🏆 ${roundName} WIN vs ${opp.name}!` : `💔 Eliminated in the ${roundName} by ${opp.name}.`;
       if (!win) p.eliminated = true;
@@ -1495,10 +1551,13 @@ function resolvePlayoffRound() {
     p.champion = true;
     seasonOver = true;
     champion = winners[0];
-    summary = `👑 CHAMPION! You won the Year ${state.year} League ${p.tier} Final!`;
-    state.cash += 2000;
-    state.rank += 40;
+    const bonus = { cash: 2000, rating: 40 };
+    summary = `👑 CHAMPION! You won the Year ${state.year} League ${p.tier} Final! +$${bonus.cash} and +${bonus.rating} rating.`;
+    state.cash += bonus.cash;
+    state.yearCashFlow.matchCash += bonus.cash;
+    state.rank += bonus.rating;
     state.peakRank = Math.max(state.peakRank, state.rank);
+    matchResult.championBonus = bonus;
   } else {
     p.stage = PLAYOFF_NEXT_STAGE[p.stage];
     p.currentRound = winners;
@@ -1537,10 +1596,11 @@ function processDayEnd() {
       // where you actually sit in the table.
       const standingsBefore = buildStandingsFromPoints(state.leagueTier);
       const positionBefore = standingsBefore.findIndex((r) => r.isPlayer) + 1;
-      matchResult = resolveMatch(fixture.rating);
+      matchResult = resolveMatch(liveOpponentRating(fixture));
       matchResult.opponentName = fixture.name;
       matchResult.roundLabel = `Round ${state.roundIndex + 1}/${BAL.seasonRounds}`;
       const win = !matchResult.forfeit && matchResult.win;
+      recordRivalResultVsPlayer(fixture.rivalId, win, matchResult.forfeit ? matchResult.rankBefore : matchResult.matchRating);
       fixture.played = true;
       fixture.win = win;
       state.seasonResults.push({ opponent: fixture.name, win });
@@ -1685,9 +1745,10 @@ function getNextMatchInfo() {
     const fixture = s.schedule[s.roundIndex];
     if (!fixture) return { kind: "regular-end", label: "Season wrapping up…" };
     const roundNum = s.roundIndex + 1;
-    const diff = difficultyLabel(fixture.rating, s.rank);
-    const winPct = Math.round(winProbabilityAgainst(fixture.rating) * 100);
-    const oppRating = Math.round(fixture.rating);
+    const liveRating = liveOpponentRating(fixture);
+    const diff = difficultyLabel(liveRating, s.rank);
+    const winPct = Math.round(winProbabilityAgainst(liveRating) * 100);
+    const oppRating = Math.round(liveRating);
     return {
       kind: "fixture",
       daysUntil,
@@ -1703,8 +1764,8 @@ function getNextMatchInfo() {
         ? `Rd ${roundNum} TODAY vs ${fixture.name} (${oppRating})`
         : `Rd ${roundNum}/${BAL.seasonRounds} vs ${fixture.name} (${oppRating})`,
       labelLine2: daysUntil <= 0
-        ? `${winPct}% chance of winning today's battle`
-        : `${winPct}% chance of winning next battle ${daysUntilPhrase(daysUntil)}`,
+        ? `${winPct}% chance of winning today's match`
+        : `${winPct}% chance of winning next match ${daysUntilPhrase(daysUntil)}`,
     };
   }
   if (s.seasonPhase === "playoffs") {
@@ -1713,9 +1774,10 @@ function getNextMatchInfo() {
     const idx = p.currentRound.findIndex((t) => t.isPlayer);
     const opp = idx >= 0 ? p.currentRound[idx % 2 === 0 ? idx + 1 : idx - 1] : null;
     const roundName = PLAYOFF_ROUND_NAMES[p.stage];
-    const diff = opp ? difficultyLabel(opp.rating, s.rank) : null;
-    const winPct = opp ? Math.round(winProbabilityAgainst(opp.rating) * 100) : null;
-    const oppRating = opp ? Math.round(opp.rating) : null;
+    const liveRating = opp ? liveOpponentRating(opp) : null;
+    const diff = opp ? difficultyLabel(liveRating, s.rank) : null;
+    const winPct = opp ? Math.round(winProbabilityAgainst(liveRating) * 100) : null;
+    const oppRating = opp ? Math.round(liveRating) : null;
     const oppTag = opp ? `${opp.name} (${oppRating})` : "?";
     return {
       kind: "playoff",
@@ -1730,7 +1792,7 @@ function getNextMatchInfo() {
         : `${roundName} vs ${opp ? opp.name : "?"}${winPct != null ? " · " + winPct + "%" : ""} · ${daysUntilPhrase(daysUntil)}`,
       labelLine1: daysUntil <= 0 ? `${roundName} TODAY vs ${oppTag}` : `${roundName} vs ${oppTag}`,
       labelLine2: winPct != null
-        ? (daysUntil <= 0 ? `${winPct}% chance of winning today's battle` : `${winPct}% chance of winning next battle ${daysUntilPhrase(daysUntil)}`)
+        ? (daysUntil <= 0 ? `${winPct}% chance of winning today's match` : `${winPct}% chance of winning next match ${daysUntilPhrase(daysUntil)}`)
         : daysUntilPhrase(daysUntil),
     };
   }
@@ -1805,9 +1867,9 @@ function renderStats() {
   const msgs = [];
   if (state.burnout.active) msgs.push("🔥 Burnout active — training & exercise are far less effective. Relax to recover.");
   else if (s.composure <= 10) msgs.push("🔥 Composure critical — burnout imminent. Schedule relaxation soon.");
-  if (state.injury.active) msgs.push(`🤕 Injured — Exercise disabled for ${state.injury.daysLeft} more day(s).`);
+  if (state.injury.active) msgs.push(`🤕 Injured — Gym locked for ${state.injury.daysLeft} more ${state.injury.daysLeft === 1 ? "day" : "days"}.`);
   if (s.rest <= 30) msgs.push("🌙 Severely low Rest — your body is breaking down. Sleep more.");
-  if (s.phys <= 20) msgs.push("💪 Physical health critically low — it's capping your training performance.");
+  if (s.phys <= 20) msgs.push("💪 Health critically low — it's capping your training gains.");
   if (s.nutrition <= BAL.nutritionHoursCapLow) msgs.push(`🥗 Nutrition critical — your day is capped at only ${dailyHoursCap(s.nutrition)}h. Eat better to earn more hours back.`);
 
   if (msgs.length) {
@@ -1867,6 +1929,12 @@ function comboRowHtml(key, { icon, label, outcomeText, value, previewValue, cap,
   </div>`;
 }
 
+// Net of cost of living, not gross pay — what actually lands in (or leaves)
+// cash each day. The Career modal still breaks out gross pay and expenses.
+function netPerDayTag(net) {
+  return `<span class="skill-shop-tag${net < 0 ? " skill-shop-tag-negative" : ""}">Net ${fmtMoney(net)}/d</span>`;
+}
+
 // Work / Job Search / Pro Duties share one slider and one row — only what
 // it's called, what it requires, and what its bar means change with status.
 function workRowHtml() {
@@ -1880,6 +1948,7 @@ function workRowHtml() {
       icon: "🔍",
       label: "Job Search",
       outcomeText: `${fmt(emp.jobSearchHours)}/${BAL.jobSearchHoursNeeded}h`,
+      shopTag: netPerDayTag(-BAL.dailyExpenses),
       value: emp.jobSearchHours,
       previewValue: Math.min(emp.jobSearchHours + hours, BAL.jobSearchHoursNeeded),
       cap: BAL.jobSearchHoursNeeded,
@@ -1895,10 +1964,7 @@ function workRowHtml() {
   const atRisk = hours < required;
   const livesText = `${fmt1(livesRemaining())}/${fmt1(BAL.strikesToFire)} left`;
   const outcomeText = (atRisk ? "⚠️ " : "") + (isPro ? `${livesText} · ${techniqueStatusText()}` : livesText);
-  // Net of cost of living, not gross pay — what actually lands in cash each
-  // day. The Career modal still breaks out gross pay and expenses.
-  const netPerDay = (isPro ? emp.proPay : emp.workPay) - BAL.dailyExpenses;
-  const statusTag = `<span class="skill-shop-tag">Net $${fmt(netPerDay)}/d</span>`;
+  const statusTag = netPerDayTag((isPro ? emp.proPay : emp.workPay) - BAL.dailyExpenses);
   return comboRowHtml("work", {
     icon: isPro ? "📱" : "💼",
     label: isPro ? "Pro Duties" : "Work",
@@ -2117,7 +2183,7 @@ function showMatchModal(result) {
         }
         <div class="match-stats">
           <div><b>${fmt(result.perf)}/100</b>Performance</div>
-          <div><b>${fmt(state.rank - result.ratingChange)}→${fmt(state.rank)}</b>Rank</div>
+          <div><b>${fmt(result.rankBefore)}→${fmt(state.rank)}</b>Rating</div>
           <div><b>$${result.cashReward}</b>Prize</div>
         </div>
         <div class="match-sub">Performance = Skill ${fmt(result.breakdown.weighted.skill)} (55%) + Health ${fmt(
@@ -2125,9 +2191,9 @@ function showMatchModal(result) {
     )} (25%) + Composure ${fmt(result.breakdown.weighted.composure)} (15%) + Rest ${fmt(result.breakdown.weighted.rest)} (5%)${
       result.breakdown.techniquePenaltyMult < 1 ? ` · ×${result.breakdown.techniquePenaltyMult.toFixed(2)} unmastered techniques` : ""
     }</div>
-        <div class="match-sub">Your match rating: ${result.matchRating} vs Opponent: ${result.opponentRating}</div>
+        <div class="match-sub">Match-day rating: ${result.matchRating} (your ${fmt(result.rankBefore)} rating adjusted for performance) vs ${result.opponentRating}</div>
         <div class="match-sub">Win roll: ${result.roll}/100, needed under ${result.winProb} — one random roll decides every match, weighted by your win chance, so an upset either way is always possible.</div>
-        <div class="match-sub">New rank: ${fmt(state.rank)}</div>
+        ${result.championBonus ? `<div class="match-sub">👑 Champion bonus: +$${result.championBonus.cash} · +${result.championBonus.rating} rating</div>` : ""}
         <button class="primary-btn" id="matchOk">Continue</button>
       </div>`;
   }
@@ -2149,7 +2215,7 @@ function showYearSummaryModal(summary) {
         <div><b>-$${fmt(summary.expenses)}</b>Expenses</div>
       </div>
       <div class="match-sub">Net for the year: <b style="color:${summary.net >= 0 ? "var(--accent)" : "var(--danger)"}">${fmtSigned(summary.net, 0)}</b></div>
-      <div class="match-sub">Cash now: $${fmt(summary.cashNow)}</div>
+      <div class="match-sub">Cash now: ${fmtMoney(summary.cashNow)}</div>
       ${summary.newPayRate != null ? `<div class="match-sub">📈 Annual raise: pay is now $${fmt(summary.newPayRate)}/day</div>` : ""}
       <button class="primary-btn" id="yearSummaryOk">Continue</button>
     </div>`;
@@ -2194,7 +2260,7 @@ function shopHtml() {
   return `
     <h2>Coaching Shop</h2>
     <div class="modal-section">
-      <h3>Cash: $${fmt(state.cash)}</h3>
+      <h3>Cash: ${fmtMoney(state.cash)}</h3>
     </div>
     <div class="modal-section">
       <h3>Skill Coaches</h3>
@@ -2221,7 +2287,11 @@ function openShop() {
       state.upgrades[key] = lvl + 1;
       saveState();
       openShop();
+      // Coaches raise skill caps and Physio raises the Health cap — the
+      // planner rows behind the modal show both, so refresh them too.
       renderTopbar();
+      renderStats();
+      renderPlanner();
     });
   });
 }
@@ -2260,7 +2330,7 @@ function openNameModal(isFirstTime) {
     <h2>${isFirstTime ? "Name Your Player" : "Rename Player"}</h2>
     <div class="modal-section">
       <p>${isFirstTime ? "What should we call your Excel esports pro?" : "Enter a new name:"}</p>
-      <input type="text" id="playerNameInput" maxlength="20" placeholder="Your name" value="${state.playerName ? state.playerName.replace(/"/g, "&quot;") : ""}" class="name-input" />
+      <input type="text" id="playerNameInput" maxlength="20" placeholder="Your name" value="${state.playerName ? escapeHtml(state.playerName) : ""}" class="name-input" />
       <button class="primary-btn" id="nameSaveBtn">Save</button>
     </div>`;
   openModal(html);
@@ -2306,7 +2376,7 @@ function employmentSectionHtml() {
 
   const goProHint = checkGoProEligible()
     ? "Thresholds met — going pro next time a day resolves."
-    : `Go pro at League ${BAL.goProLeagueTier}+ and $${BAL.goProCash}+ banked (currently League ${state.leagueTier}, $${fmt(state.cash)}).`;
+    : `Go pro at League ${BAL.goProLeagueTier} or higher with $${BAL.goProCash}+ banked (currently League ${state.leagueTier}, ${fmtMoney(state.cash)}).`;
   return `${expensesLine}<p>💼 <b>Employed</b> · Work ${BAL.workHoursRequired}h/day required ($${fmt(emp.workPay)}/day) · ${fmt1(lives)}/${fmt1(BAL.strikesToFire)} chances${strikeLines ? "<br>" + strikeLines : ""}</p>
     <p>${goProHint}</p>`;
 }
@@ -2345,7 +2415,7 @@ function openCareer() {
     const top5 = state.lastStandings.slice(0, 5);
     standingsSection = `
     <div class="modal-section">
-      <h3>Last Season — League ${state.lastStandingsTier} Final Standings</h3>
+      <h3>${state.seasonPhase === "playoffs" || state.seasonPhase === "offseason" ? "This Season" : "Last Season"} — League ${state.lastStandingsTier} Final Standings</h3>
       <p>You finished <b>#${state.lastPlayerPosition}</b> of ${state.lastStandings.length}.</p>
       <ol class="standings-list">
         ${top5.map((t) => `<li class="${t.isPlayer ? "standings-you" : ""}">${t.name}${t.isPlayer ? " (You)" : ""} — ${t.points} pts</li>`).join("")}
@@ -2379,9 +2449,9 @@ function openCareer() {
     ${standingsSection}
     <div class="modal-section">
       <h3>Career Record</h3>
-      <p>${state.playerName || "Player"} · Rank ${fmt(state.rank)} (peak ${fmt(state.peakRank)})<br>
+      <p>${escapeHtml(state.playerName || "Player")} · Rating ${fmt(state.rank)} (peak ${fmt(state.peakRank)})<br>
       All-time: ${state.wins}W – ${state.losses}L<br>
-      Cash: $${fmt(state.cash)}</p>
+      Cash: ${fmtMoney(state.cash)}</p>
     </div>
     <div class="modal-section">
       <h3>Employment</h3>
@@ -2507,22 +2577,22 @@ function openHowTo() {
       <p>You manage a rising Excel esports competitor. Every day has up to 24 hours — split them across:</p>
       <p>
       📈🗺️📝🎲🔢⏱️🃏 <b>Skill Training</b> — 7 case specialties (Data, Mapping, Text, Game Logic, Math, Time, Cards). During preseason, all 7 are open for training. Once the regular season starts, only 1-3 are "active" each round, revealed at the start of that round's week — the rest can't be trained until they come up again.<br>
-      🏃 <b>Exercise</b> — raises Physical Health.<br>
+      🏃 <b>Gym</b> — raises Physical Health.<br>
       🌙 <b>Sleep</b> — builds Rest.<br>
-      🎮 <b>Relaxation</b> — builds Composure and prevents burnout.<br>
-      🥗 <b>Nutrition</b> — keeps tomorrow's day at full length.<br>
+      🎮 <b>Relax</b> — builds Composure and prevents burnout.<br>
+      🥗 <b>Food</b> — builds Nutrition, which keeps tomorrow's day at full length.<br>
       💼 <b>Work</b> — pays the bills and keeps you employed.
       </p>
-      <p><b>It's all connected:</b> low Rest wears down Physical Health even if you train well, and low Physical Health caps how much your skill training actually helps. Training hard without Relaxation drains Composure — hit 0 and you burn out, tanking your effectiveness until it recovers.</p>
-      <p><b>Decay:</b> every stat needs upkeep or it slips. Any skill that isn't active this round rusts; an active skill still rusts below ${BAL.skillDecayThresholdHours}h of training. Exercise below ${BAL.skillDecayThresholdHours}h detrains Physical Health. Sleep below ${BAL.idealSleep}h drains Rest. Relaxation below ${BAL.relaxComposureThreshold}h drains Composure. Nutrition below ${BAL.skillDecayThresholdHours}h drains Nutrition. Each slider shows a marker at its threshold, and each bar shows a faint preview of tomorrow's value — lighter for a gain, darker for a loss — based on your current plan.</p>
+      <p><b>It's all connected:</b> low Rest wears down Physical Health even if you train well, and low Physical Health caps how much your skill training actually helps. Training hard without Relax drains Composure — hit 0 and you burn out, tanking your effectiveness until it recovers.</p>
+      <p><b>Decay:</b> every stat needs upkeep or it slips. Any skill that isn't active this round rusts; an active skill still rusts below ${BAL.skillDecayThresholdHours}h of training. Gym below ${BAL.skillDecayThresholdHours}h detrains Physical Health. Sleep below ${BAL.idealSleep}h drains Rest. Relax below ${BAL.relaxComposureThreshold}h drains Composure. Food below ${BAL.skillDecayThresholdHours}h drains Nutrition. Each slider shows a marker at its threshold, and each bar previews tomorrow's value based on your current plan — green for a gain, red for a loss.</p>
       <p><b>Rest</b> swings training itself: above ${BAL.restTrainingBoostThreshold} it's 150% effective, above ${BAL.restTrainingBoostHigh} it's 200% effective. <b>Composure</b> hits match day specifically — below ${BAL.composureMatchMid} your active skills count for only 75%, below ${BAL.composureMatchLow} just 50%. <b>Nutrition</b> sets how many hours you get at all: below ${BAL.nutritionHoursCapLow} your day shrinks to just ${BAL.dailyHoursFloor}h, sliding up to the full ${BAL.dailyHoursCeiling}h at ${BAL.nutritionHoursCapHigh}+.</p>
-      <p>Overtraining physically (too much Exercise) risks injury, which locks out Exercise for several days.</p>
+      <p>Overtraining physically (too many Gym hours) risks injury, which locks the Gym for several days.</p>
       <p><b>Stat ceilings:</b> each skill caps at ${BAL.skillShopCapBase} until you invest in that skill's dedicated Coach (5 levels, Coaching Shop) — but the effective ceiling is also capped by the highest league you've ever reached (peak, not current), from 60 in League 5 up to 100 in League 1. Both gates must be cleared to hit 100. Physical Health caps at ${BAL.statCapBase} until you invest in Sports Physio.</p>
       <p><b>The season:</b> a ${BAL.preseasonDays}-day preseason to train, then a ${BAL.seasonRounds}-round regular season — one match a week against a named rival, all scheduled in advance, each testing that week's active skills. Finish in the top ${BAL.playoffSize} of your ${BAL.seasonRounds + 1}-competitor league to reach the knockout playoffs. Lose a playoff match and you're out; win the Final and you're champion.</p>
       <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken, so missing the cut isn't a worse deal than making it and getting knocked out early.</p>
       <p><b>Leagues:</b> there are ${BAL.leagueCount} leagues, League 1 at the top and League 5 at the bottom — you start in League 5. Every league has a persistent roster of named rivals whose ratings evolve from real simulated results every week, same as yours — every tier's table is live from round 1, not just visible once the season ends. Four go up from every league below League 1: the playoff champion, plus the top ${BAL.promotionTablePlaces} of the table other than the champion — so a top-${BAL.promotionTablePlaces} finish is always promoted, and anyone in the playoffs can still win their way up. Finish bottom ${BAL.relegationCount} and you're relegated. This applies to every competitor in every league, not just you — every league plays out its own knockout too — so the standings you see are a living world, not scenery. Check the Leagues screen any time (Menu, or the shortcut in Career) to see all ${BAL.leagueCount} tables.</p>
-      <p>Cash and Rank carry across seasons and leagues — spend cash in the Coaching Shop any time.</p>
-      <p><b>Employment:</b> your day job funds everything else, every phase, no exceptions. Work ${BAL.workHoursRequired}h/day (every phase, preseason included), starting at $${BAL.workPayMin}/day — pay is tied to still <i>having</i> the job, not to hitting the exact hour target every day, so falling short doesn't cost you income, only a chunk of a chance scaled to the shortfall (regained ${BAL.strikeWindowDays} days later). Run out of your ${fmt1(BAL.strikesToFire)} chances and <i>that's</i> when pay actually stops — you're fired: the same slider becomes a Job Search, needing ${BAL.jobSearchHoursNeeded} cumulative hours (any daily amount counts) to get rehired. Reach League ${BAL.goProLeagueTier}+ with $${BAL.goProCash}+ banked while employed and you go Pro automatically — Work drops to just ${BAL.proDutyHoursRequired}h/day of Pro Duties, starting at $${BAL.proPayMin}/day, with the same chances rule and the same fallback to Job Search if you're dropped.</p>
+      <p><b>Rating</b> is your skill score (the 🏆 number), the same scale every rival is measured on — it rises and falls with each result, and it's what your win chance is worked out from. Your <b>table position</b> (#1–#40) is separate: it comes from league points, 3 per win. Cash and Rating carry across seasons and leagues — spend cash in the Coaching Shop any time.</p>
+      <p><b>Employment:</b> your day job funds everything else, every phase, no exceptions. Work ${BAL.workHoursRequired}h/day (every phase, preseason included), starting at $${BAL.workPayMin}/day — pay is tied to still <i>having</i> the job, not to hitting the exact hour target every day, so falling short doesn't cost you income, only a chunk of a chance scaled to the shortfall (regained ${BAL.strikeWindowDays} days later). Run out of your ${fmt1(BAL.strikesToFire)} chances and <i>that's</i> when pay actually stops — you're fired: the same slider becomes a Job Search, needing ${BAL.jobSearchHoursNeeded} cumulative hours (any daily amount counts) to get rehired. Reach League ${BAL.goProLeagueTier} or higher with $${BAL.goProCash}+ banked while employed and you go Pro automatically — Work drops to just ${BAL.proDutyHoursRequired}h/day of Pro Duties, starting at $${BAL.proPayMin}/day, with the same chances rule and the same fallback to Job Search if you're dropped.</p>
       <p><b>Pay &amp; seniority:</b> pay rises $${BAL.payRaisePerYear}/year for your first ${BAL.payRaiseMaxYears} years in a role, then holds — Work tops out at $${BAL.workPayMin + BAL.payRaisePerYear * BAL.payRaiseMaxYears}/day, Pro Duties at $${BAL.proPayMin + BAL.payRaisePerYear * BAL.payRaiseMaxYears}/day. Lose the job or get dropped from Pro and that role's pay resets to its minimum for next time — seniority isn't carried over.</p>
       <p><b>Cost of living:</b> $${BAL.dailyExpenses}/day, charged every single day no matter your employment status — stay employed and you net a profit, but lose your job and the bills don't stop, so cash actively drains while you're out of work. Each new year opens with a summary of that year's full cash flow: pay earned, match winnings, and expenses paid.</p>
       <p>Pros have one more thing to manage: staying current. Roughly every ${BAL.techniqueIntervalDays} days a new Excel technique appears that needs ${BAL.techniqueMinHours}-${BAL.techniqueMaxHours}h to master — any Pro Duties hours beyond the ${BAL.proDutyHoursRequired}h minimum go toward it. Falling behind never costs you progress (new ones just queue up), but every technique still unmastered costs ${Math.round(BAL.techniquePenaltyPerUnmastered * 100)}% match performance, stacking.</p>
@@ -2587,8 +2657,8 @@ function endDay() {
     const oppText = matchResult.opponentName ? ` vs ${matchResult.opponentName}` : "";
     const label = matchResult.roundLabel || "Match";
     const summary = matchResult.forfeit
-      ? `🏆 ${label} forfeited (injured)${oppText}. Rank now ${fmt(state.rank)}.`
-      : `🏆 ${label}${oppText} — ${matchResult.win ? "WON" : "LOST"} (rating ${matchResult.opponentRating}). Rank ${fmtSigned(matchResult.ratingChange, 0)} → ${fmt(state.rank)}. +$${matchResult.cashReward}.`;
+      ? `🏆 ${label} forfeited (injured)${oppText}. Rating ${fmt(matchResult.rankBefore)} → ${fmt(state.rank)}.`
+      : `🏆 ${label}${oppText} (${matchResult.opponentRating}) — ${matchResult.win ? "WON" : "LOST"}. Rating ${fmt(matchResult.rankBefore)} → ${fmt(state.rank)}. +$${matchResult.cashReward}.`;
     const e = { html: summary, cls: "event-match" };
     state.logEntries.push(e);
     appendLog(e.html, e.cls);

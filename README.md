@@ -1,23 +1,23 @@
 # Cell Grind — Excel Esports Manager
 
 A mobile-first simulation game: manage a rising Excel esports competitor. Every
-day has up to 24 hours — split them across Skill Training, Exercise, Sleep,
-Relaxation, and Nutrition. Everything is connected:
+day has up to 24 hours — split them across Skill Training, Gym, Sleep,
+Relax, and Food. Everything is connected:
 
 - **Skill Training** raises one of 7 case specialties — Data Analysis,
   Mapping, Text Processing, Game Logic, Math & Formulas, Time & Dates, and
   Cards & Random. Only 1-3 skills are "active" (trainable) each round,
   revealed at the start of that round's week — every match that week tests
   exactly those skills. The other 4-6 sit locked and slowly rust.
-- **Exercise** raises Physical Health — but low Physical Health caps how much
+- **Gym** raises Physical Health — but low Physical Health caps how much
   your skill training actually helps.
 - **Sleep** builds Rest. Skimp on sleep and Rest drains, which quietly wears
   down your Physical Health even if you train hard.
-- **Relaxation** builds Composure. Train hard with no downtime and Composure
+- **Relax** builds Composure. Train hard with no downtime and Composure
   drains until you burn out, tanking your effectiveness until you recover.
-- **Nutrition** keeps tomorrow's day at full length — see below.
+- **Food** builds Nutrition, which keeps tomorrow's day at full length — see below.
 - **Decay is universal**: every stat needs upkeep or it slips — an
-  inactive skill, Exercise, Sleep, Relaxation, or Nutrition below its
+  inactive skill, Gym, Sleep, Relax, or Food below its
   threshold hours (shown as a marker on each slider) causes that stat to
   fall instead of rise.
 - **Rest** swings training itself: well-rested days train up to 200%
@@ -25,7 +25,7 @@ Relaxation, and Nutrition. Everything is connected:
   Composure can cut your active skills' effect on a match in half.
   **Nutrition** swings how many hours you get at all: below 40 your day
   shrinks to 16h, sliding up to a full 24h at 90+.
-- Overtrain physically and you risk an injury that locks out Exercise for
+- Overtrain physically and you risk an injury that locks the Gym for
   several days.
 - Each skill caps at 50 until you invest match winnings in that skill's
   dedicated Coach (5 levels, Coaching Shop) — and the effective ceiling is
@@ -81,7 +81,7 @@ fall in the background. Promotion/relegation is applied once the playoffs
 are over. Check the Leagues screen any time to see all 5 tables, or jump
 there directly from the Career modal.
 
-Rank, Cash, stats, and Coaching Shop upgrades all carry over between years
+Rating, Cash, stats, and Coaching Shop upgrades all carry over between years
 and leagues.
 
 ## Playing it on your iPhone
