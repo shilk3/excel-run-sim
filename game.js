@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.28.0";
+const APP_VERSION = "4.29.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1413,6 +1413,22 @@ function buildStandingsFromPoints(tier) {
   return standings.sort((a, b) => b.points - a.points || b.rating - a.rating);
 }
 
+// The player's table position for the topbar's Leagues button: live during
+// the regular season (once a round has been played), the final regular-
+// season position through the playoffs and offseason, and nothing in
+// preseason when no table exists yet.
+function playerTablePosition() {
+  if (state.seasonPhase === "regular") {
+    if (state.roundIndex === 0) return null;
+    const standings = buildStandingsFromPoints(state.leagueTier);
+    return { pos: standings.findIndex((r) => r.isPlayer) + 1, size: standings.length, tier: state.leagueTier, final: false };
+  }
+  if ((state.seasonPhase === "playoffs" || state.seasonPhase === "offseason") && state.lastPlayerPosition && state.lastStandingsTier) {
+    return { pos: state.lastPlayerPosition, size: (state.lastStandings && state.lastStandings.length) || BAL.seasonRounds + 1, tier: state.lastStandingsTier, final: true };
+  }
+  return null;
+}
+
 function isSameEntry(entry, champ) {
   return !!champ && (champ.isPlayer ? !!entry.isPlayer : entry.rivalId === champ.rivalId);
 }
@@ -1941,6 +1957,24 @@ function markerPct(threshold, max) {
 function renderTopbar() {
   $("cashVal").textContent = fmt(state.cash);
   $("rankVal").textContent = fmt(state.rank);
+  // Leagues button carries your table position, tinted like the table's own
+  // zones: promotion (green), relegation (red), outside the playoffs (dim).
+  const tp = playerTablePosition();
+  const lb = $("leaguesBtn");
+  if (tp) {
+    const zone =
+      tp.tier > 1 && tp.pos <= BAL.promotionTablePlaces ? "pos-promo"
+      : tp.tier < BAL.leagueCount && tp.pos > tp.size - BAL.relegationCount ? "pos-releg"
+      : tp.pos > BAL.playoffSize ? "pos-out"
+      : "";
+    lb.innerHTML = `🏅<span class="leagues-pos ${zone}">#${tp.pos}</span>`;
+    lb.classList.add("has-pos");
+    lb.title = `${tp.final ? "Final regular-season" : "Current"} position: #${tp.pos} of ${tp.size} in League ${tp.tier}`;
+  } else {
+    lb.textContent = "🏅";
+    lb.classList.remove("has-pos");
+    lb.title = "Leagues";
+  }
   const info = getNextMatchInfo();
   const phase = `Y${state.year} · ${phaseLabelText()}`;
   $("matchCounter").textContent = `${phase} · ${info.labelLine1 || info.label}`;
@@ -2406,6 +2440,24 @@ function showYearSummaryModal(summary, extraHtml = "") {
 /* ---------------------------------------------------------------------- */
 /* Shop / Menu                                                            */
 /* ---------------------------------------------------------------------- */
+// For a skill coach whose next level would lift the ceiling past what your
+// peak league allows: say so, and whether the training bonus alone is still
+// worth something (it isn't once the skill already sits at the league cap).
+function coachLeagueCapNote(key, next) {
+  const sk = SKILLS.find((x) => coachKey(x.key) === key);
+  if (!sk || !next) return "";
+  const nextCeiling = BAL.skillShopCapBase + BAL.skillShopCapPerLevel * (upgradeLevel(key) + 1);
+  const leagueCap = leagueSkillCap();
+  if (nextCeiling <= leagueCap) return "";
+  const tier = state.peakLeagueTier;
+  const unlock = Object.keys(LEAGUE_SKILL_CAP).map(Number).filter((t) => LEAGUE_SKILL_CAP[t] >= nextCeiling).sort((a, b) => b - a)[0];
+  const reach = unlock ? `reach League ${unlock}` : "get promoted";
+  if (state.stats.skills[sk.key] >= leagueCap - 0.5) {
+    return `<div class="shop-item-capnote capnote-none">⛔ Not worth it yet — ${sk.name} is already at League ${tier}'s cap of ${leagueCap}. ${reach[0].toUpperCase() + reach.slice(1)} to use a higher ceiling.</div>`;
+  }
+  return `<div class="shop-item-capnote">⚠️ League ${tier} caps ${sk.name} at ${leagueCap}, so the ceiling of ${nextCeiling} won't help until you ${reach} — only the training bonus does.</div>`;
+}
+
 function shopItemHtml(key, u, inThisMatch = false) {
   const lvl = upgradeLevel(key);
   const maxLvl = u.levels.length;
@@ -2414,14 +2466,16 @@ function shopItemHtml(key, u, inThisMatch = false) {
   const current = lvl > 0 ? u.levels[lvl - 1] : null;
   const canAfford = next && state.cash >= next.cost;
   const desc = isMax ? `${current.desc} — MAX` : next.desc + (current ? ` <span class="shop-item-current">(now: ${current.desc})</span>` : "");
+  const capNote = isMax ? "" : coachLeagueCapNote(key, next);
   return `
-  <div class="shop-item${inThisMatch ? " shop-item-match" : ""}">
+  <div class="shop-item${inThisMatch ? " shop-item-match" : ""}${capNote.includes("capnote-none") ? " shop-item-capped" : ""}">
     <div class="shop-item-icon">${u.icon}</div>
     <div class="shop-item-info">
       <div class="shop-item-name">${u.name}${lvl > 0 ? ` <span class="shop-item-level">Lv.${lvl}</span>` : ""}${
         inThisMatch ? ` <span class="shop-item-match-tag">This match</span>` : ""
       }</div>
       <div class="shop-item-desc">${desc}</div>
+      ${capNote}
     </div>
     <button class="shop-item-btn ${isMax ? "owned" : ""}" data-upgrade="${key}" ${isMax || !canAfford ? "disabled" : ""}>
       ${isMax ? "MAX" : "$" + next.cost}
@@ -2789,7 +2843,7 @@ function openHowTo() {
       <p><b>Decay:</b> every stat needs upkeep or it slips. Any skill that isn't active this round rusts; an active skill still rusts below ${BAL.skillDecayThresholdHours}h of training. Gym below ${BAL.skillDecayThresholdHours}h detrains Physical Health. Sleep below ${BAL.idealSleep}h drains Rest. Relax below ${BAL.relaxComposureThreshold}h drains Composure. Food below ${BAL.skillDecayThresholdHours}h drains Nutrition. Each slider shows a marker at its threshold, and each bar previews tomorrow's value based on your current plan — green for a gain, red for a loss.</p>
       <p><b>Rest</b> swings training itself: above ${BAL.restTrainingBoostThreshold} it's 150% effective, above ${BAL.restTrainingBoostHigh} it's 200% effective. <b>Composure</b> hits match day specifically — below ${BAL.composureMatchMid} your active skills count for only 75%, below ${BAL.composureMatchLow} just 50%. <b>Nutrition</b> sets how many hours you get at all: below ${BAL.nutritionHoursCapLow} your day shrinks to just ${BAL.dailyHoursFloor}h, sliding up to the full ${BAL.dailyHoursCeiling}h at ${BAL.nutritionHoursCapHigh}+.</p>
       <p><b>Gym injuries:</b> every Gym hour adds a ${+(BAL.injuryChancePerHour * 100).toFixed(1)}% chance of injury that day, so only a 0h day is risk-free — ${BAL.gymMaxHours}h (the most you can do) is a ${+(BAL.gymMaxHours * BAL.injuryChancePerHour * 100).toFixed(1)}% chance. The Gym row shows today's risk as <b>#% 🤕</b>. Sports Physio cuts that risk by 20%, 35% or 50%. An injury costs ${BAL.injuryPhysLoss[0]}–${BAL.injuryPhysLoss[1]} Health and locks the Gym for ${BAL.injuryDaysRange[0]}–${BAL.injuryDaysRange[1]} days (Recovery Program takes 1–3 days off, minimum 1); the row shows <b>🤕 #d</b> while it heals. Injuries never stop you playing matches — they only shut the Gym.</p>
-      <p><b>Stat ceilings:</b> each skill caps at ${BAL.skillShopCapBase} until you invest in that skill's dedicated Coach (5 levels, Coaching Shop) — but the effective ceiling is also capped by the highest league you've ever reached (peak, not current), from 60 in League 5 up to 100 in League 1. Both gates must be cleared to hit 100. Physical Health caps at ${BAL.statCapBase} until you invest in Sports Physio. Skill and Health bars all run to 100; the hatched end of a bar is the part your current cap locks off, and the Career screen shows what's capping each skill (a coach, or your league).</p>
+      <p><b>Stat ceilings:</b> each skill caps at ${BAL.skillShopCapBase} until you invest in that skill's dedicated Coach (5 levels, Coaching Shop) — but the effective ceiling is also capped by the highest league you've ever reached (peak, not current), from 60 in League 5 up to 100 in League 1. Both gates must be cleared to hit 100. Physical Health caps at ${BAL.statCapBase} until you invest in Sports Physio. Skill and Health bars all run to 100; the hatched end of a bar is the part your current cap locks off, and the Career screen shows what's capping each skill (a coach, or your league). The Coaching Shop warns when your league cap would waste a coach level's higher ceiling — and says outright when it's not worth buying yet because the skill is already at that cap.</p>
       <p><b>End Day / To Match:</b> <b>End Day ▶</b> plays one day. <b>To Match ▶▶</b> repeats today's plan every day up to and including the next match, then shows the result with a summary of how your stats moved over the week (outside the season it's <b>End Week ▶▶</b>, up to 7 days, to the end of the week). It stops early so you can re-plan if you get injured, lose or find a job (or go pro), burn out, get a new technique to master, or Nutrition drops so far that your plan no longer fits in the day.</p>
       <p><b>The season:</b> a ${BAL.preseasonDays}-day preseason to train, then a ${BAL.seasonRounds}-round regular season — one match a week against a named rival, all scheduled in advance, each testing that week's active skills. Finish in the top ${BAL.playoffSize} of your ${BAL.seasonRounds + 1}-competitor league to reach the knockout playoffs. Lose a playoff match and you're out; win the Final and you're champion.</p>
       <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken. Get knocked out of the playoffs and you go to training camp too, for the rest of the playoff window (at least ${BAL.offseasonDays} days) — so an early exit gets its time back as training, just like missing the cut. Only the champion gets a plain ${BAL.offseasonDays}-day break.</p>
