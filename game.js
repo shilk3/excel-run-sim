@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.22.1";
+const APP_VERSION = "4.22.2";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -2862,13 +2862,22 @@ function init() {
     // If a newer service worker takes over (a fresh deploy was installed),
     // reload once so the page's own HTML/JS is the new version too, instead
     // of new cached assets running against this tab's already-loaded code.
+    // Only when one was already in control: on a very first visit (e.g. a
+    // fresh Home Screen install) clients.claim() also fires controllerchange,
+    // and reloading then wiped the name prompt mid-entry and could leave the
+    // page blank on iOS.
+    const hadController = !!navigator.serviceWorker.controller;
     let refreshedForUpdate = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      if (refreshedForUpdate) return;
+      if (!hadController || refreshedForUpdate) return;
       refreshedForUpdate = true;
       window.location.reload();
     });
   }
 }
 
-document.addEventListener("DOMContentLoaded", init);
+// Start even if the document finished parsing before this script ran
+// (possible on a reload served from the service worker) — otherwise
+// DOMContentLoaded has already fired and the game never starts.
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+else init();
