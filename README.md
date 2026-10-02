@@ -28,7 +28,7 @@ Relax, and Food. Everything is connected:
   **Nutrition** swings how many hours you get at all: below 40 your day
   shrinks to 16h, sliding up to a full 24h at 90+.
 - Every Gym hour carries a 2.5% injury chance that day (8h, the max, is
-  20%; Sports Physio cuts it). An injury costs 15–25 Health and locks the
+  20%; Sports Physio cuts it). An injury costs 5–10 Health and locks the
   Gym for 3–5 days, but never stops you playing matches.
 - Each skill caps at 50 until you invest match winnings in that skill's
   dedicated Coach (5 levels, Coaching Shop) — and the effective ceiling is

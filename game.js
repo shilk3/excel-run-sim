@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.20.0";
+const APP_VERSION = "4.20.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -26,7 +26,7 @@ const BAL = {
   restGoodSleepBonus: 3, // extra composure relief when sleepHours >= ideal
   injuryChancePerHour: 0.025, // every Gym hour adds this much injury chance that day — only 0h is risk-free
   gymMaxHours: 8,
-  injuryPhysLoss: [15, 25],
+  injuryPhysLoss: [5, 10],
   injuryDaysRange: [3, 5],
   burnoutComposureThreshold: 0,
   burnoutRecoverThreshold: 35,
