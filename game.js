@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.23.0";
+const APP_VERSION = "4.23.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -2725,20 +2725,59 @@ async function encodeSaveCode() {
 // decoding (bad base64, cut-off gzip, bad JSON) means a damaged code.
 class SaveCodeError extends Error {}
 
+// Pasted text on iOS often isn't just the code: the share sheet / Notes can
+// put a "Cell Grind save" title in front, a URL or line breaks can ride
+// along, and invisible characters sneak in. So find the code wherever it
+// is rather than requiring the paste to start with it. Every gzip stream
+// begins with the same bytes, which base64 always renders as "H4sI" — that
+// finds a compressed code even if its "CG1z:" prefix got lost.
+function extractSaveCode(text) {
+  const raw = (text || "").replace(/[\u200B-\u200D\u2060\uFEFF]/g, "");
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("{")) return { kind: "json", body: trimmed };
+  // Rejoin a code wrapped over several lines: from where it starts, keep
+  // taking whitespace-separated pieces while they're pure base64, so a
+  // title before it or a link after it is left out.
+  const tokens = raw.split(/\s+/).filter(Boolean);
+  const isB64 = (t) => /^[A-Za-z0-9+/=_-]+$/.test(t);
+  const runFrom = (i, offset) => {
+    let body = tokens[i].slice(offset);
+    for (let j = i + 1; j < tokens.length && isB64(tokens[j]); j++) body += tokens[j];
+    return body;
+  };
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    const gz = t.indexOf("H4sI");
+    if (gz !== -1 && isB64(t.slice(gz))) return { kind: "gz", body: runFrom(i, gz) };
+    const plain = t.toUpperCase().indexOf(SAVE_CODE_PLAIN.toUpperCase());
+    if (plain !== -1) return { kind: "plain", body: runFrom(i, plain + SAVE_CODE_PLAIN.length) };
+  }
+  const flat = tokens.join("");
+  if (/^[A-Za-z0-9+/=_-]{200,}$/.test(flat)) return { kind: "plain", body: flat };
+  return null;
+}
+
 async function decodeSaveCode(text) {
-  const code = (text || "").replace(/\s+/g, "");
-  if (!code) throw new SaveCodeError("Paste a save code first.");
+  if (!(text || "").trim()) throw new SaveCodeError("Paste a save code first.");
+  const found = extractSaveCode(text);
+  if (!found) {
+    const peek = text.replace(/\s+/g, " ").trim().slice(0, 16);
+    throw new SaveCodeError(`That doesn't look like a Cell Grind save code (it starts “${peek}…”). Make sure you copied the whole code, from the very start.`);
+  }
+  // Tolerate URL-safe base64 and lost "=" padding.
+  const b64 = (body) => {
+    const std = body.replace(/=+$/, "").replace(/-/g, "+").replace(/_/g, "/");
+    return base64ToBytes(std + "===".slice((std.length + 3) % 4));
+  };
   let json;
-  if (code.startsWith("{")) {
-    json = text.trim();
-  } else if (code.startsWith(SAVE_CODE_GZ)) {
+  if (found.kind === "json") {
+    json = found.body;
+  } else if (found.kind === "gz") {
     if (typeof DecompressionStream !== "function") throw new SaveCodeError("This browser can't read compressed save codes — update iOS / your browser and try again.");
-    const stream = new Blob([base64ToBytes(code.slice(SAVE_CODE_GZ.length))]).stream().pipeThrough(new DecompressionStream("gzip"));
+    const stream = new Blob([b64(found.body)]).stream().pipeThrough(new DecompressionStream("gzip"));
     json = await new Response(stream).text();
-  } else if (code.startsWith(SAVE_CODE_PLAIN)) {
-    json = new TextDecoder().decode(base64ToBytes(code.slice(SAVE_CODE_PLAIN.length)));
   } else {
-    throw new SaveCodeError("That doesn't look like a Cell Grind save code.");
+    json = new TextDecoder().decode(b64(found.body));
   }
   const parsed = JSON.parse(json);
   const looksValid =
@@ -2811,6 +2850,7 @@ function openSaveTransfer() {
       box.value = code;
       box.focus();
       box.select();
+      box.setSelectionRange(0, code.length); // iOS ignores select() alone
       exportStatus("Couldn't copy automatically — the code is selected in the box below; copy it from there.", true);
     };
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -2849,7 +2889,7 @@ function openSaveTransfer() {
     try {
       parsed = await decodeSaveCode(text);
     } catch (e) {
-      importStatus(e instanceof SaveCodeError ? e.message : "That save code is damaged — make sure you copied all of it.");
+      importStatus(e instanceof SaveCodeError ? e.message : "That save code is damaged or cut off — make sure you copied all of it, from the very first character to the last.");
       return;
     }
     const who = parsed.playerName ? `${parsed.playerName}, ` : "";
