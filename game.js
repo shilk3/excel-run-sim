@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.22.2";
+const APP_VERSION = "4.23.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -2350,6 +2350,7 @@ function openMenu() {
     <div class="menu-row" id="menuRename"><span>✏️ Rename Player</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuHow"><span>❓ How to Play</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuInstall"><span>📲 Add to Home Screen</span><span class="arrow">›</span></div>
+    <div class="menu-row" id="menuSaveTransfer"><span>💾 Export / Import Save</span><span class="arrow">›</span></div>
     <button class="ghost-btn" id="menuReset">Reset Career</button>
     <div class="version-tag">Cell Grind v${APP_VERSION}</div>
   `;
@@ -2360,6 +2361,7 @@ function openMenu() {
   $("menuRename").addEventListener("click", () => openNameModal(false));
   $("menuHow").addEventListener("click", openHowTo);
   $("menuInstall").addEventListener("click", openInstall);
+  $("menuSaveTransfer").addEventListener("click", openSaveTransfer);
   $("menuReset").addEventListener("click", () => {
     if (confirm("Start a new career? This wipes all progress.")) {
       state = freshState();
@@ -2678,8 +2680,205 @@ function openInstall() {
       3. Scroll down and tap <b>Add to Home Screen</b>.<br>
       4. Tap <b>Add</b>.</p>
       <p>It'll launch full-screen from your home screen, and your progress is saved on this device.</p>
+      <p>Already have a career in Safari? The Home Screen app keeps its own separate save — use <b>💾 Export / Import Save</b> in the menu to move it across.</p>
     </div>`;
   openModal(html);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Export / import save                                                   */
+/* ---------------------------------------------------------------------- */
+// A save code is the JSON state, gzipped where the browser supports it
+// (~85KB -> ~16KB), then base64'd so it survives copy/paste and Notes.
+// "CG1z:" = gzipped, "CG1j:" = plain JSON fallback. Raw JSON is accepted too.
+const SAVE_CODE_GZ = "CG1z:";
+const SAVE_CODE_PLAIN = "CG1j:";
+
+function bytesToBase64(bytes) {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+function base64ToBytes(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+async function encodeSaveCode() {
+  if (state.logEntries.length > LOG_KEEP) state.logEntries = state.logEntries.slice(-LOG_KEEP);
+  const json = JSON.stringify(state);
+  if (typeof CompressionStream === "function") {
+    try {
+      const stream = new Blob([json]).stream().pipeThrough(new CompressionStream("gzip"));
+      const gz = new Uint8Array(await new Response(stream).arrayBuffer());
+      return SAVE_CODE_GZ + bytesToBase64(gz);
+    } catch (e) {
+      // fall through to the uncompressed form
+    }
+  }
+  return SAVE_CODE_PLAIN + bytesToBase64(new TextEncoder().encode(json));
+}
+
+// Errors whose message is written for the player; anything else thrown while
+// decoding (bad base64, cut-off gzip, bad JSON) means a damaged code.
+class SaveCodeError extends Error {}
+
+async function decodeSaveCode(text) {
+  const code = (text || "").replace(/\s+/g, "");
+  if (!code) throw new SaveCodeError("Paste a save code first.");
+  let json;
+  if (code.startsWith("{")) {
+    json = text.trim();
+  } else if (code.startsWith(SAVE_CODE_GZ)) {
+    if (typeof DecompressionStream !== "function") throw new SaveCodeError("This browser can't read compressed save codes — update iOS / your browser and try again.");
+    const stream = new Blob([base64ToBytes(code.slice(SAVE_CODE_GZ.length))]).stream().pipeThrough(new DecompressionStream("gzip"));
+    json = await new Response(stream).text();
+  } else if (code.startsWith(SAVE_CODE_PLAIN)) {
+    json = new TextDecoder().decode(base64ToBytes(code.slice(SAVE_CODE_PLAIN.length)));
+  } else {
+    throw new SaveCodeError("That doesn't look like a Cell Grind save code.");
+  }
+  const parsed = JSON.parse(json);
+  const looksValid =
+    parsed && typeof parsed === "object" &&
+    typeof parsed.day === "number" &&
+    parsed.stats && typeof parsed.stats === "object" &&
+    Array.isArray(parsed.rivals);
+  if (!looksValid) throw new SaveCodeError("That save code is incomplete or from something else.");
+  return parsed;
+}
+
+function saveFileName() {
+  const who = (state.playerName || "career").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "") || "career";
+  return `cellgrind-${who}-day${state.day}.txt`;
+}
+
+function openSaveTransfer() {
+  const canShare = typeof navigator.share === "function";
+  const html = `
+    <h2>Export / Import Save</h2>
+    <div class="modal-section">
+      <p class="save-transfer-note">Your career is stored on this device only, and Safari and the Home Screen app each keep their own save. To move a career, export it in one place and import it in the other.</p>
+    </div>
+    <div class="modal-section">
+      <h3>Export</h3>
+      <p class="save-transfer-note">${state.playerName ? escapeHtml(state.playerName) + " · " : ""}Day ${state.day} · ${fmtMoney(state.cash)} · Rating ${state.rank}</p>
+      <button class="primary-btn" id="saveExportCopy">📋 Copy save code</button>
+      ${canShare ? `<button class="ghost-btn" id="saveExportShare">📤 Share / Save to Files</button>` : `<button class="ghost-btn" id="saveExportDownload">⬇️ Download save file</button>`}
+      <div class="save-transfer-status" id="saveExportStatus"></div>
+    </div>
+    <div class="modal-section">
+      <h3>Import</h3>
+      <textarea id="saveImportText" class="name-input save-code-input" rows="4" placeholder="Paste a save code here" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+      <button class="primary-btn" id="saveImportBtn">Load pasted code</button>
+      <label class="ghost-btn save-file-btn">📂 Load from file<input type="file" id="saveImportFile" accept=".txt,.json,text/plain,application/json" hidden /></label>
+      <div class="save-transfer-status" id="saveImportStatus"></div>
+      <p class="save-transfer-note">Importing replaces the career on this device.</p>
+    </div>`;
+  openModal(html);
+
+  const exportStatus = (msg, bad) => {
+    const el = $("saveExportStatus");
+    el.textContent = msg;
+    el.classList.toggle("bad", !!bad);
+  };
+  const importStatus = (msg) => {
+    const el = $("saveImportStatus");
+    el.textContent = msg;
+    el.classList.add("bad");
+  };
+
+  // Encode up front so the copy/share happens inside the tap itself —
+  // iOS refuses clipboard writes and share sheets that come after an await.
+  let code = null;
+  encodeSaveCode().then((c) => {
+    code = c;
+  });
+  const ready = () => {
+    if (code) return true;
+    exportStatus("Still preparing the save code — tap again in a moment.", true);
+    return false;
+  };
+
+  $("saveExportCopy").addEventListener("click", () => {
+    if (!ready()) return;
+    const fallback = () => {
+      // Clipboard API blocked: drop the code into the box so it can be
+      // selected and copied by hand.
+      const box = $("saveImportText");
+      box.value = code;
+      box.focus();
+      box.select();
+      exportStatus("Couldn't copy automatically — the code is selected in the box below; copy it from there.", true);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(code).then(() => exportStatus(`✓ Copied (${Math.ceil(code.length / 1024)} KB). Paste it into Notes or straight into Import on your other device.`), fallback);
+    } else {
+      fallback();
+    }
+  });
+
+  if (canShare) {
+    $("saveExportShare").addEventListener("click", () => {
+      if (!ready()) return;
+      const file = new File([code], saveFileName(), { type: "text/plain" });
+      const data = navigator.canShare && navigator.canShare({ files: [file] }) ? { files: [file], title: "Cell Grind save" } : { text: code, title: "Cell Grind save" };
+      navigator.share(data).catch((e) => {
+        if (e && e.name !== "AbortError") exportStatus("Sharing didn't work here — use Copy save code instead.", true);
+      });
+    });
+  } else {
+    $("saveExportDownload").addEventListener("click", () => {
+      if (!ready()) return;
+      const url = URL.createObjectURL(new Blob([code], { type: "text/plain" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = saveFileName();
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      exportStatus("✓ Save file downloaded.");
+    });
+  }
+
+  const importFrom = async (text) => {
+    let parsed;
+    try {
+      parsed = await decodeSaveCode(text);
+    } catch (e) {
+      importStatus(e instanceof SaveCodeError ? e.message : "That save code is damaged — make sure you copied all of it.");
+      return;
+    }
+    const who = parsed.playerName ? `${parsed.playerName}, ` : "";
+    if (!confirm(`Load ${who}Day ${parsed.day}? This replaces the career on this device.`)) return;
+    try {
+      state = Object.assign(freshState(), migrateSave(parsed));
+    } catch (e) {
+      importStatus("That save couldn't be loaded — it may be from a much older version.");
+      return;
+    }
+    lastLoadedFromSave = false;
+    const ok = saveState();
+    closeModal();
+    renderAll();
+    const entry = { html: `💾 Save imported — resumed from Day ${state.day}.`, cls: "event-good" };
+    state.logEntries.push(entry);
+    appendLog(entry.html, entry.cls);
+    saveState();
+    showSaveToast(ok);
+    if (!state.playerName) openNameModal(true);
+  };
+
+  $("saveImportBtn").addEventListener("click", () => importFrom($("saveImportText").value));
+  $("saveImportFile").addEventListener("change", (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    file.text().then(importFrom, () => importStatus("Couldn't read that file."));
+    e.target.value = "";
+  });
 }
 
 /* ---------------------------------------------------------------------- */

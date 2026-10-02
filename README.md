@@ -96,6 +96,11 @@ This is a installable web app (PWA) — no App Store or Xcode needed.
 3. Launch it from your home screen — it runs full-screen and saves your
    progress on-device (`localStorage`), with basic offline support via a
    service worker.
+4. Safari and the Home Screen app keep **separate saves**. To move a career
+   between them (or to another device), open ☰ → **💾 Export / Import Save**,
+   tap **Copy save code** (or Share / Save to Files), then paste it into
+   **Import** on the other side. The code is your whole career, gzipped and
+   base64'd (~20 KB).
 
 ### Running it locally
 

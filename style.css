@@ -673,3 +673,11 @@ input[type="range"]::-webkit-slider-thumb {
 @media (min-width: 560px) {
   #app { border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
 }
+
+/* Export / import save */
+.save-transfer-note { font-size: 13px; color: var(--text-dim); margin: 0 0 8px; }
+.save-transfer-status { font-size: 13px; color: var(--accent); margin-top: 8px; min-height: 0; }
+.save-transfer-status:empty { display: none; }
+.save-transfer-status.bad { color: var(--danger, #f87171); }
+.save-code-input { font-family: ui-monospace, Menlo, monospace; font-size: 12px; resize: vertical; word-break: break-all; }
+.save-file-btn { display: block; text-align: center; cursor: pointer; box-sizing: border-box; }
