@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.16.0";
+const APP_VERSION = "4.17.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -69,7 +69,10 @@ const BAL = {
   // the player, who occupies one slot in whichever tier they're currently in).
   leagueCount: 5,
   leagueSize: 40,
-  promotionCount: 4,
+  // Promotion: the playoff champion plus the top 3 of the table *other than*
+  // the champion — always 4, matching relegationCount so every tier stays at
+  // exactly leagueSize. The top 3 are therefore always promoted.
+  promotionTablePlaces: 3,
   relegationCount: 4,
   // Employment: a mandatory day job funds the whole career until you can
   // go pro. Work/Pro Duties share one slider and one strike system —
@@ -487,6 +490,8 @@ function freshState() {
     offseasonDays: BAL.offseasonDays,
     offseasonReason: null, // "missed" | "playoffs" — set when entering offseason
     playoff: null, // { stage, currentRound, eliminated, champion, playerSeed, tier }
+    playoffChampions: null, // { [tier]: { name, rivalId, isPlayer } } — last completed knockout per tier
+    seasonMovementApplied: false, // promotion/relegation already run for the season just finished
     cash: 100,
     rank: 480,
     peakRank: 480,
@@ -710,6 +715,15 @@ function migrateSave(parsed) {
     const playerWinsSoFar = (parsed.seasonResults || []).filter((r) => r.win).length;
     parsed.leaguePoints[tier].player = playerWinsSoFar * 3;
   }
+
+  // Promotion now waits for the playoffs (champion + top 3). A save already
+  // in the playoffs or offseason when that shipped had its movement applied
+  // at season end under the old table-only rule — mark it done so the end
+  // of its playoffs doesn't move everyone a second time.
+  if (parsed.seasonMovementApplied === undefined) {
+    parsed.seasonMovementApplied = parsed.seasonPhase === "playoffs" || parsed.seasonPhase === "offseason";
+  }
+  if (parsed.playoffChampions === undefined) parsed.playoffChampions = null;
 
   // skillCycleDay and phaseDay always advance together outside preseason —
   // same every-day increment, same reset-at-7 (every phase length is a
@@ -1291,21 +1305,27 @@ function buildStandingsFromPoints(tier) {
   return standings.sort((a, b) => b.points - a.points || b.rating - a.rating);
 }
 
-// Promotes the top BAL.promotionCount and relegates the bottom
-// BAL.relegationCount of every league simultaneously (coordinated across
-// all 5 tiers so each stays at exactly 40 members), based on the standings
-// already computed for every tier this season. Returns the player's own
-// resulting tier.
-function applyPromotionRelegation(allStandings) {
+function isSameEntry(entry, champ) {
+  return !!champ && (champ.isPlayer ? !!entry.isPlayer : entry.rivalId === champ.rivalId);
+}
+
+// Each tier promotes its playoff champion plus the top
+// BAL.promotionTablePlaces of the table other than that champion, and
+// relegates the bottom BAL.relegationCount — all 5 tiers simultaneously so
+// each stays at exactly 40 members. Returns the player's own resulting tier.
+function applyPromotionRelegation(allStandings, champions) {
   const promoted = {};
   const relegated = {};
   const stayed = {};
 
   for (let tier = 1; tier <= BAL.leagueCount; tier++) {
     const standings = allStandings[tier];
-    const promoCount = tier > 1 ? BAL.promotionCount : 0;
+    const champ = champions[tier];
     const relCount = tier < BAL.leagueCount ? BAL.relegationCount : 0;
-    promoted[tier] = promoCount > 0 ? standings.slice(0, promoCount) : [];
+    promoted[tier] =
+      tier > 1
+        ? standings.filter((e) => isSameEntry(e, champ)).concat(standings.filter((e) => !isSameEntry(e, champ)).slice(0, BAL.promotionTablePlaces))
+        : [];
     relegated[tier] = relCount > 0 ? standings.slice(standings.length - relCount) : [];
     const movedIds = new Set([...promoted[tier], ...relegated[tier]].map((e) => e.rivalId));
     stayed[tier] = standings.filter((e) => !movedIds.has(e.rivalId));
@@ -1344,42 +1364,89 @@ function applyPromotionRelegation(allStandings) {
 
 // Called once the player's 39th regular-season match resolves. Every
 // league's points have already accumulated live, round by round, all
-// season — this just reads the final tally and applies promotion/relegation.
+// season — this snapshots the final tally. Promotion/relegation waits for
+// the playoffs (see finalizeSeasonMovement), since the champion goes up too.
 function processLeagueSeasonEnd() {
   const allStandings = {};
   for (let tier = 1; tier <= BAL.leagueCount; tier++) {
     allStandings[tier] = buildStandingsFromPoints(tier);
+    state.leagueStandings[tier] = allStandings[tier];
   }
+  state.playoffChampions = null;
+  state.seasonMovementApplied = false;
 
   const playerStandings = allStandings[state.leagueTier];
   const playerPosition = playerStandings.findIndex((s) => s.isPlayer) + 1;
   const qualified = playerPosition <= BAL.playoffSize;
-
-  for (let tier = 1; tier <= BAL.leagueCount; tier++) {
-    state.leagueStandings[tier] = allStandings[tier];
-  }
-
-  const playerNewTier = applyPromotionRelegation(allStandings);
-
-  return { standings: playerStandings, playerPosition, qualified, playerNewTier };
+  return { standings: playerStandings, playerPosition, qualified };
 }
 
 // Standard 16-bracket seeding pairs so top seeds are spread across the draw
 // (1 and 2 can only meet in the Final, etc).
 const SEED_PAIRS_16 = [[1, 16], [8, 9], [5, 12], [4, 13], [6, 11], [3, 14], [7, 10], [2, 15]];
 
-function buildPlayoffBracket(standings, tier) {
+function seedBracket(standings) {
   const top = standings.slice(0, BAL.playoffSize);
-  const bySeed = {};
-  top.forEach((team, idx) => {
-    bySeed[idx + 1] = team;
-  });
-  const currentRound = [];
+  const round = [];
   SEED_PAIRS_16.forEach(([a, b]) => {
-    currentRound.push(bySeed[a], bySeed[b]);
+    round.push(top[a - 1], top[b - 1]);
   });
-  const playerSeed = top.findIndex((t) => t.isPlayer) + 1;
-  return { stage: "r16", currentRound, eliminated: false, champion: false, playerSeed, tier };
+  return round;
+}
+
+function buildPlayoffBracket(standings, tier) {
+  const playerSeed = standings.slice(0, BAL.playoffSize).findIndex((t) => t.isPlayer) + 1;
+  return { stage: "r16", currentRound: seedBracket(standings), eliminated: false, champion: false, playerSeed, tier };
+}
+
+// Plays an all-rival knockout from the given round (teams in bracket order)
+// down to one champion. Never called with the player still in it.
+function finishNpcBracket(teams) {
+  let round = teams;
+  while (round.length > 1) {
+    const next = [];
+    for (let i = 0; i < round.length; i += 2) {
+      const a = round[i];
+      const b = round[i + 1];
+      const ra = findRival(a.rivalId);
+      const rb = findRival(b.rivalId);
+      const aWins = ra && rb ? resolveNpcMatch(ra, rb) : simulateNpcMatch(a.rating, b.rating);
+      next.push(aWins ? a : b);
+    }
+    round = next;
+  }
+  return round[0];
+}
+
+// Runs once the player's season is fully over (straight after round 39 if
+// they missed the playoffs, otherwise once they're eliminated or win the
+// Final). Every other tier's knockout is simulated here so each has a
+// champion, then promotion/relegation is applied across all 5 tiers.
+// Returns log text describing the player's own league outcome.
+function finalizeSeasonMovement(playerTierChampion) {
+  const playedTier = state.lastStandingsTier;
+  const champions = {};
+  for (let tier = 1; tier <= BAL.leagueCount; tier++) {
+    const standings = state.leagueStandings[tier];
+    if (!standings) continue;
+    const champ = tier === playedTier && playerTierChampion ? playerTierChampion : finishNpcBracket(seedBracket(standings));
+    champions[tier] = { name: champ.name, rivalId: champ.rivalId, isPlayer: !!champ.isPlayer };
+  }
+  state.playoffChampions = champions;
+
+  // Saves already mid-playoffs/offseason when this rule shipped had their
+  // movement applied under the old table-only rule — never apply it twice.
+  if (state.seasonMovementApplied) return "";
+  state.seasonMovementApplied = true;
+
+  const newTier = applyPromotionRelegation(state.leagueStandings, champions);
+  state.leagueTier = newTier;
+  state.peakLeagueTier = Math.min(state.peakLeagueTier, newTier);
+
+  const champ = champions[playedTier];
+  const champText = champ && !champ.isPlayer ? ` ${champ.name} won the League ${playedTier} playoffs.` : "";
+  const moveText = newTier < playedTier ? ` ⬆️ Promoted to League ${newTier}!` : newTier > playedTier ? ` ⬇️ Relegated to League ${newTier}.` : "";
+  return champText + moveText;
 }
 
 const PLAYOFF_ROUND_NAMES = { r16: "Round of 16", qf: "Quarterfinal", sf: "Semifinal", f: "Final" };
@@ -1418,11 +1485,16 @@ function resolvePlayoffRound() {
   }
 
   let seasonOver = false;
+  let champion = null;
   if (p.eliminated) {
     seasonOver = true;
+    // The bracket still needs a champion (they're promoted) — play out the
+    // remaining rounds without the player.
+    champion = finishNpcBracket(winners);
   } else if (p.stage === "f") {
     p.champion = true;
     seasonOver = true;
+    champion = winners[0];
     summary = `👑 CHAMPION! You won the Year ${state.year} League ${p.tier} Final!`;
     state.cash += 2000;
     state.rank += 40;
@@ -1432,7 +1504,7 @@ function resolvePlayoffRound() {
     p.currentRound = winners;
   }
 
-  return { matchResult, summary, seasonOver };
+  return { matchResult, summary, seasonOver, champion };
 }
 
 /* ---------------------------------------------------------------------- */
@@ -1493,23 +1565,24 @@ function processDayEnd() {
         state.lastStandings = result.standings;
         state.lastPlayerPosition = result.playerPosition;
         state.lastStandingsTier = playedTier;
-        state.leagueTier = result.playerNewTier;
-        state.peakLeagueTier = Math.min(state.peakLeagueTier, state.leagueTier);
-        const moveText =
-          state.leagueTier < playedTier
-            ? ` Promoted to League ${state.leagueTier}!`
-            : state.leagueTier > playedTier
-            ? ` Relegated to League ${state.leagueTier}.`
-            : "";
+        const pos = result.playerPosition;
+        const size = result.standings.length;
         if (result.qualified) {
           state.seasonPhase = "playoffs";
           state.playoff = buildPlayoffBracket(result.standings, playedTier);
-          phaseEvent = `🏆 Regular season complete! Finished #${result.playerPosition} of ${result.standings.length} in League ${playedTier} — through to the playoffs as seed ${state.playoff.playerSeed}.${moveText}`;
+          const stakes =
+            playedTier > 1 && pos <= BAL.promotionTablePlaces
+              ? ` Top ${BAL.promotionTablePlaces} — promotion secured!`
+              : playedTier > 1
+              ? " Win the playoffs to earn promotion."
+              : "";
+          phaseEvent = `🏆 Regular season complete! Finished #${pos} of ${size} in League ${playedTier} — through to the playoffs as seed ${state.playoff.playerSeed}.${stakes}`;
         } else {
           state.seasonPhase = "offseason";
           state.offseasonDays = BAL.trainingCampDays;
           state.offseasonReason = "missed";
-          phaseEvent = `📋 Regular season complete. Finished #${result.playerPosition} of ${result.standings.length} in League ${playedTier} — missed the top ${BAL.playoffSize} playoff cutoff.${moveText} ${BAL.trainingCampDays}-day training camp starts now to get ready for next season.`;
+          const outcome = finalizeSeasonMovement(null);
+          phaseEvent = `📋 Regular season complete. Finished #${pos} of ${size} in League ${playedTier} — missed the top ${BAL.playoffSize} playoff cutoff.${outcome} ${BAL.trainingCampDays}-day training camp starts now to get ready for next season.`;
         }
       }
     }
@@ -1526,6 +1599,7 @@ function processDayEnd() {
         state.seasonPhase = "offseason";
         state.offseasonDays = BAL.offseasonDays;
         state.offseasonReason = "playoffs";
+        phaseEvent += finalizeSeasonMovement(result.champion);
       }
     }
     return { matchResult, phaseEvent, yearSummary };
@@ -2340,38 +2414,53 @@ function openCareer() {
 function leagueTableHtml(tier) {
   let standings;
   let noteText;
-  if (state.roundIndex > 0) {
+  let isSnapshot = false;
+  if (state.roundIndex >= BAL.seasonRounds && state.leagueStandings[tier]) {
+    // Season over: read the snapshot taken at round 39. Rebuilding from the
+    // rivals' live league field would be wrong once promotion has moved them.
+    standings = state.leagueStandings[tier];
+    noteText = "Final standings";
+    isSnapshot = true;
+  } else if (state.roundIndex > 0) {
     // Live: every league's round-robin resolves in lockstep every week, so
-    // this is a real "right now" snapshot, not just a post-season report —
-    // and once round 39 has resolved it's already the final table too.
+    // this is a real "right now" snapshot, not just a post-season report.
     standings = buildStandingsFromPoints(tier);
-    noteText = state.roundIndex >= BAL.seasonRounds ? "Final standings" : `Live — through round ${state.roundIndex}/${BAL.seasonRounds}`;
+    noteText = `Live — through round ${state.roundIndex}/${BAL.seasonRounds}`;
   } else if (state.leagueStandings[tier]) {
     standings = state.leagueStandings[tier];
     noteText = "Last season's final standings";
+    isSnapshot = true;
   } else {
     return `<p class="modal-sub">Not yet available — this table fills in once this league's first round resolves.</p>`;
   }
   // League 1 is already the top — no promotion zone. League 5 is already
   // the bottom — no relegation zone. Matches applyPromotionRelegation()'s
-  // own tier > 1 / tier < leagueCount gating exactly.
+  // own tier > 1 / tier < leagueCount gating exactly. Only the top 3 are
+  // guaranteed; the 4th spot goes to the playoff champion, marked once known.
   const showPromo = tier > 1;
   const showReleg = tier < BAL.leagueCount;
+  const champ = isSnapshot && state.playoffChampions ? state.playoffChampions[tier] : null;
   const rows = standings
     .map((t, i) => {
       const pos = i + 1;
-      const zone = showPromo && pos <= BAL.promotionCount ? "zone-promo" : showReleg && pos > standings.length - BAL.relegationCount ? "zone-releg" : "";
+      const isChamp = isSameEntry(t, champ);
+      const zone =
+        showPromo && (pos <= BAL.promotionTablePlaces || isChamp)
+          ? "zone-promo"
+          : showReleg && pos > standings.length - BAL.relegationCount
+          ? "zone-releg"
+          : "";
       return `
       <div class="league-row ${zone} ${t.isPlayer ? "league-row-you" : ""}">
         <span class="league-pos">${pos}</span>
-        <span class="league-name">${t.name}${t.isPlayer ? " (You)" : ""}</span>
+        <span class="league-name">${isChamp ? "🏆 " : ""}${t.name}${t.isPlayer ? " (You)" : ""}</span>
         <span class="league-rating">${fmt(t.rating)}</span>
         <span class="league-points">${t.points}</span>
       </div>`;
     })
     .join("");
   const legendParts = [];
-  if (showPromo) legendParts.push(`<span class="legend-dot legend-promo"></span> Promotion zone`);
+  if (showPromo) legendParts.push(`<span class="legend-dot legend-promo"></span> Promoted (top ${BAL.promotionTablePlaces} + 🏆 playoff champion)`);
   if (showReleg) legendParts.push(`<span class="legend-dot legend-releg"></span> Relegation zone`);
   const legend = legendParts.length ? `<p class="modal-sub league-legend">${legendParts.join(" · ")}</p>` : "";
   return `
@@ -2429,7 +2518,7 @@ function openHowTo() {
       <p><b>Stat ceilings:</b> each skill caps at ${BAL.skillShopCapBase} until you invest in that skill's dedicated Coach (5 levels, Coaching Shop) — but the effective ceiling is also capped by the highest league you've ever reached (peak, not current), from 60 in League 5 up to 100 in League 1. Both gates must be cleared to hit 100. Physical Health caps at ${BAL.statCapBase} until you invest in Sports Physio.</p>
       <p><b>The season:</b> a ${BAL.preseasonDays}-day preseason to train, then a ${BAL.seasonRounds}-round regular season — one match a week against a named rival, all scheduled in advance, each testing that week's active skills. Finish in the top ${BAL.playoffSize} of your ${BAL.seasonRounds + 1}-competitor league to reach the knockout playoffs. Lose a playoff match and you're out; win the Final and you're champion.</p>
       <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken, so missing the cut isn't a worse deal than making it and getting knocked out early.</p>
-      <p><b>Leagues:</b> there are ${BAL.leagueCount} leagues, League 1 at the top and League 5 at the bottom — you start in League 5. Every league has a persistent roster of named rivals whose ratings evolve from real simulated results every week, same as yours — every tier's table is live from round 1, not just visible once the season ends. Finish top ${BAL.promotionCount} of your league's table at season's end and you're promoted a tier; finish bottom ${BAL.relegationCount} and you're relegated — this applies to every competitor in every league, not just you, so the standings you see are a living world, not scenery. Check the Leagues screen any time (Menu, or the shortcut in Career) to see all ${BAL.leagueCount} tables. Promotion and relegation are based purely on table position — the playoffs are a separate prize, unrelated to which league you're in next year.</p>
+      <p><b>Leagues:</b> there are ${BAL.leagueCount} leagues, League 1 at the top and League 5 at the bottom — you start in League 5. Every league has a persistent roster of named rivals whose ratings evolve from real simulated results every week, same as yours — every tier's table is live from round 1, not just visible once the season ends. Four go up from every league below League 1: the playoff champion, plus the top ${BAL.promotionTablePlaces} of the table other than the champion — so a top-${BAL.promotionTablePlaces} finish is always promoted, and anyone in the playoffs can still win their way up. Finish bottom ${BAL.relegationCount} and you're relegated. This applies to every competitor in every league, not just you — every league plays out its own knockout too — so the standings you see are a living world, not scenery. Check the Leagues screen any time (Menu, or the shortcut in Career) to see all ${BAL.leagueCount} tables.</p>
       <p>Cash and Rank carry across seasons and leagues — spend cash in the Coaching Shop any time.</p>
       <p><b>Employment:</b> your day job funds everything else, every phase, no exceptions. Work ${BAL.workHoursRequired}h/day (every phase, preseason included), starting at $${BAL.workPayMin}/day — pay is tied to still <i>having</i> the job, not to hitting the exact hour target every day, so falling short doesn't cost you income, only a chunk of a chance scaled to the shortfall (regained ${BAL.strikeWindowDays} days later). Run out of your ${fmt1(BAL.strikesToFire)} chances and <i>that's</i> when pay actually stops — you're fired: the same slider becomes a Job Search, needing ${BAL.jobSearchHoursNeeded} cumulative hours (any daily amount counts) to get rehired. Reach League ${BAL.goProLeagueTier}+ with $${BAL.goProCash}+ banked while employed and you go Pro automatically — Work drops to just ${BAL.proDutyHoursRequired}h/day of Pro Duties, starting at $${BAL.proPayMin}/day, with the same chances rule and the same fallback to Job Search if you're dropped.</p>
       <p><b>Pay &amp; seniority:</b> pay rises $${BAL.payRaisePerYear}/year for your first ${BAL.payRaiseMaxYears} years in a role, then holds — Work tops out at $${BAL.workPayMin + BAL.payRaisePerYear * BAL.payRaiseMaxYears}/day, Pro Duties at $${BAL.proPayMin + BAL.payRaisePerYear * BAL.payRaiseMaxYears}/day. Lose the job or get dropped from Pro and that role's pay resets to its minimum for next time — seniority isn't carried over.</p>

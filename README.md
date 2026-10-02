@@ -71,13 +71,15 @@ named rivals total across all 5 tiers, whose ratings evolve from real
 simulated results every week, exactly like yours — it's a living world, not
 scenery. Every tier runs a genuine round-robin schedule in lockstep with
 your own matches, so all 5 tables are live and visible from round 1 of the
-season, not just once it ends. Finish top 4 of your league's table and
-you're promoted a tier; finish bottom 4 and you're relegated. This applies
-to every competitor in every league, not just you, so rivals you've never
-played can climb or fall in the background too. Promotion/relegation is
-based purely on table position — the playoffs are a separate prize,
-unrelated to which league you play in next year. Check the Leagues screen
-any time to see all 5 tables, or jump there directly from the Career modal.
+season, not just once it ends. Four go up from every league below League 1:
+the playoff champion, plus the top 3 of the table other than the champion
+— so a top-3 finish is always promoted, and anyone who makes the playoffs
+can still win their way up. Finish bottom 4 and you're relegated. This
+applies to every competitor in every league, not just you — every league
+plays out its own knockout too — so rivals you've never played can climb or
+fall in the background. Promotion/relegation is applied once the playoffs
+are over. Check the Leagues screen any time to see all 5 tables, or jump
+there directly from the Career modal.
 
 Rank, Cash, stats, and Coaching Shop upgrades all carry over between years
 and leagues.
