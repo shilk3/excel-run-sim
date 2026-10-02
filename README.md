@@ -43,7 +43,8 @@ Relax, and Food. Everything is connected:
   barely anything, skipping the day entirely costs a full chance,
   regained after 3 weeks), but you're still paid in full. Only running out
   of chances actually costs you income — you're fired, and the same slider
-  becomes a Job Search until you log 30 cumulative hours. Reach League 2
+  becomes a Job Search until you log a random 10–40 cumulative hours
+  (rolled each time you lose the job, and shown on the slider). Reach League 2
   with $5,000 banked while employed and you go pro automatically: Work
   drops to 5h/day of Pro Duties, same chances rule. Pros also have to stay
   current — a new Excel technique appears roughly every 30 days needing

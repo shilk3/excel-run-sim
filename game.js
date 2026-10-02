@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.24.0";
+const APP_VERSION = "4.25.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -98,7 +98,7 @@ const BAL = {
   // this is what makes losing your job actually cost you money, not just stall your income
   strikeWindowDays: 21, // 3 weeks — each strike expires this many days after it's earned
   strikesToFire: 3,
-  jobSearchHoursNeeded: 30, // Unemployed: cumulative hours (any daily amount counts) to get re-hired
+  jobSearchHoursRange: [10, 40], // Unemployed: cumulative hours (any daily amount counts) to get re-hired — rolled fresh each time you lose a job
   goProLeagueTier: 2, // Employed + leagueTier <= this + cash >= goProCash -> Pro, automatically
   goProCash: 5000,
   // Pros must stay current: a new technique queues up periodically: only
@@ -545,6 +545,7 @@ function freshState() {
       status: "employed", // "employed" | "unemployed" | "pro"
       strikes: [], // [{day}] — each expires strikeWindowDays after it's earned
       jobSearchHours: 0, // Unemployed: cumulative progress toward jobSearchHoursNeeded
+      jobSearchHoursNeeded: null, // Unemployed: this search's target, rolled from jobSearchHoursRange when the job is lost
       techniqueQueue: [], // Pro: [{name, hoursNeeded, hoursDone}], FIFO — only the front is "in progress"
       techniqueDayCounter: 0, // days elapsed toward the next technique; only ticks while Pro
       workPay: BAL.workPayMin, // current Employed daily pay — rises with tenure, resets on firing
@@ -758,6 +759,11 @@ function migrateSave(parsed) {
   if (parsed.injury && parsed.injury.active && parsed.allocation) parsed.allocation.exercise = 0;
   // The Gym slider's max dropped from 12h to 8h.
   if (parsed.allocation) parsed.allocation.exercise = Math.min(parsed.allocation.exercise || 0, BAL.gymMaxHours);
+  // Job search targets became a random 10-40h rolled on job loss; a save
+  // that's mid-search keeps the fixed 30h it started with.
+  if (parsed.employment && parsed.employment.jobSearchHoursNeeded === undefined) {
+    parsed.employment.jobSearchHoursNeeded = parsed.employment.status === "unemployed" ? 30 : null;
+  }
   // A rehire used to keep Job Search's up-to-16h on a Work slider that caps
   // at 9, counting phantom hours against the day (and blocking End Day).
   if (parsed.allocation && parsed.employment) {
@@ -1094,6 +1100,13 @@ function resolveDay() {
   return events;
 }
 
+// This job search's hour target, rolled when the job was lost. Saves that
+// were already unemployed before targets were randomised keep the fixed
+// 30h they were promised.
+function jobSearchTarget(emp = state.employment) {
+  return emp.jobSearchHoursNeeded || 30;
+}
+
 // Resolves one day of Work / Job Search / Pro Duties. Kept separate from
 // resolveDay() since it mutates state.employment (a whole status machine,
 // not a decaying stat) and generates its own log events.
@@ -1111,15 +1124,16 @@ function resolveEmploymentDay() {
 
   if (emp.status === "unemployed") {
     emp.jobSearchHours += workH;
-    if (emp.jobSearchHours >= BAL.jobSearchHoursNeeded) {
+    if (emp.jobSearchHours >= jobSearchTarget()) {
       emp.status = "employed";
       emp.jobSearchHours = 0;
+      emp.jobSearchHoursNeeded = null;
       // Job Search allows up to 16h but Work caps at its 9h requirement, so
       // reset to exactly that rather than leaving extra hours stranded.
       state.allocation.work = BAL.workHoursRequired;
       events.push({ type: "good", text: `💼 Found a new job! Work resumes at ${BAL.workHoursRequired}h/day.` });
     } else if (workH > 0) {
-      events.push({ type: "neutral", text: `🔍 Job search: ${fmt(emp.jobSearchHours)}/${BAL.jobSearchHoursNeeded}h` });
+      events.push({ type: "neutral", text: `🔍 Job search: ${fmt(emp.jobSearchHours)}/${jobSearchTarget()}h` });
     }
   } else {
     const isPro = emp.status === "pro";
@@ -1158,6 +1172,7 @@ function resolveEmploymentDay() {
         emp.status = "unemployed";
         emp.strikes = [];
         emp.jobSearchHours = 0;
+        emp.jobSearchHoursNeeded = randInt(BAL.jobSearchHoursRange[0], BAL.jobSearchHoursRange[1]);
         // Seniority is lost, not carried over — whichever role you were just
         // dropped from starts back at its minimum next time you're in it.
         if (isPro) emp.proPay = BAL.proPayMin;
@@ -1165,8 +1180,8 @@ function resolveEmploymentDay() {
         events.push({
           type: "bad",
           text: isPro
-            ? `🔥 Out of chances — dropped by your sponsor after too many missed Pro Duties. Time to find a new job.`
-            : `🔥 Out of chances — fired after too many missed shifts. Time to find a new job.`,
+            ? `🔥 Out of chances — dropped by your sponsor after too many missed Pro Duties. Time to find a new job — this search will take ${emp.jobSearchHoursNeeded}h.`
+            : `🔥 Out of chances — fired after too many missed shifts. Time to find a new job — this search will take ${emp.jobSearchHoursNeeded}h.`,
         });
       }
     }
@@ -2000,11 +2015,11 @@ function workRowHtml() {
     return comboRowHtml("work", {
       icon: "🔍",
       label: "Job Search",
-      outcomeText: `${fmt(emp.jobSearchHours)}/${BAL.jobSearchHoursNeeded}h`,
+      outcomeText: `${fmt(emp.jobSearchHours)}/${jobSearchTarget()}h`,
       shopTag: netPerDayTag(-BAL.dailyExpenses),
       value: emp.jobSearchHours,
-      previewValue: Math.min(emp.jobSearchHours + hours, BAL.jobSearchHoursNeeded),
-      cap: BAL.jobSearchHoursNeeded,
+      previewValue: Math.min(emp.jobSearchHours + hours, jobSearchTarget()),
+      cap: jobSearchTarget(),
       hours,
       maxHours,
       markerHours: 0,
@@ -2460,7 +2475,7 @@ function employmentSectionHtml() {
   const expensesLine = `<p class="modal-sub">💸 Cost of living: $${fmt(BAL.dailyExpenses)}/day, every day, regardless of employment status.</p>`;
 
   if (emp.status === "unemployed") {
-    return `${expensesLine}<p>🔍 <b>Unemployed</b> — job searching: ${fmt(emp.jobSearchHours)} / ${BAL.jobSearchHoursNeeded}h accumulated. Any hours allocated to the slider count, no daily minimum.</p>`;
+    return `${expensesLine}<p>🔍 <b>Unemployed</b> — job searching: ${fmt(emp.jobSearchHours)} / ${jobSearchTarget()}h accumulated (each search needs a random ${BAL.jobSearchHoursRange[0]}–${BAL.jobSearchHoursRange[1]}h). Any hours allocated to the slider count, no daily minimum.</p>`;
   }
 
   if (emp.status === "pro") {
@@ -2714,7 +2729,7 @@ function openHowTo() {
       <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken, so missing the cut isn't a worse deal than making it and getting knocked out early.</p>
       <p><b>Leagues:</b> there are ${BAL.leagueCount} leagues, League 1 at the top and League 5 at the bottom — you start in League 5. Every league has a persistent roster of named rivals whose ratings evolve from real simulated results every week, same as yours — every tier's table is live from round 1, not just visible once the season ends. Four go up from every league below League 1: the playoff champion, plus the top ${BAL.promotionTablePlaces} of the table other than the champion — so a top-${BAL.promotionTablePlaces} finish is always promoted, and anyone in the playoffs can still win their way up. Finish bottom ${BAL.relegationCount} and you're relegated. This applies to every competitor in every league, not just you — every league plays out its own knockout too — so the standings you see are a living world, not scenery. Check the Leagues screen any time (Menu, or the shortcut in Career) to see all ${BAL.leagueCount} tables.</p>
       <p><b>Rating</b> is your skill score (the 🏆 number), the same scale every rival is measured on — it rises and falls with each result, and it's what your win chance is worked out from. Your <b>table position</b> (#1–#40) is separate: it comes from league points, 3 per win. Cash and Rating carry across seasons and leagues — spend cash in the Coaching Shop any time.</p>
-      <p><b>Employment:</b> your day job funds everything else, every phase, no exceptions. Work ${BAL.workHoursRequired}h/day (every phase, preseason included), starting at $${BAL.workPayMin}/day — pay is tied to still <i>having</i> the job, not to hitting the exact hour target every day, so falling short doesn't cost you income, only a chunk of a chance scaled to the shortfall (regained ${BAL.strikeWindowDays} days later). Run out of your ${fmt1(BAL.strikesToFire)} chances and <i>that's</i> when pay actually stops — you're fired: the same slider becomes a Job Search, needing ${BAL.jobSearchHoursNeeded} cumulative hours (any daily amount counts) to get rehired. Reach League ${BAL.goProLeagueTier} or higher with $${BAL.goProCash}+ banked while employed and you go Pro automatically — Work drops to just ${BAL.proDutyHoursRequired}h/day of Pro Duties, starting at $${BAL.proPayMin}/day, with the same chances rule and the same fallback to Job Search if you're dropped.</p>
+      <p><b>Employment:</b> your day job funds everything else, every phase, no exceptions. Work ${BAL.workHoursRequired}h/day (every phase, preseason included), starting at $${BAL.workPayMin}/day — pay is tied to still <i>having</i> the job, not to hitting the exact hour target every day, so falling short doesn't cost you income, only a chunk of a chance scaled to the shortfall (regained ${BAL.strikeWindowDays} days later). Run out of your ${fmt1(BAL.strikesToFire)} chances and <i>that's</i> when pay actually stops — you're fired: the same slider becomes a Job Search, needing a random ${BAL.jobSearchHoursRange[0]}–${BAL.jobSearchHoursRange[1]} cumulative hours (rolled when you lose the job and shown on the slider; any daily amount counts) to get rehired. Reach League ${BAL.goProLeagueTier} or higher with $${BAL.goProCash}+ banked while employed and you go Pro automatically — Work drops to just ${BAL.proDutyHoursRequired}h/day of Pro Duties, starting at $${BAL.proPayMin}/day, with the same chances rule and the same fallback to Job Search if you're dropped.</p>
       <p><b>Pay &amp; seniority:</b> pay rises $${BAL.payRaisePerYear}/year for your first ${BAL.payRaiseMaxYears} years in a role, then holds — Work tops out at $${BAL.workPayMin + BAL.payRaisePerYear * BAL.payRaiseMaxYears}/day, Pro Duties at $${BAL.proPayMin + BAL.payRaisePerYear * BAL.payRaiseMaxYears}/day. Lose the job or get dropped from Pro and that role's pay resets to its minimum for next time — seniority isn't carried over.</p>
       <p><b>Cost of living:</b> $${BAL.dailyExpenses}/day, charged every single day no matter your employment status — stay employed and you net a profit, but lose your job and the bills don't stop, so cash actively drains while you're out of work. Each new year opens with a summary of that year's full cash flow: pay earned, match winnings, and expenses paid.</p>
       <p>Pros have one more thing to manage: staying current. Roughly every ${BAL.techniqueIntervalDays} days a new Excel technique appears that needs ${BAL.techniqueMinHours}-${BAL.techniqueMaxHours}h to master — any Pro Duties hours beyond the ${BAL.proDutyHoursRequired}h minimum go toward it. Falling behind never costs you progress (new ones just queue up), but every technique still unmastered costs ${Math.round(BAL.techniquePenaltyPerUnmastered * 100)}% match performance, stacking.</p>
