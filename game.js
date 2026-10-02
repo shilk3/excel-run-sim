@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.15.4";
+const APP_VERSION = "4.16.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -2084,7 +2084,7 @@ function showYearSummaryModal(summary) {
 /* ---------------------------------------------------------------------- */
 /* Shop / Menu                                                            */
 /* ---------------------------------------------------------------------- */
-function shopItemHtml(key, u) {
+function shopItemHtml(key, u, inThisMatch = false) {
   const lvl = upgradeLevel(key);
   const maxLvl = u.levels.length;
   const isMax = lvl >= maxLvl;
@@ -2093,10 +2093,12 @@ function shopItemHtml(key, u) {
   const canAfford = next && state.cash >= next.cost;
   const desc = isMax ? `${current.desc} — MAX` : next.desc + (current ? ` <span class="shop-item-current">(now: ${current.desc})</span>` : "");
   return `
-  <div class="shop-item">
+  <div class="shop-item${inThisMatch ? " shop-item-match" : ""}">
     <div class="shop-item-icon">${u.icon}</div>
     <div class="shop-item-info">
-      <div class="shop-item-name">${u.name}${lvl > 0 ? ` <span class="shop-item-level">Lv.${lvl}</span>` : ""}</div>
+      <div class="shop-item-name">${u.name}${lvl > 0 ? ` <span class="shop-item-level">Lv.${lvl}</span>` : ""}${
+        inThisMatch ? ` <span class="shop-item-match-tag">This match</span>` : ""
+      }</div>
       <div class="shop-item-desc">${desc}</div>
     </div>
     <button class="shop-item-btn ${isMax ? "owned" : ""}" data-upgrade="${key}" ${isMax || !canAfford ? "disabled" : ""}>
@@ -2106,7 +2108,11 @@ function shopItemHtml(key, u) {
 }
 
 function shopHtml() {
-  const skillItems = SKILLS.map((sk) => shopItemHtml(coachKey(sk.key), UPGRADES[coachKey(sk.key)])).join("");
+  // Same gate as the Career modal's "Tested this match": skills are only
+  // revealed once a fixture/playoff match is actually next.
+  const kind = getNextMatchInfo().kind;
+  const matchSkills = kind === "fixture" || kind === "playoff" ? state.activeSkills : [];
+  const skillItems = SKILLS.map((sk) => shopItemHtml(coachKey(sk.key), UPGRADES[coachKey(sk.key)], matchSkills.includes(sk.key))).join("");
   const supportKeys = ["physio", "sleepApp", "nutritionist", "meditation", "recovery", "manager"];
   const supportItems = supportKeys.map((key) => shopItemHtml(key, UPGRADES[key])).join("");
   return `
