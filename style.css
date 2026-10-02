@@ -715,3 +715,12 @@ input[type="range"]::-webkit-slider-thumb {
   .end-day-row .end-day-btn { font-size: 13px; }
   .end-week-btn { font-size: 12.5px !important; }
 }
+
+/* Match result: pinned VICTORY / DEFEAT header + win-chance table */
+.modal-sticky-head .match-head { font-size: 22px; font-weight: 800; letter-spacing: 0.5px; }
+.modal-sticky-head .match-head.win { color: var(--accent); }
+.modal-sticky-head .match-head.loss { color: var(--danger); }
+.match-card > .match-sub:first-child { margin-top: 2px; }
+.win-table { margin-top: 10px; }
+.win-table th:last-child, .win-table td:last-child { width: 1%; }
+.win-table sup { font-size: 9px; }

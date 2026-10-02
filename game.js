@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.27.0";
+const APP_VERSION = "4.28.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -2327,11 +2327,37 @@ function performanceTableHtml(b) {
     }.</div>`;
 }
 
+// Match result: how the win chance was worked out, step by step — from
+// your rating, through today's performance adjustment, to the Elo odds.
+function winChanceTableHtml(result) {
+  const signed = (n) => (n === 0 ? "±0" : n < 0 ? `−${Math.abs(n)}` : `+${n}`);
+  const adj = result.matchRating - result.rankBefore;
+  const edge = result.matchRating - result.opponentRating; // + = you're stronger
+  const odds = Math.pow(10, edge / 400);
+  const oddsText = odds >= 10 ? odds.toFixed(0) : odds >= 1 ? odds.toFixed(1) : odds.toFixed(2);
+  const row = (label, value, cls = "") => `<tr class="${cls}"><td>${label}</td><td>${value}</td></tr>`;
+  return `
+    <table class="perf-table win-table">
+      <thead><tr><th>Win chance</th><th></th></tr></thead>
+      <tbody>
+        ${row("🏆 Your rating", fmt(result.rankBefore))}
+        ${row(`Performance: (${result.perf.toFixed(1)} − 70) × 3`, signed(adj), "perf-sub")}
+        ${row("Match-day rating", `<b>${result.matchRating}</b>`)}
+        ${row("⚔️ Opponent rating", result.opponentRating)}
+        ${row("Your edge", signed(edge), "perf-sub")}
+        ${row(`Odds: 10<sup>${edge < 0 ? "−" : ""}${Math.abs(edge)} ÷ 400</sup>`, `${oddsText} : 1`, "perf-sub")}
+      </tbody>
+      <tfoot><tr><td>Win chance: ${oddsText} ÷ (${oddsText} + 1)</td><td>${result.winProb}%</td></tr></tfoot>
+    </table>
+    <div class="match-sub perf-note">Equal ratings are a 50% coin flip. Every 400 points of edge makes the stronger side 10× as likely to win as to lose — so a ${Math.abs(edge)}-point ${edge >= 0 ? "edge" : "deficit"} makes you ${oddsText}× as likely to win as to lose. Each point of performance above 70 adds 3 to your match-day rating; below 70 it costs 3.</div>`;
+}
+
 function showMatchModal(result, extraHtml = "") {
   const context = result.roundLabel ? `${result.roundLabel}${result.opponentName ? " vs " + result.opponentName : ""}` : "";
+  const title = `<span class="match-head ${result.win ? "win" : "loss"}">${result.win ? "VICTORY" : "DEFEAT"}</span>`;
   const html = `
+      ${stickyHeadHtml(title)}
       <div class="match-card">
-        <div class="match-result ${result.win ? "win" : "loss"}">${result.win ? "VICTORY" : "DEFEAT"}</div>
         <div class="match-sub">${context ? context + "<br>" : ""}Opponent rating: ${result.opponentRating} · You had a ${result.winProb}% win chance</div>
         ${
           typeof result.positionAfter === "number"
@@ -2344,13 +2370,13 @@ function showMatchModal(result, extraHtml = "") {
           <div><b>$${result.cashReward}</b>Prize</div>
         </div>
         ${performanceTableHtml(result.breakdown)}
-        <div class="match-sub">Match-day rating: ${fmt(result.rankBefore)} + (${result.perf.toFixed(1)} − 70) × 3 = <b>${result.matchRating}</b> vs ${result.opponentRating} — every point of performance above 70 adds 3 to your rating for this match; below 70 it costs 3.</div>
-        <div class="match-sub">Win roll: ${result.roll}/100, needed under ${result.winProb} — one random roll decides every match, weighted by your win chance, so an upset either way is always possible.</div>
+        ${winChanceTableHtml(result)}
+        <div class="match-sub">Win roll: <b>${result.roll}/100</b> — needed under ${result.winProb} to win. One random roll decides every match, weighted by your win chance, so an upset either way is always possible.</div>
         ${result.championBonus ? `<div class="match-sub">👑 Champion bonus: +$${result.championBonus.cash} · +${result.championBonus.rating} rating</div>` : ""}
         ${extraHtml}
         <button class="primary-btn" id="matchOk">Continue</button>
       </div>`;
-  openModal(html);
+  openModal(html, { ownClose: true });
   $("matchOk").addEventListener("click", closeModal);
 }
 
