@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.18.0";
+const APP_VERSION = "4.19.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -74,6 +74,11 @@ const BAL = {
   // exactly leagueSize. The top 3 are therefore always promoted.
   promotionTablePlaces: 3,
   relegationCount: 4,
+  // Rating bounds — the same for the player and every rival. The floor only
+  // stops a long losing run going negative; the ceiling is well above any
+  // rating the game produces.
+  ratingMin: 0,
+  ratingMax: 5000,
   // Employment: a mandatory day job funds the whole career until you can
   // go pro. Work/Pro Duties share one slider and one strike system —
   // only what's "required" and what it's called changes with status.
@@ -160,11 +165,15 @@ function rollActiveSkills() {
 function isPreseason() {
   return state.seasonPhase === "preseason";
 }
-// Preseason has no matches and no case-type rotation yet — every skill is
-// open for training. Outside preseason, only this week's revealed 1-3
-// active skills are trainable.
+// Regular season and playoffs: the stretch with a match every week.
+function inSeason() {
+  return state.seasonPhase === "regular" || state.seasonPhase === "playoffs";
+}
+// Only in-season weeks have a match to prepare for, so only they restrict
+// training to that week's revealed 1-3 active skills. Preseason and the
+// off-season (including training camp) open all 7.
 function trainableSkills() {
-  return isPreseason() ? SKILL_KEYS : state.activeSkills;
+  return inSeason() ? state.activeSkills : SKILL_KEYS;
 }
 
 // Initial rating bands per league tier (1 = top, 5 = bottom) — only used to
@@ -733,12 +742,12 @@ function migrateSave(parsed) {
     parsed.allocation.work = Math.min(parsed.allocation.work || 0, workMaxHours(parsed.employment.status));
   }
 
-  // skillCycleDay and phaseDay always advance together outside preseason —
-  // same every-day increment, same reset-at-7 (every phase length is a
-  // multiple of 7 by design). A save written while a prior bug let them
-  // drift (the weekly skill reveal landing a day before that week's match)
-  // gets them realigned here instead of carrying the offset forever.
-  if (parsed.seasonPhase && parsed.seasonPhase !== "preseason" && parsed.skillCycleDay !== parsed.phaseDay) {
+  // In-season, skillCycleDay and phaseDay always advance together — both
+  // start at 0 with the regular season, same every-day increment, same
+  // reset-at-7. A save written while a prior bug let them drift (the weekly
+  // skill reveal landing a day before that week's match) gets them
+  // realigned here instead of carrying the offset forever.
+  if ((parsed.seasonPhase === "regular" || parsed.seasonPhase === "playoffs") && parsed.skillCycleDay !== parsed.phaseDay) {
     parsed.skillCycleDay = parsed.phaseDay;
   }
 
@@ -1242,7 +1251,7 @@ function recordRivalResultVsPlayer(rivalId, playerWon, playerRating) {
   const rival = findRival(rivalId);
   if (!rival) return;
   const change = eloChange(rival.rating, playerRating, !playerWon);
-  rival.rating = clamp(rival.rating + change, 300, 3000);
+  rival.rating = clamp(rival.rating + change, BAL.ratingMin, BAL.ratingMax);
   if (playerWon) rival.losses += 1;
   else rival.wins += 1;
 }
@@ -1255,7 +1264,7 @@ function resolveMatch(opponentRating) {
 
   if (state.injury.active) {
     const loss = Math.round(10 * rankLossMult);
-    state.rank = Math.max(400, state.rank - loss);
+    state.rank = clamp(state.rank - loss, BAL.ratingMin, BAL.ratingMax);
     state.losses += 1;
     return { forfeit: true, win: false, text: `You're injured and had to forfeit. Rating −${loss}.`, opponentRating: Math.round(opponentRating), rankBefore };
   }
@@ -1272,7 +1281,7 @@ function resolveMatch(opponentRating) {
   const actual = win ? 1 : 0;
   let ratingChange = Math.round(K * (actual - winProb));
   if (ratingChange < 0) ratingChange = Math.round(ratingChange * rankLossMult);
-  state.rank = clamp(state.rank + ratingChange, 400, 5000);
+  state.rank = clamp(state.rank + ratingChange, BAL.ratingMin, BAL.ratingMax);
   state.peakRank = Math.max(state.peakRank, state.rank);
 
   const cashReward = Math.round((win ? 150 + state.rank / 10 : 40) * cashBonusMult);
@@ -1314,8 +1323,8 @@ function eloChange(ratingA, ratingB, aWon, K = 24) {
 function resolveNpcMatch(rivalA, rivalB) {
   const aWon = simulateNpcMatch(rivalA.rating, rivalB.rating);
   const change = eloChange(rivalA.rating, rivalB.rating, aWon);
-  rivalA.rating = clamp(rivalA.rating + change, 300, 3000);
-  rivalB.rating = clamp(rivalB.rating - change, 300, 3000);
+  rivalA.rating = clamp(rivalA.rating + change, BAL.ratingMin, BAL.ratingMax);
+  rivalB.rating = clamp(rivalB.rating - change, BAL.ratingMin, BAL.ratingMax);
   if (aWon) {
     rivalA.wins += 1;
     rivalB.losses += 1;
@@ -1555,7 +1564,7 @@ function resolvePlayoffRound() {
     summary = `👑 CHAMPION! You won the Year ${state.year} League ${p.tier} Final! +$${bonus.cash} and +${bonus.rating} rating.`;
     state.cash += bonus.cash;
     state.yearCashFlow.matchCash += bonus.cash;
-    state.rank += bonus.rating;
+    state.rank = Math.min(BAL.ratingMax, state.rank + bonus.rating);
     state.peakRank = Math.max(state.peakRank, state.rank);
     matchResult.championBonus = bonus;
   } else {
@@ -1582,7 +1591,13 @@ function processDayEnd() {
       state.seasonPhase = "regular";
       state.phaseDay = 0;
       state.roundIndex = 0;
-      phaseEvent = `🏁 Preseason over — the ${BAL.seasonRounds}-round regular season begins.`;
+      state.skillCycleDay = 0;
+      state.activeSkills = rollActiveSkills();
+      SKILL_KEYS.forEach((k) => {
+        state.allocation.skills[k] = 0;
+      });
+      const focus = state.activeSkills.map((k) => `${skillMeta(k).icon} ${skillMeta(k).name}`).join(", ");
+      phaseEvent = `🏁 Preseason over — the ${BAL.seasonRounds}-round regular season begins. This week's focus: ${focus}.`;
     }
     return { matchResult, phaseEvent, yearSummary };
   }
@@ -1811,14 +1826,14 @@ function getNextMatchInfo() {
 // revealed only now, at the end of the previous cycle, never in advance.
 // Hours pending on the old active skills are cleared since they're about to
 // become untrainable; the player reassigns under the new focus.
-function advanceSkillCycle(wasPreseason) {
-  // Preseason trains everything (see trainableSkills()), so the weekly
-  // reveal is frozen until the regular season actually begins. Takes the
-  // caller's pre-processDayEnd() snapshot rather than checking isPreseason()
-  // live — processDayEnd() runs first now and can flip seasonPhase to
-  // "regular" on this exact call, which would make this check fire a day
-  // early and permanently offset skillCycleDay from phaseDay from then on.
-  if (wasPreseason) return null;
+function advanceSkillCycle(wasInSeason) {
+  // Outside the season everything is trainable (see trainableSkills()), so
+  // the weekly reveal only runs on days that are in-season both before and
+  // after processDayEnd() — which runs first and can change seasonPhase on
+  // this exact call. The regular season's first week is rolled when it
+  // starts (processDayEnd), and a season that just ended doesn't announce a
+  // "week ahead" it no longer has.
+  if (!wasInSeason || !inSeason()) return null;
   state.skillCycleDay += 1;
   if (state.skillCycleDay < 7) return null;
   state.skillCycleDay = 0;
@@ -2458,7 +2473,7 @@ function openCareer() {
       ${employmentSectionHtml()}
     </div>
     <div class="modal-section">
-      <h3>Skills — ${isPreseason() ? "preseason: train anything" : `this week's focus: ${state.activeSkills.map((k) => skillMeta(k).name).join(", ")}`}</h3>
+      <h3>Skills — ${!inSeason() ? `${isPreseason() ? "preseason" : "off-season"}: train anything` : `this week's focus: ${state.activeSkills.map((k) => skillMeta(k).name).join(", ")}`}</h3>
       ${SKILLS.map((sk) => {
         const cap = skillCap(sk.key);
         const val = state.stats.skills[sk.key];
@@ -2522,16 +2537,19 @@ function leagueTableHtml(tier) {
           : showReleg && pos > standings.length - BAL.relegationCount
           ? "zone-releg"
           : "";
+      const playoff = pos <= BAL.playoffSize ? "zone-playoff" : "";
+      // Dashed divider straight after the last qualifying place.
+      const cutLine = pos === BAL.playoffSize ? `<div class="league-cutline">Playoff line — top ${BAL.playoffSize} qualify</div>` : "";
       return `
-      <div class="league-row ${zone} ${t.isPlayer ? "league-row-you" : ""}">
+      <div class="league-row ${zone} ${playoff} ${t.isPlayer ? "league-row-you" : ""}">
         <span class="league-pos">${pos}</span>
         <span class="league-name">${isChamp ? "🏆 " : ""}${t.name}${t.isPlayer ? " (You)" : ""}</span>
         <span class="league-rating">${fmt(t.rating)}</span>
         <span class="league-points">${t.points}</span>
-      </div>`;
+      </div>${cutLine}`;
     })
     .join("");
-  const legendParts = [];
+  const legendParts = [`<span class="legend-dot legend-playoff"></span> Playoffs (top ${BAL.playoffSize})`];
   if (showPromo) legendParts.push(`<span class="legend-dot legend-promo"></span> Promoted (top ${BAL.promotionTablePlaces} + 🏆 playoff champion)`);
   if (showReleg) legendParts.push(`<span class="legend-dot legend-releg"></span> Relegation zone`);
   const legend = legendParts.length ? `<p class="modal-sub league-legend">${legendParts.join(" · ")}</p>` : "";
@@ -2576,7 +2594,7 @@ function openHowTo() {
     <div class="modal-section">
       <p>You manage a rising Excel esports competitor. Every day has up to 24 hours — split them across:</p>
       <p>
-      📈🗺️📝🎲🔢⏱️🃏 <b>Skill Training</b> — 7 case specialties (Data, Mapping, Text, Game Logic, Math, Time, Cards). During preseason, all 7 are open for training. Once the regular season starts, only 1-3 are "active" each round, revealed at the start of that round's week — the rest can't be trained until they come up again.<br>
+      📈🗺️📝🎲🔢⏱️🃏 <b>Skill Training</b> — 7 case specialties (Data, Mapping, Text, Game Logic, Math, Time, Cards). During preseason and the off-season, all 7 are open for training. Once the regular season starts, only 1-3 are "active" each round, revealed at the start of that round's week — the rest can't be trained until they come up again.<br>
       🏃 <b>Gym</b> — raises Physical Health.<br>
       🌙 <b>Sleep</b> — builds Rest.<br>
       🎮 <b>Relax</b> — builds Composure and prevents burnout.<br>
@@ -2646,7 +2664,7 @@ function endDay() {
   // Snapshot before processDayEnd() can flip seasonPhase (e.g. preseason ->
   // regular right on this call) out from under advanceSkillCycle()'s own
   // preseason check below.
-  const wasPreseason = isPreseason();
+  const wasInSeason = inSeason();
 
   // Resolve this week's match (if today's the day) before the skill focus
   // rerolls — the match grades the skills actually trained this week, not
@@ -2670,7 +2688,7 @@ function endDay() {
     appendLog(e.html, e.cls);
   }
 
-  const skillCycleEvent = advanceSkillCycle(wasPreseason);
+  const skillCycleEvent = advanceSkillCycle(wasInSeason);
   if (skillCycleEvent) {
     const e = { html: skillCycleEvent, cls: "event-season" };
     state.logEntries.push(e);

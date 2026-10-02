@@ -6,9 +6,11 @@ Relax, and Food. Everything is connected:
 
 - **Skill Training** raises one of 7 case specialties — Data Analysis,
   Mapping, Text Processing, Game Logic, Math & Formulas, Time & Dates, and
-  Cards & Random. Only 1-3 skills are "active" (trainable) each round,
-  revealed at the start of that round's week — every match that week tests
-  exactly those skills. The other 4-6 sit locked and slowly rust.
+  Cards & Random. During the season only 1-3 skills are "active"
+  (trainable) each round, revealed at the start of that round's week —
+  every match that week tests exactly those skills. The other 4-6 sit
+  locked and slowly rust. Preseason and the off-season (including training
+  camp) have no matches, so all 7 are open.
 - **Gym** raises Physical Health — but low Physical Health caps how much
   your skill training actually helps.
 - **Sleep** builds Rest. Skimp on sleep and Rest drains, which quietly wears
