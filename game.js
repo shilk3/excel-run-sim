@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.22.0";
+const APP_VERSION = "4.22.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -2187,6 +2187,18 @@ function showSaveToast(saved) {
 /* ---------------------------------------------------------------------- */
 /* Modal helpers                                                          */
 /* ---------------------------------------------------------------------- */
+// A title row pinned to the top of the scrolling sheet, with its own ✕
+// (pass { ownClose: true } to openModal). extraHtml sits between the two —
+// it and the ✕ never shrink; the title truncates first.
+function stickyHeadHtml(title, extraHtml = "") {
+  return `
+    <div class="modal-sticky-head">
+      <h2>${title}</h2>
+      ${extraHtml}
+      <button class="modal-close modal-close-inline" data-modal-close aria-label="Close">✕</button>
+    </div>`;
+}
+
 function openModal(html, { ownClose = false } = {}) {
   $("modalBody").innerHTML = html;
   // Modals with their own sticky header carry their own ✕; hide the
@@ -2294,11 +2306,7 @@ function shopHtml() {
   const supportKeys = ["physio", "sleepApp", "nutritionist", "meditation", "recovery", "manager"];
   const supportItems = supportKeys.map((key) => shopItemHtml(key, UPGRADES[key])).join("");
   return `
-    <div class="modal-sticky-head">
-      <h2>Coaching Shop</h2>
-      <span class="sticky-cash">💰 ${fmtMoney(state.cash)}</span>
-      <button class="modal-close modal-close-inline" data-modal-close aria-label="Close">✕</button>
-    </div>
+    ${stickyHeadHtml("Coaching Shop", `<span class="sticky-cash">💰 ${fmtMoney(state.cash)}</span>`)}
     <div class="modal-section">
       <h3>Skill Coaches</h3>
       <p class="modal-sub">Each skill's ceiling is also capped by your highest league reached — a maxed-out coach alone won't get you past that.</p>
@@ -2494,7 +2502,7 @@ function openCareer() {
   }
 
   const html = `
-    <h2>Career &amp; Season</h2>
+    ${stickyHeadHtml("Career &amp; Season")}
     <div class="modal-section">
       <h3>Next Up</h3>
       ${nextSection}
@@ -2536,7 +2544,7 @@ function openCareer() {
       <h3>Current Stats</h3>
       ${currentStatsHtml()}
     </div>`;
-  openModal(html);
+  openModal(html, { ownClose: true });
   $("viewLeaguesLink").addEventListener("click", () => openLeagues(state.leagueTier));
 }
 
@@ -2632,7 +2640,7 @@ function openLeagues(startTier) {
 
 function openHowTo() {
   const html = `
-    <h2>How to Play</h2>
+    ${stickyHeadHtml("How to Play")}
     <div class="modal-section">
       <p>You manage a rising Excel esports competitor. Every day has up to 24 hours — split them across:</p>
       <p>
@@ -2657,7 +2665,7 @@ function openHowTo() {
       <p><b>Cost of living:</b> $${BAL.dailyExpenses}/day, charged every single day no matter your employment status — stay employed and you net a profit, but lose your job and the bills don't stop, so cash actively drains while you're out of work. Each new year opens with a summary of that year's full cash flow: pay earned, match winnings, and expenses paid.</p>
       <p>Pros have one more thing to manage: staying current. Roughly every ${BAL.techniqueIntervalDays} days a new Excel technique appears that needs ${BAL.techniqueMinHours}-${BAL.techniqueMaxHours}h to master — any Pro Duties hours beyond the ${BAL.proDutyHoursRequired}h minimum go toward it. Falling behind never costs you progress (new ones just queue up), but every technique still unmastered costs ${Math.round(BAL.techniquePenaltyPerUnmastered * 100)}% match performance, stacking.</p>
     </div>`;
-  openModal(html);
+  openModal(html, { ownClose: true });
 }
 
 function openInstall() {
