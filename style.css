@@ -724,8 +724,8 @@ input[type="range"]::-webkit-slider-thumb {
 .modal-sticky-head .match-head.loss { color: var(--danger); }
 .match-card > .match-sub:first-child { margin-top: 2px; }
 .win-table { margin-top: 10px; }
-.win-table th:last-child, .win-table td:last-child { width: 1%; }
-.win-table sup { font-size: 9px; }
+.win-ladder { margin-top: 2px; }
+.win-ladder .ladder-you td { color: var(--text); font-weight: 800; background: var(--bg-elev-2); }
 
 /* Leagues button: table position */
 .icon-btn.has-pos { width: auto; padding: 0 6px; display: inline-flex; align-items: center; gap: 3px; font-size: 15px; }

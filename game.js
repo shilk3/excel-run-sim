@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.29.0";
+const APP_VERSION = "4.29.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -2361,14 +2361,27 @@ function performanceTableHtml(b) {
     }.</div>`;
 }
 
-// Match result: how the win chance was worked out, step by step — from
-// your rating, through today's performance adjustment, to the Elo odds.
+// Match result: how the win chance was worked out — your match-day rating,
+// the gap to your opponent's, and a ladder showing how any gap turns into
+// a win chance, with this match slotted in. Plain words, no formula: the
+// gap is the only thing that matters.
+function gapLabel(gap) {
+  if (gap === 0) return "Level";
+  return `${Math.abs(gap)} ${gap > 0 ? "ahead" : "behind"}`;
+}
+
 function winChanceTableHtml(result) {
   const signed = (n) => (n === 0 ? "±0" : n < 0 ? `−${Math.abs(n)}` : `+${n}`);
   const adj = result.matchRating - result.rankBefore;
-  const edge = result.matchRating - result.opponentRating; // + = you're stronger
-  const odds = Math.pow(10, edge / 400);
-  const oddsText = odds >= 10 ? odds.toFixed(0) : odds >= 1 ? odds.toFixed(1) : odds.toFixed(2);
+  const gap = result.matchRating - result.opponentRating; // + = you're ahead
+  const chanceFor = (g) => Math.round(100 / (1 + Math.pow(10, -g / 400)));
+  const ladderGaps = [-400, -200, -100, 0, 100, 200, 400];
+  const rows = ladderGaps.filter((g) => g !== gap).map((g) => ({ gap: g, chance: chanceFor(g), you: false }));
+  rows.push({ gap, chance: result.winProb, you: true });
+  rows.sort((x, y) => x.gap - y.gap || (x.you ? 1 : -1));
+  const ladder = rows
+    .map((r) => `<tr class="${r.you ? "ladder-you" : "perf-sub"}"><td>${r.you ? `👉 You: ${gapLabel(r.gap)}` : gapLabel(r.gap)}</td><td>${r.chance}%</td></tr>`)
+    .join("");
   const row = (label, value, cls = "") => `<tr class="${cls}"><td>${label}</td><td>${value}</td></tr>`;
   return `
     <table class="perf-table win-table">
@@ -2378,12 +2391,15 @@ function winChanceTableHtml(result) {
         ${row(`Performance: (${result.perf.toFixed(1)} − 70) × 3`, signed(adj), "perf-sub")}
         ${row("Match-day rating", `<b>${result.matchRating}</b>`)}
         ${row("⚔️ Opponent rating", result.opponentRating)}
-        ${row("Your edge", signed(edge), "perf-sub")}
-        ${row(`Odds: 10<sup>${edge < 0 ? "−" : ""}${Math.abs(edge)} ÷ 400</sup>`, `${oddsText} : 1`, "perf-sub")}
+        ${row("Rating gap", `<b>${gapLabel(gap)}</b>`)}
       </tbody>
-      <tfoot><tr><td>Win chance: ${oddsText} ÷ (${oddsText} + 1)</td><td>${result.winProb}%</td></tr></tfoot>
+      <tfoot><tr><td>Win chance</td><td>${result.winProb}%</td></tr></tfoot>
     </table>
-    <div class="match-sub perf-note">Equal ratings are a 50% coin flip. Every 400 points of edge makes the stronger side 10× as likely to win as to lose — so a ${Math.abs(edge)}-point ${edge >= 0 ? "edge" : "deficit"} makes you ${oddsText}× as likely to win as to lose. Each point of performance above 70 adds 3 to your match-day rating; below 70 it costs 3.</div>`;
+    <div class="match-sub perf-note">Your win chance depends only on the <b>gap</b> between your match-day rating and your opponent's. Level is 50/50; the further ahead you are, the likelier you win — but nothing is ever certain:</div>
+    <table class="perf-table win-ladder">
+      <thead><tr><th>Rating gap</th><th>Win chance</th></tr></thead>
+      <tbody>${ladder}</tbody>
+    </table>`;
 }
 
 function showMatchModal(result, extraHtml = "") {
