@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.21.1";
+const APP_VERSION = "4.22.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -2187,9 +2187,14 @@ function showSaveToast(saved) {
 /* ---------------------------------------------------------------------- */
 /* Modal helpers                                                          */
 /* ---------------------------------------------------------------------- */
-function openModal(html) {
+function openModal(html, { ownClose = false } = {}) {
   $("modalBody").innerHTML = html;
+  // Modals with their own sticky header carry their own ✕; hide the
+  // floating one, which scrolls away with the content.
+  $("modal").classList.toggle("modal-own-close", ownClose);
   $("modalOverlay").classList.remove("hidden");
+  const inlineClose = $("modalBody").querySelector("[data-modal-close]");
+  if (inlineClose) inlineClose.addEventListener("click", closeModal);
 }
 function closeModal() {
   $("modalOverlay").classList.add("hidden");
@@ -2289,9 +2294,10 @@ function shopHtml() {
   const supportKeys = ["physio", "sleepApp", "nutritionist", "meditation", "recovery", "manager"];
   const supportItems = supportKeys.map((key) => shopItemHtml(key, UPGRADES[key])).join("");
   return `
-    <h2>Coaching Shop</h2>
-    <div class="modal-section">
-      <h3>Cash: ${fmtMoney(state.cash)}</h3>
+    <div class="modal-sticky-head">
+      <h2>Coaching Shop</h2>
+      <span class="sticky-cash">💰 ${fmtMoney(state.cash)}</span>
+      <button class="modal-close modal-close-inline" data-modal-close aria-label="Close">✕</button>
     </div>
     <div class="modal-section">
       <h3>Skill Coaches</h3>
@@ -2305,7 +2311,7 @@ function shopHtml() {
 }
 
 function openShop() {
-  openModal(shopHtml());
+  openModal(shopHtml(), { ownClose: true });
   document.querySelectorAll("[data-upgrade]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const key = btn.getAttribute("data-upgrade");
@@ -2798,6 +2804,7 @@ function wireInputs() {
   $("menuBtn").addEventListener("click", openMenu);
   $("cashChip").addEventListener("click", openShop);
   $("rankChip").addEventListener("click", openCareer);
+  $("leaguesBtn").addEventListener("click", () => openLeagues(state.leagueTier));
 }
 
 /* ---------------------------------------------------------------------- */
