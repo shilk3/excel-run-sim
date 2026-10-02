@@ -696,3 +696,22 @@ input[type="range"]::-webkit-slider-thumb {
 .perf-table tfoot td { font-weight: 800; color: var(--text); border-top: 2px solid var(--border); padding-top: 7px; }
 .perf-table .perf-of { font-weight: 600; color: var(--text-dim); }
 .perf-note { font-size: 12px; }
+
+/* End Day / End Week pair — End Week is the quieter, secondary action */
+.end-day-row { display: flex; gap: 8px; margin-top: 10px; }
+.end-day-row .end-day-btn { flex: 1 1 0; min-width: 0; margin-top: 0; white-space: nowrap; padding: 12px 4px; font-size: 15px; }
+.end-week-btn { background: transparent; color: var(--text); border: 1px solid var(--border); font-weight: 700; font-size: 14px !important; }
+.end-week-btn:disabled { background: transparent; }
+.end-week-days { color: var(--text-dim); font-weight: 600; }
+
+/* Week summary (End Week) */
+.week-summary { text-align: left; margin: 14px 0 4px; }
+.week-summary h3 { font-size: 13px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 8px; }
+.week-stop { font-size: 13px; color: var(--warn); background: var(--bg-elev-2); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; margin-bottom: 10px; }
+.week-table td { border-top: 1px solid var(--border); }
+.week-table .wk-up { color: var(--accent); }
+.week-table .wk-down { color: var(--danger); }
+@media (max-width: 350px) {
+  .end-day-row .end-day-btn { font-size: 13px; }
+  .end-week-btn { font-size: 12.5px !important; }
+}

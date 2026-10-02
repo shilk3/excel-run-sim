@@ -60,6 +60,13 @@ Relax, and Food. Everything is connected:
   just finished — pay earned, match winnings, expenses paid, the net, and
   any raise you just earned.
 
+**End Day / To Match**: End Day plays one day. To Match (End Week outside the
+season, up to 7 days) repeats today's plan up to and including the next match,
+then shows the result plus a week summary of how every stat moved. It stops
+early so you can re-plan on an injury, losing/finding a job or going pro,
+burnout, a new technique to master, or Nutrition shrinking the day below what
+your plan needs.
+
 **The season**: a 14-day preseason to train, then a 39-round regular season —
 one match a week against a named rival, the full schedule known in advance.
 Finish in the top 16 of your 40-competitor league to reach the knockout

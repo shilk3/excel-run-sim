@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.26.0";
+const APP_VERSION = "4.27.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -2210,6 +2210,16 @@ function renderPlanner() {
   const endDayBtn = $("endDayBtn");
   endDayBtn.disabled = left < 0;
   endDayBtn.title = left < 0 ? "Over today's hours budget — reduce allocation before ending the day" : "";
+  const endWeekBtn = $("endWeekBtn");
+  if (endWeekBtn) {
+    const days = daysLeftInWeek();
+    const toMatch = state.seasonPhase === "regular" || state.seasonPhase === "playoffs";
+    endWeekBtn.disabled = left < 0;
+    endWeekBtn.innerHTML = `${toMatch ? "To Match" : "End Week"} ▶▶ <span class="end-week-days">${days}d</span>`;
+    endWeekBtn.title = toMatch
+      ? `Repeat today's plan for ${days} day${days === 1 ? "" : "s"}, through the next match`
+      : `Repeat today's plan for ${days} day${days === 1 ? "" : "s"}, to the end of the week`;
+  }
 }
 
 function appendLog(html, cls) {
@@ -2317,7 +2327,7 @@ function performanceTableHtml(b) {
     }.</div>`;
 }
 
-function showMatchModal(result) {
+function showMatchModal(result, extraHtml = "") {
   const context = result.roundLabel ? `${result.roundLabel}${result.opponentName ? " vs " + result.opponentName : ""}` : "";
   const html = `
       <div class="match-card">
@@ -2337,6 +2347,7 @@ function showMatchModal(result) {
         <div class="match-sub">Match-day rating: ${fmt(result.rankBefore)} + (${result.perf.toFixed(1)} − 70) × 3 = <b>${result.matchRating}</b> vs ${result.opponentRating} — every point of performance above 70 adds 3 to your rating for this match; below 70 it costs 3.</div>
         <div class="match-sub">Win roll: ${result.roll}/100, needed under ${result.winProb} — one random roll decides every match, weighted by your win chance, so an upset either way is always possible.</div>
         ${result.championBonus ? `<div class="match-sub">👑 Champion bonus: +$${result.championBonus.cash} · +${result.championBonus.rating} rating</div>` : ""}
+        ${extraHtml}
         <button class="primary-btn" id="matchOk">Continue</button>
       </div>`;
   openModal(html);
@@ -2346,7 +2357,7 @@ function showMatchModal(result) {
 /* ---------------------------------------------------------------------- */
 /* Year-end cash flow summary — shown right as a new year begins          */
 /* ---------------------------------------------------------------------- */
-function showYearSummaryModal(summary) {
+function showYearSummaryModal(summary, extraHtml = "") {
   const html = `
     <div class="match-card">
       <div class="match-result neutral">YEAR ${summary.year} COMPLETE</div>
@@ -2359,6 +2370,7 @@ function showYearSummaryModal(summary) {
       <div class="match-sub">Net for the year: <b style="color:${summary.net >= 0 ? "var(--accent)" : "var(--danger)"}">${fmtSigned(summary.net, 0)}</b></div>
       <div class="match-sub">Cash now: ${fmtMoney(summary.cashNow)}</div>
       ${summary.newPayRate != null ? `<div class="match-sub">📈 Annual raise: pay is now $${fmt(summary.newPayRate)}/day</div>` : ""}
+      ${extraHtml}
       <button class="primary-btn" id="yearSummaryOk">Continue</button>
     </div>`;
   openModal(html);
@@ -2752,6 +2764,7 @@ function openHowTo() {
       <p><b>Rest</b> swings training itself: above ${BAL.restTrainingBoostThreshold} it's 150% effective, above ${BAL.restTrainingBoostHigh} it's 200% effective. <b>Composure</b> hits match day specifically — below ${BAL.composureMatchMid} your active skills count for only 75%, below ${BAL.composureMatchLow} just 50%. <b>Nutrition</b> sets how many hours you get at all: below ${BAL.nutritionHoursCapLow} your day shrinks to just ${BAL.dailyHoursFloor}h, sliding up to the full ${BAL.dailyHoursCeiling}h at ${BAL.nutritionHoursCapHigh}+.</p>
       <p><b>Gym injuries:</b> every Gym hour adds a ${+(BAL.injuryChancePerHour * 100).toFixed(1)}% chance of injury that day, so only a 0h day is risk-free — ${BAL.gymMaxHours}h (the most you can do) is a ${+(BAL.gymMaxHours * BAL.injuryChancePerHour * 100).toFixed(1)}% chance. The Gym row shows today's risk as <b>#% 🤕</b>. Sports Physio cuts that risk by 20%, 35% or 50%. An injury costs ${BAL.injuryPhysLoss[0]}–${BAL.injuryPhysLoss[1]} Health and locks the Gym for ${BAL.injuryDaysRange[0]}–${BAL.injuryDaysRange[1]} days (Recovery Program takes 1–3 days off, minimum 1); the row shows <b>🤕 #d</b> while it heals. Injuries never stop you playing matches — they only shut the Gym.</p>
       <p><b>Stat ceilings:</b> each skill caps at ${BAL.skillShopCapBase} until you invest in that skill's dedicated Coach (5 levels, Coaching Shop) — but the effective ceiling is also capped by the highest league you've ever reached (peak, not current), from 60 in League 5 up to 100 in League 1. Both gates must be cleared to hit 100. Physical Health caps at ${BAL.statCapBase} until you invest in Sports Physio. Skill and Health bars all run to 100; the hatched end of a bar is the part your current cap locks off, and the Career screen shows what's capping each skill (a coach, or your league).</p>
+      <p><b>End Day / To Match:</b> <b>End Day ▶</b> plays one day. <b>To Match ▶▶</b> repeats today's plan every day up to and including the next match, then shows the result with a summary of how your stats moved over the week (outside the season it's <b>End Week ▶▶</b>, up to 7 days, to the end of the week). It stops early so you can re-plan if you get injured, lose or find a job (or go pro), burn out, get a new technique to master, or Nutrition drops so far that your plan no longer fits in the day.</p>
       <p><b>The season:</b> a ${BAL.preseasonDays}-day preseason to train, then a ${BAL.seasonRounds}-round regular season — one match a week against a named rival, all scheduled in advance, each testing that week's active skills. Finish in the top ${BAL.playoffSize} of your ${BAL.seasonRounds + 1}-competitor league to reach the knockout playoffs. Lose a playoff match and you're out; win the Final and you're champion.</p>
       <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken. Get knocked out of the playoffs and you go to training camp too, for the rest of the playoff window (at least ${BAL.offseasonDays} days) — so an early exit gets its time back as training, just like missing the cut. Only the champion gets a plain ${BAL.offseasonDays}-day break.</p>
       <p><b>Leagues:</b> there are ${BAL.leagueCount} leagues, League 1 at the top and League 5 at the bottom — you start in League 5. Every league has a persistent roster of named rivals whose ratings evolve from real simulated results every week, same as yours — every tier's table is live from round 1, not just visible once the season ends. Four go up from every league below League 1: the playoff champion, plus the top ${BAL.promotionTablePlaces} of the table other than the champion — so a top-${BAL.promotionTablePlaces} finish is always promoted, and anyone in the playoffs can still win their way up. Finish bottom ${BAL.relegationCount} and you're relegated. This applies to every competitor in every league, not just you — every league plays out its own knockout too — so the standings you see are a living world, not scenery. Check the Leagues screen any time (Menu, or the shortcut in Career) to see all ${BAL.leagueCount} tables.</p>
@@ -3018,11 +3031,13 @@ function openSaveTransfer() {
 /* ---------------------------------------------------------------------- */
 /* End day flow                                                           */
 /* ---------------------------------------------------------------------- */
-function endDay() {
-  // Defensive: the button is disabled whenever this is true, but guard the
-  // action itself too in case it's ever reachable another way.
-  if (dailyHoursCap(state.stats.nutrition) - totalAssigned() < 0) return;
+function isOverAllocated() {
+  return dailyHoursCap(state.stats.nutrition) - totalAssigned() < 0;
+}
 
+// Resolves one day with the current plan and logs it. Shared by End Day and
+// End Week; saving, re-rendering and modals are left to the caller.
+function runDay() {
   const dayHeaderHtml = `Day ${state.day} — Results`;
   const entry = { html: dayHeaderHtml, cls: "day-header" };
   state.logEntries.push(entry);
@@ -3085,20 +3100,157 @@ function endDay() {
   }
 
   state.day += 1;
+  return { matchResult, phaseEvent, yearSummary };
+}
+
+function finishTurn() {
   const saved = saveState();
   showSaveToast(saved);
-
   renderTopbar();
   renderStats();
   renderPlanner();
-
   $("log").scrollTop = $("log").scrollHeight;
+}
 
+function endDay() {
+  // Defensive: the button is disabled whenever this is true, but guard the
+  // action itself too in case it's ever reachable another way.
+  if (isOverAllocated()) return;
+  const { matchResult, yearSummary } = runDay();
+  finishTurn();
   if (matchResult) {
     showMatchModal(matchResult);
   } else if (yearSummary) {
     showYearSummaryModal(yearSummary);
   }
+}
+
+/* ---------------------------------------------------------------------- */
+/* End Week — repeat today's plan up to the end of the week               */
+/* ---------------------------------------------------------------------- */
+// Days left in the current week, today included: in season that's up to and
+// including match day; otherwise the end of this 7-day block of the phase
+// (never past the phase's own end).
+function daysLeftInWeek() {
+  const week = BAL.roundIntervalDays;
+  if (state.seasonPhase === "regular" || state.seasonPhase === "playoffs") return Math.max(1, week - state.phaseDay);
+  const phaseLength = state.seasonPhase === "preseason" ? BAL.preseasonDays : state.offseasonDays || BAL.offseasonDays;
+  return Math.max(1, Math.min(week - (state.phaseDay % week), phaseLength - state.phaseDay));
+}
+
+function weekSnapshot() {
+  const s = state.stats;
+  return {
+    skills: { ...s.skills },
+    phys: s.phys,
+    rest: s.rest,
+    composure: s.composure,
+    nutrition: s.nutrition,
+    cash: state.cash,
+    rank: state.rank,
+    injured: state.injury.active,
+    burnout: state.burnout.active,
+    employment: state.employment.status,
+    techniques: state.employment.techniqueQueue.length,
+  };
+}
+
+// Anything that changes what today's plan means stops End Week so the
+// player can re-plan before the next day runs. Several can land on the same
+// day (an injury and a shrinking day, say) — report them all.
+function weekStopReason(before) {
+  const emp = state.employment;
+  const reasons = [];
+  if (!before.injured && state.injury.active) {
+    reasons.push(`🤕 Injured in the Gym — it's locked for ${state.injury.daysLeft} day${state.injury.daysLeft === 1 ? "" : "s"} and its hours are free to reassign.`);
+  }
+  if (before.employment !== emp.status) {
+    if (emp.status === "unemployed") reasons.push(`🔥 Out of chances — you lost your job. The Work slider is now a Job Search (${jobSearchTarget()}h needed).`);
+    else if (emp.status === "pro") reasons.push(`🏆 You went pro — Work is now just ${BAL.proDutyHoursRequired}h/day of Pro Duties.`);
+    else reasons.push(`💼 Found a new job — Work is back to ${BAL.workHoursRequired}h/day.`);
+  }
+  if (!before.burnout && state.burnout.active) reasons.push("😵 Burnout — training is far less effective until Composure recovers. Schedule more Relax.");
+  if (emp.techniqueQueue.length > before.techniques) reasons.push(`📘 A new technique to master: ${emp.techniqueQueue[emp.techniqueQueue.length - 1].name}.`);
+  if (isOverAllocated()) {
+    reasons.push(`🥗 Nutrition dropped — today only has ${dailyHoursCap(state.stats.nutrition)}h, but your plan uses ${totalAssigned()}h. Trim it to carry on.`);
+  }
+  return reasons.length ? reasons.join(" ") : null;
+}
+
+function endWeek() {
+  if (isOverAllocated()) return;
+  const planned = daysLeftInWeek();
+  const start = weekSnapshot();
+  // This week's match skills always; otherwise only skills you trained
+  // (plus, at the end, any that moved — e.g. rust).
+  const shownSkills = SKILL_KEYS.filter((k) => (inSeason() && state.activeSkills.includes(k)) || (state.allocation.skills[k] || 0) > 0);
+  const startPhase = state.seasonPhase;
+  let daysRun = 0;
+  let stopReason = null;
+  let matchResult = null;
+  let yearSummary = null;
+  while (daysRun < planned) {
+    const before = weekSnapshot();
+    const result = runDay();
+    daysRun += 1;
+    matchResult = result.matchResult;
+    yearSummary = result.yearSummary;
+    stopReason = weekStopReason(before);
+    if (stopReason || matchResult || yearSummary || state.seasonPhase !== startPhase) break;
+  }
+  if (stopReason) {
+    const e = { html: `⏸️ End Week stopped after ${daysRun} of ${planned} day${planned === 1 ? "" : "s"}: ${stopReason}`, cls: "event-bad" };
+    state.logEntries.push(e);
+    appendLog(e.html, e.cls);
+  }
+  finishTurn();
+  const summaryHtml = weekSummaryHtml({ start, shownSkills, daysRun, planned, stopReason });
+  if (matchResult) showMatchModal(matchResult, summaryHtml);
+  else if (yearSummary) showYearSummaryModal(yearSummary, summaryHtml);
+  else showWeekSummaryModal(summaryHtml, daysRun);
+}
+
+function weekSummaryHtml({ start, shownSkills, daysRun, planned, stopReason }) {
+  const s = state.stats;
+  const signed = (d) => (Math.abs(d) < 0.5 ? "±0" : d > 0 ? `+${fmt(d)}` : `−${fmt(-d)}`);
+  const cls = (d) => (Math.abs(d) < 0.5 ? "" : d > 0 ? "wk-up" : "wk-down");
+  const row = (label, a, b) => `<tr><td>${label}</td><td>${fmt(a)}</td><td>${fmt(b)}</td><td class="${cls(b - a)}">${signed(b - a)}</td></tr>`;
+  const skillRows = SKILL_KEYS.filter((k) => shownSkills.includes(k) || Math.abs(s.skills[k] - start.skills[k]) >= 0.5)
+    .map((k) => {
+      const m = skillMeta(k);
+      return row(`${m.icon} ${m.name}`, start.skills[k], s.skills[k]);
+    })
+    .join("");
+  const cashDelta = state.cash - start.cash;
+  return `
+    <div class="week-summary">
+      <h3>${daysRun === 1 ? "Today" : `This week · ${daysRun} days`}</h3>
+      ${stopReason ? `<div class="week-stop">⏸️ Stopped after ${daysRun} of ${planned} days — ${stopReason}</div>` : ""}
+      <table class="perf-table week-table">
+        <thead><tr><th>Stat</th><th>Start</th><th>Now</th><th>Change</th></tr></thead>
+        <tbody>
+          ${skillRows}
+          ${row("🏃 Health", start.phys, s.phys)}
+          ${row("🌙 Rest", start.rest, s.rest)}
+          ${row("🎮 Composure", start.composure, s.composure)}
+          ${row("🥗 Nutrition", start.nutrition, s.nutrition)}
+          <tr><td>💰 Cash</td><td>${fmtMoney(start.cash)}</td><td>${fmtMoney(state.cash)}</td><td class="${cls(cashDelta)}">${cashDelta < 0 ? "−" : "+"}${fmtMoney(Math.abs(cashDelta))}</td></tr>
+          ${row("🏆 Rating", start.rank, state.rank)}
+        </tbody>
+      </table>
+      <div class="match-sub perf-note">Day-by-day detail is in the log.</div>
+    </div>`;
+}
+
+function showWeekSummaryModal(summaryHtml, daysRun) {
+  const html = `
+    <div class="match-card">
+      <div class="match-result neutral">${daysRun === 1 ? "DAY COMPLETE" : "WEEK COMPLETE"}</div>
+      ${summaryHtml}
+      <button class="primary-btn" id="weekOk">Continue</button>
+    </div>`;
+  openModal(html);
+  $("weekOk").addEventListener("click", closeModal);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -3142,6 +3294,7 @@ function wireInputs() {
   });
 
   $("endDayBtn").addEventListener("click", endDay);
+  $("endWeekBtn").addEventListener("click", endWeek);
   $("menuBtn").addEventListener("click", openMenu);
   $("cashChip").addEventListener("click", openShop);
   $("rankChip").addEventListener("click", openCareer);
