@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.25.0";
+const APP_VERSION = "4.25.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1793,6 +1793,12 @@ function daysUntilPhrase(daysUntil) {
   return daysUntil === 1 ? "after today" : `in ${daysUntil} days`;
 }
 
+// Topbar line 2. Kept short so the Unassigned hours pill fits beside it on
+// a phone — a longer line pushes the pill down onto a row of its own.
+function matchOddsLine(winPct, daysUntil) {
+  return `${winPct}% to win · match ${daysUntil <= 0 ? "today" : daysUntilPhrase(daysUntil)}`;
+}
+
 function getNextMatchInfo() {
   const s = state;
   if (s.seasonPhase === "preseason") {
@@ -1822,9 +1828,7 @@ function getNextMatchInfo() {
       labelLine1: daysUntil <= 0
         ? `Rd ${roundNum} TODAY vs ${fixture.name} (${oppRating})`
         : `Rd ${roundNum}/${BAL.seasonRounds} vs ${fixture.name} (${oppRating})`,
-      labelLine2: daysUntil <= 0
-        ? `${winPct}% chance of winning today's match`
-        : `${winPct}% chance of winning next match ${daysUntilPhrase(daysUntil)}`,
+      labelLine2: matchOddsLine(winPct, daysUntil),
     };
   }
   if (s.seasonPhase === "playoffs") {
@@ -1850,9 +1854,7 @@ function getNextMatchInfo() {
         ? `${roundName} TODAY vs ${opp ? opp.name : "?"}${winPct != null ? " · " + winPct + "%" : ""}`
         : `${roundName} vs ${opp ? opp.name : "?"}${winPct != null ? " · " + winPct + "%" : ""} · ${daysUntilPhrase(daysUntil)}`,
       labelLine1: daysUntil <= 0 ? `${roundName} TODAY vs ${oppTag}` : `${roundName} vs ${oppTag}`,
-      labelLine2: winPct != null
-        ? (daysUntil <= 0 ? `${winPct}% chance of winning today's match` : `${winPct}% chance of winning next match ${daysUntilPhrase(daysUntil)}`)
-        : daysUntilPhrase(daysUntil),
+      labelLine2: winPct != null ? matchOddsLine(winPct, daysUntil) : daysUntilPhrase(daysUntil),
     };
   }
   if (s.seasonPhase === "offseason") {
