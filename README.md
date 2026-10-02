@@ -67,7 +67,10 @@ playoffs (Round of 16 → Quarterfinal → Semifinal → Final, single eliminati
 Lose a playoff match and you're out; win the Final and you're champion. Miss
 the playoffs and you get a 28-day training camp instead of a short offseason,
 so missing the cut is never a worse deal than qualifying and getting knocked
-out early.
+out early. Get knocked out and you go to training camp too, for the rest of
+the playoff window (Round of 16 exit: 21 days, Quarterfinal: 14, Semifinal or
+Final: 7), so an early exit gets its time back as training, just like missing
+the cut. Only the champion gets a plain 7-day offseason.
 
 **Leagues**: 5 tiers (League 1 at the top, League 5 at the bottom — new
 careers start at the bottom). Every league has a persistent roster of 199

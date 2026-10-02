@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.25.1";
+const APP_VERSION = "4.26.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -516,7 +516,7 @@ function freshState() {
     lastPlayerPosition: null,
     lastStandingsTier: null, // which league lastStandings was for (may differ from leagueTier after a promotion/relegation)
     offseasonDays: BAL.offseasonDays,
-    offseasonReason: null, // "missed" | "playoffs" — set when entering offseason
+    offseasonReason: null, // "missed" | "eliminated" (both training camp) | "playoffs" (champion's break) — set when entering offseason
     playoff: null, // { stage, currentRound, eliminated, champion, playerSeed, tier }
     playoffChampions: null, // { [tier]: { name, rivalId, isPlayer } } — last completed knockout per tier
     seasonMovementApplied: false, // promotion/relegation already run for the season just finished
@@ -1559,6 +1559,20 @@ function finalizeSeasonMovement(playerTierChampion) {
 
 const PLAYOFF_ROUND_NAMES = { r16: "Round of 16", qf: "Quarterfinal", sf: "Semifinal", f: "Final" };
 const PLAYOFF_NEXT_STAGE = { r16: "qf", qf: "sf", sf: "f" };
+const PLAYOFF_STAGES = ["r16", "qf", "sf", "f"];
+
+// Knocked out in `stage`: camp covers the playoff rounds still to come.
+// R16 exit → 21 days, QF → 14, SF and Final → the normal 7-day break.
+function eliminatedCampDays(stage) {
+  const roundsLeft = PLAYOFF_STAGES.length - 1 - Math.max(0, PLAYOFF_STAGES.indexOf(stage));
+  return Math.max(BAL.offseasonDays, roundsLeft * BAL.roundIntervalDays);
+}
+
+// Training camp = the season ended without a title, by missing the
+// playoffs or by being knocked out of them.
+function isTrainingCamp(s = state) {
+  return s.offseasonReason === "missed" || s.offseasonReason === "eliminated";
+}
 
 function resolvePlayoffRound() {
   const p = state.playoff;
@@ -1716,9 +1730,20 @@ function processDayEnd() {
       phaseEvent = result.summary;
       if (result.seasonOver) {
         state.seasonPhase = "offseason";
-        state.offseasonDays = BAL.offseasonDays;
-        state.offseasonReason = "playoffs";
+        if (state.playoff.eliminated) {
+          // Knocked out: training camp for the rest of the playoff window
+          // (never shorter than the normal break) — an early exit gets its
+          // time back as training, same as missing the playoffs entirely.
+          state.offseasonDays = eliminatedCampDays(state.playoff.stage);
+          state.offseasonReason = "eliminated";
+        } else {
+          state.offseasonDays = BAL.offseasonDays;
+          state.offseasonReason = "playoffs";
+        }
         phaseEvent += finalizeSeasonMovement(result.champion);
+        if (state.offseasonReason === "eliminated") {
+          phaseEvent += ` ${state.offseasonDays}-day training camp starts now to get ready for next season.`;
+        }
       }
     }
     return { matchResult, phaseEvent, yearSummary };
@@ -1860,7 +1885,7 @@ function getNextMatchInfo() {
   if (s.seasonPhase === "offseason") {
     const daysUntil = (s.offseasonDays || BAL.offseasonDays) - s.phaseDay;
     let outcome = "Season over";
-    if (s.offseasonReason === "missed") outcome = "Training camp";
+    if (isTrainingCamp(s)) outcome = "Training camp";
     else if (s.playoff && s.playoff.champion) outcome = "🏆 Champion!";
     else if (s.playoff && s.playoff.eliminated) outcome = "Eliminated";
     return { kind: "offseason", daysUntil, label: `${outcome} — Year ${s.year + 1} ${daysUntilPhrase(daysUntil)}` };
@@ -1897,7 +1922,7 @@ function phaseLabelText() {
   if (s.seasonPhase === "preseason") return league + "Preseason";
   if (s.seasonPhase === "regular") return league + "Regular";
   if (s.seasonPhase === "playoffs") return league + "Playoffs";
-  if (s.seasonPhase === "offseason") return league + (s.offseasonReason === "missed" ? "Camp" : "Offseason");
+  if (s.seasonPhase === "offseason") return league + (isTrainingCamp(s) ? "Camp" : "Offseason");
   return "";
 }
 
@@ -2728,7 +2753,7 @@ function openHowTo() {
       <p><b>Gym injuries:</b> every Gym hour adds a ${+(BAL.injuryChancePerHour * 100).toFixed(1)}% chance of injury that day, so only a 0h day is risk-free — ${BAL.gymMaxHours}h (the most you can do) is a ${+(BAL.gymMaxHours * BAL.injuryChancePerHour * 100).toFixed(1)}% chance. The Gym row shows today's risk as <b>#% 🤕</b>. Sports Physio cuts that risk by 20%, 35% or 50%. An injury costs ${BAL.injuryPhysLoss[0]}–${BAL.injuryPhysLoss[1]} Health and locks the Gym for ${BAL.injuryDaysRange[0]}–${BAL.injuryDaysRange[1]} days (Recovery Program takes 1–3 days off, minimum 1); the row shows <b>🤕 #d</b> while it heals. Injuries never stop you playing matches — they only shut the Gym.</p>
       <p><b>Stat ceilings:</b> each skill caps at ${BAL.skillShopCapBase} until you invest in that skill's dedicated Coach (5 levels, Coaching Shop) — but the effective ceiling is also capped by the highest league you've ever reached (peak, not current), from 60 in League 5 up to 100 in League 1. Both gates must be cleared to hit 100. Physical Health caps at ${BAL.statCapBase} until you invest in Sports Physio. Skill and Health bars all run to 100; the hatched end of a bar is the part your current cap locks off, and the Career screen shows what's capping each skill (a coach, or your league).</p>
       <p><b>The season:</b> a ${BAL.preseasonDays}-day preseason to train, then a ${BAL.seasonRounds}-round regular season — one match a week against a named rival, all scheduled in advance, each testing that week's active skills. Finish in the top ${BAL.playoffSize} of your ${BAL.seasonRounds + 1}-competitor league to reach the knockout playoffs. Lose a playoff match and you're out; win the Final and you're champion.</p>
-      <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken, so missing the cut isn't a worse deal than making it and getting knocked out early.</p>
+      <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken. Get knocked out of the playoffs and you go to training camp too, for the rest of the playoff window (at least ${BAL.offseasonDays} days) — so an early exit gets its time back as training, just like missing the cut. Only the champion gets a plain ${BAL.offseasonDays}-day break.</p>
       <p><b>Leagues:</b> there are ${BAL.leagueCount} leagues, League 1 at the top and League 5 at the bottom — you start in League 5. Every league has a persistent roster of named rivals whose ratings evolve from real simulated results every week, same as yours — every tier's table is live from round 1, not just visible once the season ends. Four go up from every league below League 1: the playoff champion, plus the top ${BAL.promotionTablePlaces} of the table other than the champion — so a top-${BAL.promotionTablePlaces} finish is always promoted, and anyone in the playoffs can still win their way up. Finish bottom ${BAL.relegationCount} and you're relegated. This applies to every competitor in every league, not just you — every league plays out its own knockout too — so the standings you see are a living world, not scenery. Check the Leagues screen any time (Menu, or the shortcut in Career) to see all ${BAL.leagueCount} tables.</p>
       <p><b>Rating</b> is your skill score (the 🏆 number), the same scale every rival is measured on — it rises and falls with each result, and it's what your win chance is worked out from. Your <b>table position</b> (#1–#40) is separate: it comes from league points, 3 per win. Cash and Rating carry across seasons and leagues — spend cash in the Coaching Shop any time.</p>
       <p><b>Employment:</b> your day job funds everything else, every phase, no exceptions. Work ${BAL.workHoursRequired}h/day (every phase, preseason included), starting at $${BAL.workPayMin}/day — pay is tied to still <i>having</i> the job, not to hitting the exact hour target every day, so falling short doesn't cost you income, only a chunk of a chance scaled to the shortfall (regained ${BAL.strikeWindowDays} days later). Run out of your ${fmt1(BAL.strikesToFire)} chances and <i>that's</i> when pay actually stops — you're fired: the same slider becomes a Job Search, needing a random ${BAL.jobSearchHoursRange[0]}–${BAL.jobSearchHoursRange[1]} cumulative hours (rolled when you lose the job and shown on the slider; any daily amount counts) to get rehired. Reach League ${BAL.goProLeagueTier} or higher with $${BAL.goProCash}+ banked while employed and you go Pro automatically — Work drops to just ${BAL.proDutyHoursRequired}h/day of Pro Duties, starting at $${BAL.proPayMin}/day, with the same chances rule and the same fallback to Job Search if you're dropped.</p>
