@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.21.0";
+const APP_VERSION = "4.21.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -2412,6 +2412,29 @@ function employmentSectionHtml() {
     <p>${goProHint}</p>`;
 }
 
+// Same 0-100 bar layout as the Career skill list, so stats and skills read
+// alike. Only Health has a cap below 100 (Sports Physio), hatched and named.
+function currentStatsHtml() {
+  const s = state.stats;
+  const physioLvl = upgradeLevel("physio");
+  const pCap = physCap();
+  const rows = [
+    { icon: "🏃", name: "Physical Health", val: s.phys, cap: pCap, cls: "phys", note: pCap < 100 ? `cap: ${physioLvl > 0 ? `Physio Lv${physioLvl}` : "no Physio"}` : "" },
+    { icon: "🌙", name: "Rest", val: s.rest, cap: 100, cls: "rest", note: "" },
+    { icon: "🎮", name: "Composure", val: s.composure, cap: 100, cls: "composure", note: "" },
+    { icon: "🥗", name: "Nutrition", val: s.nutrition, cap: 100, cls: "nutrition", note: `${dailyHoursCap(s.nutrition)}h today` },
+  ];
+  return rows
+    .map(
+      (r) => `
+        <div class="skill-row-detail">
+          <div class="skill-row-detail-label"><span>${r.icon} ${r.name}</span><span>${fmt(r.val)}/${r.cap}${r.note ? ` · ${r.note}` : ""}</span></div>
+          <div class="bar"><div class="bar-fill ${r.cls}" style="width:${clamp(r.val, 0, 100)}%"></div>${lockedZoneHtml(r.cap, 100)}</div>
+        </div>`
+    )
+    .join("");
+}
+
 function openCareer() {
   const info = getNextMatchInfo();
   let nextSection;
@@ -2505,10 +2528,7 @@ function openCareer() {
     </div>
     <div class="modal-section">
       <h3>Current Stats</h3>
-      <p>Physical Health: ${fmt(state.stats.phys)} / ${physCap()}${physCap() < 100 ? " (upgrade Physio for more)" : ""}<br>
-      Rest: ${fmt(state.stats.rest)} / 100<br>
-      Composure: ${fmt(state.stats.composure)} / 100<br>
-      Nutrition: ${fmt(state.stats.nutrition)} / 100 (today's hours: ${dailyHoursCap(state.stats.nutrition)})</p>
+      ${currentStatsHtml()}
     </div>`;
   openModal(html);
   $("viewLeaguesLink").addEventListener("click", () => openLeagues(state.leagueTier));
