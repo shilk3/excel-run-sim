@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.23.1";
+const APP_VERSION = "4.24.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1214,18 +1214,30 @@ function activeSkillAverage() {
 // the result modal can show the breakdown instead of just the final number
 // (skill isn't the whole story — Physical Health, Composure and Rest all
 // weigh in too).
+const PERF_WEIGHTS = { skill: 0.55, phys: 0.25, composure: 0.15, rest: 0.05 };
+
 function performanceBreakdown() {
   const s = state.stats;
   // Low Composure hits you hardest where it matters most: match day. This
   // stacks on top of (doesn't replace) Composure's own weighted contribution
   // below, same as before.
   const composureMult = composureMatchMultiplier(s.composure);
-  const skillComponent = activeSkillAverage() * composureMult;
+  const skillAvg = activeSkillAverage();
+  const skillComponent = skillAvg * composureMult;
   const weighted = {
-    skill: skillComponent * 0.55,
-    phys: s.phys * 0.25,
-    composure: s.composure * 0.15,
-    rest: s.rest * 0.05,
+    skill: skillComponent * PERF_WEIGHTS.skill,
+    phys: s.phys * PERF_WEIGHTS.phys,
+    composure: s.composure * PERF_WEIGHTS.composure,
+    rest: s.rest * PERF_WEIGHTS.rest,
+  };
+  // Raw inputs, snapshotted for the match result table.
+  const raw = {
+    skills: state.activeSkills.map((k) => ({ key: k, value: s.skills[k] })),
+    skillAvg,
+    skillComponent,
+    phys: s.phys,
+    composure: s.composure,
+    rest: s.rest,
   };
   let score = clamp(weighted.skill + weighted.phys + weighted.composure + weighted.rest, 0, 100);
   // Pros who fall behind on current technique compete at a real disadvantage
@@ -1237,7 +1249,7 @@ function performanceBreakdown() {
     techniquePenaltyMult = 1 - penalty;
     score *= techniquePenaltyMult;
   }
-  return { weighted, composureMult, techniquePenaltyMult, score };
+  return { weighted, raw, composureMult, techniquePenaltyMult, score };
 }
 
 function performanceScore() {
@@ -2219,6 +2231,50 @@ $("modalOverlay").addEventListener("click", (e) => {
 /* ---------------------------------------------------------------------- */
 /* Match modal                                                            */
 /* ---------------------------------------------------------------------- */
+// Match result: what the performance score was actually made of — the raw
+// value of each input, its weight, and the points it contributed. The Skill
+// row's sub-rows show where its value came from.
+function performanceTableHtml(b) {
+  const one = (n) => (Math.round(n * 10) / 10).toFixed(1);
+  const pct = (w) => `${Math.round(w * 100)}%`;
+  const raw = b.raw;
+  const sub = (label, value) => `<tr class="perf-sub"><td>${label}</td><td>${value}</td><td></td><td></td></tr>`;
+  const row = (label, value, w, points) =>
+    `<tr class="perf-main"><td>${label}</td><td>${value}</td><td>${pct(w)}</td><td>${one(points)}</td></tr>`;
+  let skillDetail = "";
+  if (raw) {
+    skillDetail = raw.skills
+      .map((sk) => {
+        const m = skillMeta(sk.key);
+        return sub(`${m.icon} ${m.name}`, fmt(sk.value));
+      })
+      .join("");
+    if (raw.skills.length > 1) skillDetail += sub("Average", one(raw.skillAvg));
+    if (b.composureMult < 1) skillDetail += sub(`😰 Low Composure (under ${BAL.composureMatchMid})`, `×${b.composureMult.toFixed(2)}`).replace("perf-sub", "perf-sub perf-warn");
+  }
+  const subtotal = b.weighted.skill + b.weighted.phys + b.weighted.composure + b.weighted.rest;
+  const techRow =
+    b.techniquePenaltyMult < 1
+      ? `<tr class="perf-main perf-warn"><td>📘 Unmastered techniques</td><td>×${b.techniquePenaltyMult.toFixed(2)}</td><td></td><td>−${one(subtotal - b.score)}</td></tr>`
+      : "";
+  return `
+    <table class="perf-table">
+      <thead><tr><th>Performance</th><th>Value</th><th>Weight</th><th>Points</th></tr></thead>
+      <tbody>
+        ${row("🧠 Skill", raw ? one(raw.skillComponent) : "", PERF_WEIGHTS.skill, b.weighted.skill)}
+        ${skillDetail}
+        ${row("🏃 Health", raw ? fmt(raw.phys) : "", PERF_WEIGHTS.phys, b.weighted.phys)}
+        ${row("🎮 Composure", raw ? fmt(raw.composure) : "", PERF_WEIGHTS.composure, b.weighted.composure)}
+        ${row("🌙 Rest", raw ? fmt(raw.rest) : "", PERF_WEIGHTS.rest, b.weighted.rest)}
+        ${techRow}
+      </tbody>
+      <tfoot><tr><td>Total</td><td></td><td></td><td>${one(b.score)}<span class="perf-of">/100</span></td></tr></tfoot>
+    </table>
+    <div class="match-sub perf-note">Values are out of 100; points = value × weight. Skill only counts this round's active skill${
+      raw && raw.skills.length > 1 ? "s, averaged" : ""
+    }.</div>`;
+}
+
 function showMatchModal(result) {
   const context = result.roundLabel ? `${result.roundLabel}${result.opponentName ? " vs " + result.opponentName : ""}` : "";
   const html = `
@@ -2235,12 +2291,8 @@ function showMatchModal(result) {
           <div><b>${fmt(result.rankBefore)}→${fmt(state.rank)}</b>Rating</div>
           <div><b>$${result.cashReward}</b>Prize</div>
         </div>
-        <div class="match-sub">Performance = Skill ${fmt(result.breakdown.weighted.skill)} (55%) + Health ${fmt(
-      result.breakdown.weighted.phys
-    )} (25%) + Composure ${fmt(result.breakdown.weighted.composure)} (15%) + Rest ${fmt(result.breakdown.weighted.rest)} (5%)${
-      result.breakdown.techniquePenaltyMult < 1 ? ` · ×${result.breakdown.techniquePenaltyMult.toFixed(2)} unmastered techniques` : ""
-    }</div>
-        <div class="match-sub">Match-day rating: ${result.matchRating} (your ${fmt(result.rankBefore)} rating adjusted for performance) vs ${result.opponentRating}</div>
+        ${performanceTableHtml(result.breakdown)}
+        <div class="match-sub">Match-day rating: ${fmt(result.rankBefore)} + (${result.perf.toFixed(1)} − 70) × 3 = <b>${result.matchRating}</b> vs ${result.opponentRating} — every point of performance above 70 adds 3 to your rating for this match; below 70 it costs 3.</div>
         <div class="match-sub">Win roll: ${result.roll}/100, needed under ${result.winProb} — one random roll decides every match, weighted by your win chance, so an upset either way is always possible.</div>
         ${result.championBonus ? `<div class="match-sub">👑 Champion bonus: +$${result.championBonus.cash} · +${result.championBonus.rating} rating</div>` : ""}
         <button class="primary-btn" id="matchOk">Continue</button>
