@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.17.0";
+const APP_VERSION = "4.17.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1895,8 +1895,10 @@ function workRowHtml() {
   const atRisk = hours < required;
   const livesText = `${fmt1(livesRemaining())}/${fmt1(BAL.strikesToFire)} left`;
   const outcomeText = (atRisk ? "⚠️ " : "") + (isPro ? `${livesText} · ${techniqueStatusText()}` : livesText);
-  const payPerDay = isPro ? emp.proPay : emp.workPay;
-  const statusTag = `<span class="skill-shop-tag">${isPro ? "Pro" : "Employed"} · $${fmt(payPerDay)}/d</span>`;
+  // Net of cost of living, not gross pay — what actually lands in cash each
+  // day. The Career modal still breaks out gross pay and expenses.
+  const netPerDay = (isPro ? emp.proPay : emp.workPay) - BAL.dailyExpenses;
+  const statusTag = `<span class="skill-shop-tag">Net $${fmt(netPerDay)}/d</span>`;
   return comboRowHtml("work", {
     icon: isPro ? "📱" : "💼",
     label: isPro ? "Pro Duties" : "Work",
