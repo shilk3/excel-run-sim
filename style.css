@@ -141,6 +141,14 @@ html, body {
   top: 0;
   transition: left 0.2s ease, width 0.2s ease;
 }
+/* Above the current cap: hatched and dimmed, with a light edge at the cap. */
+.bar-locked {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-left: 1px solid rgba(255, 255, 255, 0.45);
+  background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.13) 0 2px, transparent 2px 5px);
+}
 .bar-preview-gain { background: var(--skill) !important; opacity: 0.55; }
 /* A darker, more saturated red than the Composure bar's own (lighter)
    red — same hue family would otherwise nearly vanish on that bar, so

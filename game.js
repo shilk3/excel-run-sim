@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.20.1";
+const APP_VERSION = "4.21.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -293,6 +293,19 @@ function leagueSkillCap() {
 }
 function skillCap(key) {
   return Math.min(skillShopCap(key), leagueSkillCap());
+}
+// Which gate is holding a skill's ceiling down — tells the player whether
+// the fix is a coach (Coaching Shop) or a promotion (peak league).
+function skillCapCause(key) {
+  const shop = skillShopCap(key);
+  const league = leagueSkillCap();
+  if (Math.min(shop, league) >= 100) return null;
+  const lvl = upgradeLevel(coachKey(key));
+  const coachText = lvl > 0 ? `Coach Lv${lvl}` : "no coach";
+  const leagueText = `League ${state.peakLeagueTier}`;
+  if (shop < league) return coachText;
+  if (league < shop) return leagueText;
+  return `${coachText} + ${leagueText}`;
 }
 function restTrainingMultiplier(rest) {
   if (rest > BAL.restTrainingBoostHigh) return 2.0;
@@ -1913,9 +1926,18 @@ function totalAssigned() {
 // One row does double duty as both the stat readout (name, value/cap, bar)
 // and the time-allocation control (slider + stepper) for a single lever —
 // no more showing the same name twice in two separate sections.
-function comboRowHtml(key, { icon, label, outcomeText, value, previewValue, cap, hours, maxHours, markerHours, shopTag, disabled, barClass }) {
-  const barPct = clamp((value / cap) * 100, 0, 100);
-  const previewPct = previewValue == null ? barPct : clamp((previewValue / cap) * 100, 0, 100);
+// scaleMax: what a full bar means. Defaults to cap; skills and Health pass
+// 100 so every bar shares one scale, with the stretch from the current cap
+// to 100 hatched as locked (otherwise 39/50 and 47/60 both look "nearly full").
+function lockedZoneHtml(cap, scaleMax) {
+  if (cap >= scaleMax) return "";
+  const capPct = clamp((cap / scaleMax) * 100, 0, 100);
+  return `<div class="bar-locked" style="left:${capPct}%;width:${100 - capPct}%"></div>`;
+}
+
+function comboRowHtml(key, { icon, label, outcomeText, value, previewValue, cap, scaleMax = cap, hours, maxHours, markerHours, shopTag, disabled, barClass }) {
+  const barPct = clamp((value / scaleMax) * 100, 0, 100);
+  const previewPct = previewValue == null ? barPct : clamp((previewValue / scaleMax) * 100, 0, 100);
   const overlayLeft = Math.min(barPct, previewPct);
   const overlayWidth = Math.abs(previewPct - barPct);
   // Always green for a gain, always red for a loss — not tinted by the
@@ -1936,7 +1958,7 @@ function comboRowHtml(key, { icon, label, outcomeText, value, previewValue, cap,
       <span class="combo-outcome">${outcomeText}</span>
       <span class="activity-hours"><span id="hoursVal_${key}">${hours}</span>h</span>
     </div>
-    <div class="bar combo-bar"><div class="bar-fill ${barClass}" style="width:${barPct}%"></div>${overlayHtml}</div>
+    <div class="bar combo-bar"><div class="bar-fill ${barClass}" style="width:${barPct}%"></div>${lockedZoneHtml(cap, scaleMax)}${overlayHtml}</div>
     <div class="stepper">
       <button class="step-btn" data-key="${key}" data-dir="-1" ${disabled ? "disabled" : ""}>−</button>
       <div class="slider-wrap">
@@ -2018,6 +2040,7 @@ function renderPlannerRows() {
         value: s.skills[key],
         previewValue: preview.skills[key],
         cap,
+        scaleMax: 100,
         hours: a.skills[key] || 0,
         maxHours: SKILL_MAX_HOURS,
         markerHours: BAL.skillDecayThresholdHours,
@@ -2043,6 +2066,7 @@ function renderPlannerRows() {
       value: s.phys,
       previewValue: preview.phys,
       cap: pCap,
+      scaleMax: 100,
       hours: a.exercise,
       maxHours: ACT_MAX.exercise,
       markerHours: BAL.skillDecayThresholdHours,
@@ -2469,13 +2493,13 @@ function openCareer() {
       ${SKILLS.map((sk) => {
         const cap = skillCap(sk.key);
         const val = state.stats.skills[sk.key];
-        const pct = clamp((val / cap) * 100, 0, 100);
+        const pct = clamp(val, 0, 100);
         const active = trainableSkills().includes(sk.key);
-        const lvl = upgradeLevel(coachKey(sk.key));
+        const cause = skillCapCause(sk.key);
         return `
         <div class="skill-row-detail ${active ? "skill-row-detail-active" : ""}">
-          <div class="skill-row-detail-label"><span>${sk.icon} ${sk.name}${active ? " 🟢" : ""}</span><span>${fmt(val)}/${cap}${lvl > 0 ? ` · Coach Lv${lvl}` : ""}</span></div>
-          <div class="bar"><div class="bar-fill skill" style="width:${pct}%"></div></div>
+          <div class="skill-row-detail-label"><span>${sk.icon} ${sk.name}${active ? " 🟢" : ""}</span><span>${fmt(val)}/${cap}${cause ? ` · cap: ${cause}` : ""}</span></div>
+          <div class="bar"><div class="bar-fill skill" style="width:${pct}%"></div>${lockedZoneHtml(cap, 100)}</div>
         </div>`;
       }).join("")}
     </div>
@@ -2597,7 +2621,7 @@ function openHowTo() {
       <p><b>Decay:</b> every stat needs upkeep or it slips. Any skill that isn't active this round rusts; an active skill still rusts below ${BAL.skillDecayThresholdHours}h of training. Gym below ${BAL.skillDecayThresholdHours}h detrains Physical Health. Sleep below ${BAL.idealSleep}h drains Rest. Relax below ${BAL.relaxComposureThreshold}h drains Composure. Food below ${BAL.skillDecayThresholdHours}h drains Nutrition. Each slider shows a marker at its threshold, and each bar previews tomorrow's value based on your current plan — green for a gain, red for a loss.</p>
       <p><b>Rest</b> swings training itself: above ${BAL.restTrainingBoostThreshold} it's 150% effective, above ${BAL.restTrainingBoostHigh} it's 200% effective. <b>Composure</b> hits match day specifically — below ${BAL.composureMatchMid} your active skills count for only 75%, below ${BAL.composureMatchLow} just 50%. <b>Nutrition</b> sets how many hours you get at all: below ${BAL.nutritionHoursCapLow} your day shrinks to just ${BAL.dailyHoursFloor}h, sliding up to the full ${BAL.dailyHoursCeiling}h at ${BAL.nutritionHoursCapHigh}+.</p>
       <p><b>Gym injuries:</b> every Gym hour adds a ${+(BAL.injuryChancePerHour * 100).toFixed(1)}% chance of injury that day, so only a 0h day is risk-free — ${BAL.gymMaxHours}h (the most you can do) is a ${+(BAL.gymMaxHours * BAL.injuryChancePerHour * 100).toFixed(1)}% chance. The Gym row shows today's risk as <b>#% 🤕</b>. Sports Physio cuts that risk by 20%, 35% or 50%. An injury costs ${BAL.injuryPhysLoss[0]}–${BAL.injuryPhysLoss[1]} Health and locks the Gym for ${BAL.injuryDaysRange[0]}–${BAL.injuryDaysRange[1]} days (Recovery Program takes 1–3 days off, minimum 1); the row shows <b>🤕 #d</b> while it heals. Injuries never stop you playing matches — they only shut the Gym.</p>
-      <p><b>Stat ceilings:</b> each skill caps at ${BAL.skillShopCapBase} until you invest in that skill's dedicated Coach (5 levels, Coaching Shop) — but the effective ceiling is also capped by the highest league you've ever reached (peak, not current), from 60 in League 5 up to 100 in League 1. Both gates must be cleared to hit 100. Physical Health caps at ${BAL.statCapBase} until you invest in Sports Physio.</p>
+      <p><b>Stat ceilings:</b> each skill caps at ${BAL.skillShopCapBase} until you invest in that skill's dedicated Coach (5 levels, Coaching Shop) — but the effective ceiling is also capped by the highest league you've ever reached (peak, not current), from 60 in League 5 up to 100 in League 1. Both gates must be cleared to hit 100. Physical Health caps at ${BAL.statCapBase} until you invest in Sports Physio. Skill and Health bars all run to 100; the hatched end of a bar is the part your current cap locks off, and the Career screen shows what's capping each skill (a coach, or your league).</p>
       <p><b>The season:</b> a ${BAL.preseasonDays}-day preseason to train, then a ${BAL.seasonRounds}-round regular season — one match a week against a named rival, all scheduled in advance, each testing that week's active skills. Finish in the top ${BAL.playoffSize} of your ${BAL.seasonRounds + 1}-competitor league to reach the knockout playoffs. Lose a playoff match and you're out; win the Final and you're champion.</p>
       <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken, so missing the cut isn't a worse deal than making it and getting knocked out early.</p>
       <p><b>Leagues:</b> there are ${BAL.leagueCount} leagues, League 1 at the top and League 5 at the bottom — you start in League 5. Every league has a persistent roster of named rivals whose ratings evolve from real simulated results every week, same as yours — every tier's table is live from round 1, not just visible once the season ends. Four go up from every league below League 1: the playoff champion, plus the top ${BAL.promotionTablePlaces} of the table other than the champion — so a top-${BAL.promotionTablePlaces} finish is always promoted, and anyone in the playoffs can still win their way up. Finish bottom ${BAL.relegationCount} and you're relegated. This applies to every competitor in every league, not just you — every league plays out its own knockout too — so the standings you see are a living world, not scenery. Check the Leagues screen any time (Menu, or the shortcut in Career) to see all ${BAL.leagueCount} tables.</p>
