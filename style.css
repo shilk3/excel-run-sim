@@ -740,3 +740,24 @@ input[type="range"]::-webkit-slider-thumb {
 .shop-item.shop-item-capped .shop-item-icon,
 .shop-item.shop-item-capped .shop-item-name,
 .shop-item.shop-item-capped .shop-item-desc { opacity: 0.6; }
+
+/* Match result v2: header subline, Result + You vs Opponent tables, collapsibles */
+.modal-sticky-head .match-head { display: block; }
+.modal-sticky-head .match-head-sub { display: block; font-size: 12.5px; font-weight: 600; color: var(--text-dim); letter-spacing: 0; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+.champion-line { color: var(--work); font-weight: 700; }
+.result-table { margin-top: 2px; }
+.result-table .wk-up, .h2h-table .wk-up { color: var(--accent); }
+.result-table .wk-down { color: var(--danger); }
+.h2h-table { margin-top: 14px; }
+.h2h-table th.h2h-opp { max-width: 120px; overflow: hidden; text-overflow: ellipsis; text-transform: none; letter-spacing: 0; }
+.h2h-table thead th:nth-child(2) { text-transform: none; letter-spacing: 0; }
+.h2h-table tfoot td { font-size: 15px; }
+.match-verdict { text-align: center; font-size: 16px; font-weight: 800; margin: 10px 0 4px; }
+.match-verdict.win { color: var(--accent); }
+.match-verdict.loss { color: var(--danger); }
+details.match-more { border: 1px solid var(--border); border-radius: 10px; padding: 0 10px; margin: 10px 0; text-align: left; }
+details.match-more > summary { list-style: none; cursor: pointer; padding: 11px 0; font-size: 13.5px; font-weight: 700; color: var(--text); display: flex; justify-content: space-between; align-items: center; }
+details.match-more > summary::-webkit-details-marker { display: none; }
+details.match-more > summary::after { content: "▸"; color: var(--text-dim); transition: transform 0.15s; }
+details.match-more[open] > summary::after { transform: rotate(90deg); }
+details.match-more[open] { padding-bottom: 8px; }

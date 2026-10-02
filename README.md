@@ -67,6 +67,15 @@ early so you can re-plan on an injury, losing/finding a job or going pro,
 burnout, a new technique to master, or Nutrition shrinking the day below what
 your plan needs.
 
+**Match day**: both sides get a match-day rating = rating + performance +
+luck, and the higher one wins. Your performance comes from your stats (each
+point above 70 adds 3, below 70 costs 3); rivals get a performance on the same
+scale. Luck is random for both sides every match (usually about −150 to +120,
+occasionally +400 or more), drawn so the odds of winning match the classic
+Elo win chance for the rating gap — upsets always stay possible. The result
+screen shows what changed (rating, table position, cash, record), both sides'
+numbers side by side, and collapsible explanations.
+
 **The season**: a 14-day preseason to train, then a 39-round regular season —
 one match a week against a named rival, the full schedule known in advance.
 Finish in the top 16 of your 40-competitor league to reach the knockout

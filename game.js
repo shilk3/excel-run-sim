@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.29.1";
+const APP_VERSION = "4.30.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -73,6 +73,7 @@ const BAL = {
   // the champion — always 4, matching relegationCount so every tier stays at
   // exactly leagueSize. The top 3 are therefore always promoted.
   promotionTablePlaces: 3,
+  oppPerfRange: [55, 85], // rivals' cosmetic match-day performance (see resolveMatch)
   relegationCount: 4,
   // Rating bounds — the same for the player and every rival. The floor only
   // stops a long losing run going negative; the ceiling is well above any
@@ -1318,10 +1319,19 @@ function resolveMatch(opponentRating) {
   const perf = breakdown.score;
   const matchRating = currentMatchRating();
   const winProb = winProbabilityAgainst(opponentRating);
-  // The actual dice roll that decided it — captured so the result modal can
-  // show exactly how close (or not) the outcome was, not just the odds.
-  const roll = Math.random();
-  const win = roll < winProb;
+  // Each side has its own luck on the day, and the higher match-day rating
+  // wins. The two draws are Gumbel-distributed, whose difference is exactly
+  // the logistic curve behind winProb — so the odds (and upsets) are the
+  // same as a single "roll under your win chance", just told as two scores.
+  const yourLuck = matchLuckDraw();
+  const oppLuck = matchLuckDraw();
+  const yourFinal = matchRating + yourLuck;
+  const oppFinal = opponentRating + oppLuck;
+  const win = yourFinal > oppFinal || (yourFinal === oppFinal && matchRating >= opponentRating);
+  // Rivals have no stats, so their "performance" is cosmetic: a random
+  // 55-85 on the same ×3 scale as yours, taken back out of their luck so
+  // their match-day rating (and the result) is untouched.
+  const oppPerf = randInt(BAL.oppPerfRange[0], BAL.oppPerfRange[1]);
   const K = 24;
   const actual = win ? 1 : 0;
   let ratingChange = Math.round(K * (actual - winProb));
@@ -1329,24 +1339,57 @@ function resolveMatch(opponentRating) {
   state.rank = clamp(state.rank + ratingChange, BAL.ratingMin, BAL.ratingMax);
   state.peakRank = Math.max(state.peakRank, state.rank);
 
+  const cashBefore = state.cash;
+  const recordBefore = { wins: state.wins, losses: state.losses };
   const cashReward = Math.round((win ? 150 + state.rank / 10 : 40) * cashBonusMult);
   state.cash += cashReward;
   state.yearCashFlow.matchCash += cashReward;
   if (win) state.wins += 1;
   else state.losses += 1;
 
+  // Display figures for the result screen. Each column's rows are rounded
+  // so they add up exactly: luck absorbs the rounding, and the opponent's
+  // luck also absorbs their cosmetic performance.
+  const yourRatingShown = Math.round(rankBefore);
+  const yourPerfShown = Math.round(matchRating) - yourRatingShown;
+  const yourFinalShown = Math.round(yourFinal);
+  const oppRatingShown = Math.round(opponentRating);
+  const oppPerfShown = Math.round((oppPerf - 70) * 3);
+  const oppFinalShown = Math.round(oppFinal);
+
   return {
     win,
     perf,
     breakdown,
     matchRating: Math.round(matchRating),
-    opponentRating: Math.round(opponentRating),
+    opponentRating: oppRatingShown,
     winProb: Math.round(winProb * 100),
-    roll: Math.round(roll * 100),
     ratingChange,
+    ratingChangeRaw: Math.round(K * (actual - winProb)),
+    rankLossMult,
     rankBefore,
     cashReward,
+    cashBefore,
+    recordBefore,
+    sides: {
+      you: { rating: yourRatingShown, perfScore: perf, perfAdj: yourPerfShown, luck: yourFinalShown - yourRatingShown - yourPerfShown, final: yourFinalShown },
+      opp: { rating: oppRatingShown, perfScore: oppPerf, perfAdj: oppPerfShown, luck: oppFinalShown - oppRatingShown - oppPerfShown, final: oppFinalShown },
+    },
+    // From the displayed totals so the verdict always matches them; rounding
+    // can make a sub-1 margin look like a tie, which reads as "less than 1".
+    margin: Math.abs(yourFinalShown - oppFinalShown),
   };
+}
+
+// One side's luck on match day: a Gumbel draw with the Elo scale (400 /
+// ln 10), centred on zero. The difference of two such draws is logistic, so
+// P(you out-score them) is exactly the Elo win chance. Usually within about
+// ±150; now and then a side has an inspired day of +400 or more.
+const LUCK_SCALE = 400 / Math.LN10;
+const EULER_GAMMA = 0.5772156649;
+function matchLuckDraw() {
+  const u = clamp(Math.random(), 1e-9, 1 - 1e-9);
+  return LUCK_SCALE * (-Math.log(-Math.log(u)) - EULER_GAMMA);
 }
 
 // Cheap win/lose roll for matches that don't involve the player (other
@@ -2361,19 +2404,71 @@ function performanceTableHtml(b) {
     }.</div>`;
 }
 
-// Match result: how the win chance was worked out — your match-day rating,
-// the gap to your opponent's, and a ladder showing how any gap turns into
-// a win chance, with this match slotted in. Plain words, no formula: the
-// gap is the only thing that matters.
+// Match result screen, top to bottom: what changed (Result), why (You vs
+// Opponent, every row meaning the same thing in both columns), then two
+// collapsed explanations (your performance breakdown; luck and win chance).
+const signedNum = (n) => (n === 0 ? "±0" : n < 0 ? `−${Math.abs(n)}` : `+${n}`);
+const deltaClass = (n) => (n > 0 ? "wk-up" : n < 0 ? "wk-down" : "");
+
 function gapLabel(gap) {
   if (gap === 0) return "Level";
   return `${Math.abs(gap)} ${gap > 0 ? "ahead" : "behind"}`;
 }
 
-function winChanceTableHtml(result) {
-  const signed = (n) => (n === 0 ? "±0" : n < 0 ? `−${Math.abs(n)}` : `+${n}`);
-  const adj = result.matchRating - result.rankBefore;
-  const gap = result.matchRating - result.opponentRating; // + = you're ahead
+function matchResultTableHtml(result) {
+  const bonus = result.championBonus || { cash: 0, rating: 0 };
+  const ratingAfter = state.rank;
+  const cashAfter = result.cashBefore + result.cashReward + bonus.cash;
+  const rec = result.recordBefore;
+  const recAfter = { wins: rec.wins + (result.win ? 1 : 0), losses: rec.losses + (result.win ? 0 : 1) };
+  const row = (label, before, after, change, cls) =>
+    `<tr><td>${label}</td><td>${before}</td><td>${after}</td><td class="${cls}">${change}</td></tr>`;
+  const rows = [row("🏆 Rating", fmt(result.rankBefore), fmt(ratingAfter), signedNum(ratingAfter - result.rankBefore), deltaClass(ratingAfter - result.rankBefore))];
+  if (typeof result.positionAfter === "number") {
+    const moved = result.positionBefore - result.positionAfter; // + = climbed
+    rows.push(row("📊 Table", `#${result.positionBefore}`, `#${result.positionAfter}`, moved === 0 ? "–" : `${moved > 0 ? "↑" : "↓"}${Math.abs(moved)}`, deltaClass(moved)));
+  }
+  const cashDelta = cashAfter - result.cashBefore;
+  rows.push(row("💰 Cash", fmtMoney(result.cashBefore), fmtMoney(cashAfter), `+${fmtMoney(cashDelta)}`, "wk-up"));
+  rows.push(row("📋 Record", `${rec.wins}–${rec.losses}`, `${recAfter.wins}–${recAfter.losses}`, result.win ? "W" : "L", result.win ? "wk-up" : "wk-down"));
+
+  const raw = result.ratingChangeRaw;
+  let why = result.win
+    ? `A win earns 24 × the ${100 - result.winProb}% chance you'd lose = ${signedNum(raw)}.`
+    : `A loss costs 24 × your ${result.winProb}% win chance = ${signedNum(raw)}${
+        result.ratingChange !== raw ? `, cut to ${signedNum(result.ratingChange)} by your Team Manager` : ""
+      }.`;
+  why += " Unlikely results move your rating more.";
+  if (bonus.rating) why += ` Plus a ${signedNum(bonus.rating)} champion bonus.`;
+  return `
+    <table class="perf-table result-table">
+      <thead><tr><th>Result</th><th>Before</th><th>After</th><th>Change</th></tr></thead>
+      <tbody>${rows.join("")}</tbody>
+    </table>
+    <div class="match-sub perf-note">${why}</div>`;
+}
+
+function headToHeadHtml(result) {
+  const y = result.sides.you;
+  const o = result.sides.opp;
+  const row = (label, a, b, cls = "") => `<tr class="${cls}"><td>${label}</td><td>${a}</td><td>${b}</td></tr>`;
+  const marginText = result.margin === 0 ? "by less than 1" : `by ${result.margin}`;
+  return `
+    <table class="perf-table h2h-table">
+      <thead><tr><th></th><th>You</th><th class="h2h-opp">${result.opponentName || "Opponent"}</th></tr></thead>
+      <tbody>
+        ${row("🏆 Rating", y.rating, o.rating)}
+        ${row("📈 Performance", `${y.perfScore.toFixed(1)} → ${signedNum(y.perfAdj)}`, `${o.perfScore} → ${signedNum(o.perfAdj)}`)}
+        ${row("🎲 Luck on the day", signedNum(y.luck), signedNum(o.luck))}
+      </tbody>
+      <tfoot>${row("Match-day rating", y.final, o.final)}</tfoot>
+    </table>
+    <div class="match-verdict ${result.win ? "win" : "loss"}">${result.win ? "Won" : "Lost"} ${marginText}</div>
+    <div class="match-sub perf-note">Before the match you had a <b>${result.winProb}%</b> win chance.</div>`;
+}
+
+function luckExplainerHtml(result) {
+  const gap = result.matchRating - result.opponentRating; // + = you're ahead, before luck
   const chanceFor = (g) => Math.round(100 / (1 + Math.pow(10, -g / 400)));
   const ladderGaps = [-400, -200, -100, 0, 100, 200, 400];
   const rows = ladderGaps.filter((g) => g !== gap).map((g) => ({ gap: g, chance: chanceFor(g), you: false }));
@@ -2382,47 +2477,36 @@ function winChanceTableHtml(result) {
   const ladder = rows
     .map((r) => `<tr class="${r.you ? "ladder-you" : "perf-sub"}"><td>${r.you ? `👉 You: ${gapLabel(r.gap)}` : gapLabel(r.gap)}</td><td>${r.chance}%</td></tr>`)
     .join("");
-  const row = (label, value, cls = "") => `<tr class="${cls}"><td>${label}</td><td>${value}</td></tr>`;
   return `
-    <table class="perf-table win-table">
-      <thead><tr><th>Win chance</th><th></th></tr></thead>
-      <tbody>
-        ${row("🏆 Your rating", fmt(result.rankBefore))}
-        ${row(`Performance: (${result.perf.toFixed(1)} − 70) × 3`, signed(adj), "perf-sub")}
-        ${row("Match-day rating", `<b>${result.matchRating}</b>`)}
-        ${row("⚔️ Opponent rating", result.opponentRating)}
-        ${row("Rating gap", `<b>${gapLabel(gap)}</b>`)}
-      </tbody>
-      <tfoot><tr><td>Win chance</td><td>${result.winProb}%</td></tr></tfoot>
-    </table>
-    <div class="match-sub perf-note">Your win chance depends only on the <b>gap</b> between your match-day rating and your opponent's. Level is 50/50; the further ahead you are, the likelier you win — but nothing is ever certain:</div>
+    <div class="match-sub perf-note">Both sides get random luck every match — usually somewhere between about −150 and +120, with the occasional inspired day of +400 or more. The highest match-day rating wins.</div>
+    <div class="match-sub perf-note">So your win chance comes down to the gap before luck: your rating + performance (${result.matchRating}) against their rating (${result.opponentRating}) — <b>${gapLabel(gap)}</b> this time. The bigger the gap, the more luck the underdog needs, but upsets always stay possible:</div>
     <table class="perf-table win-ladder">
       <thead><tr><th>Rating gap</th><th>Win chance</th></tr></thead>
       <tbody>${ladder}</tbody>
-    </table>`;
+    </table>
+    <div class="match-sub perf-note">A rival's performance uses the same scale as yours — each point above 70 adds 3, below 70 costs 3. Rivals don't train stats, so how they perform is simply part of how their day goes.</div>`;
 }
 
 function showMatchModal(result, extraHtml = "") {
   const context = result.roundLabel ? `${result.roundLabel}${result.opponentName ? " vs " + result.opponentName : ""}` : "";
-  const title = `<span class="match-head ${result.win ? "win" : "loss"}">${result.win ? "VICTORY" : "DEFEAT"}</span>`;
+  const title = `<span class="match-head ${result.win ? "win" : "loss"}">${result.win ? "VICTORY" : "DEFEAT"}</span>${
+    context ? `<span class="match-head-sub">${context}</span>` : ""
+  }`;
   const html = `
       ${stickyHeadHtml(title)}
       <div class="match-card">
-        <div class="match-sub">${context ? context + "<br>" : ""}Opponent rating: ${result.opponentRating} · You had a ${result.winProb}% win chance</div>
-        ${
-          typeof result.positionAfter === "number"
-            ? `<div class="match-sub">League table: #${result.positionBefore} → #${result.positionAfter} of ${result.leagueSize}</div>`
-            : ""
-        }
-        <div class="match-stats">
-          <div><b>${fmt(result.perf)}/100</b>Performance</div>
-          <div><b>${fmt(result.rankBefore)}→${fmt(state.rank)}</b>Rating</div>
-          <div><b>$${result.cashReward}</b>Prize</div>
-        </div>
-        ${performanceTableHtml(result.breakdown)}
-        ${winChanceTableHtml(result)}
-        <div class="match-sub">Win roll: <b>${result.roll}/100</b> — needed under ${result.winProb} to win. One random roll decides every match, weighted by your win chance, so an upset either way is always possible.</div>
-        ${result.championBonus ? `<div class="match-sub">👑 Champion bonus: +$${result.championBonus.cash} · +${result.championBonus.rating} rating</div>` : ""}
+        ${result.championBonus ? `<div class="match-sub champion-line">👑 Champion! +$${fmt(result.championBonus.cash)} · ${signedNum(result.championBonus.rating)} rating</div>` : ""}
+        ${matchResultTableHtml(result)}
+        ${headToHeadHtml(result)}
+        <details class="match-more">
+          <summary>How was my performance calculated?</summary>
+          ${performanceTableHtml(result.breakdown)}
+          <div class="match-sub perf-note">Each point of performance above 70 adds 3 to your match-day rating; below 70 it costs 3.</div>
+        </details>
+        <details class="match-more">
+          <summary>How do luck and win chance work?</summary>
+          ${luckExplainerHtml(result)}
+        </details>
         ${extraHtml}
         <button class="primary-btn" id="matchOk">Continue</button>
       </div>`;
@@ -2863,6 +2947,7 @@ function openHowTo() {
       <p><b>End Day / To Match:</b> <b>End Day ▶</b> plays one day. <b>To Match ▶▶</b> repeats today's plan every day up to and including the next match, then shows the result with a summary of how your stats moved over the week (outside the season it's <b>End Week ▶▶</b>, up to 7 days, to the end of the week). It stops early so you can re-plan if you get injured, lose or find a job (or go pro), burn out, get a new technique to master, or Nutrition drops so far that your plan no longer fits in the day.</p>
       <p><b>The season:</b> a ${BAL.preseasonDays}-day preseason to train, then a ${BAL.seasonRounds}-round regular season — one match a week against a named rival, all scheduled in advance, each testing that week's active skills. Finish in the top ${BAL.playoffSize} of your ${BAL.seasonRounds + 1}-competitor league to reach the knockout playoffs. Lose a playoff match and you're out; win the Final and you're champion.</p>
       <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken. Get knocked out of the playoffs and you go to training camp too, for the rest of the playoff window (at least ${BAL.offseasonDays} days) — so an early exit gets its time back as training, just like missing the cut. Only the champion gets a plain ${BAL.offseasonDays}-day break.</p>
+      <p><b>Match day:</b> both players get a <b>match-day rating</b> = rating + performance + luck. Your performance comes from your stats (each point above 70 adds 3, below 70 costs 3); every rival has a performance on the same scale. Luck is random for both sides every match — usually between about −150 and +120, occasionally +400 or more on an inspired day. The higher match-day rating wins, so the bigger your rating gap the likelier you are to win, but upsets always stay possible. The result screen shows every number side by side.</p>
       <p><b>Leagues:</b> there are ${BAL.leagueCount} leagues, League 1 at the top and League 5 at the bottom — you start in League 5. Every league has a persistent roster of named rivals whose ratings evolve from real simulated results every week, same as yours — every tier's table is live from round 1, not just visible once the season ends. Four go up from every league below League 1: the playoff champion, plus the top ${BAL.promotionTablePlaces} of the table other than the champion — so a top-${BAL.promotionTablePlaces} finish is always promoted, and anyone in the playoffs can still win their way up. Finish bottom ${BAL.relegationCount} and you're relegated. This applies to every competitor in every league, not just you — every league plays out its own knockout too — so the standings you see are a living world, not scenery. Check the Leagues screen any time (Menu, or the shortcut in Career) to see all ${BAL.leagueCount} tables.</p>
       <p><b>Rating</b> is your skill score (the 🏆 number), the same scale every rival is measured on — it rises and falls with each result, and it's what your win chance is worked out from. Your <b>table position</b> (#1–#40) is separate: it comes from league points, 3 per win. Cash and Rating carry across seasons and leagues — spend cash in the Coaching Shop any time.</p>
       <p><b>Employment:</b> your day job funds everything else, every phase, no exceptions. Work ${BAL.workHoursRequired}h/day (every phase, preseason included), starting at $${BAL.workPayMin}/day — pay is tied to still <i>having</i> the job, not to hitting the exact hour target every day, so falling short doesn't cost you income, only a chunk of a chance scaled to the shortfall (regained ${BAL.strikeWindowDays} days later). Run out of your ${fmt1(BAL.strikesToFire)} chances and <i>that's</i> when pay actually stops — you're fired: the same slider becomes a Job Search, needing a random ${BAL.jobSearchHoursRange[0]}–${BAL.jobSearchHoursRange[1]} cumulative hours (rolled when you lose the job and shown on the slider; any daily amount counts) to get rehired. Reach League ${BAL.goProLeagueTier} or higher with $${BAL.goProCash}+ banked while employed and you go Pro automatically — Work drops to just ${BAL.proDutyHoursRequired}h/day of Pro Duties, starting at $${BAL.proPayMin}/day, with the same chances rule and the same fallback to Job Search if you're dropped.</p>
