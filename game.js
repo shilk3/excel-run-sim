@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.32.1";
+const APP_VERSION = "4.33.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -383,21 +383,90 @@ function techniqueStatusText() {
 /* ---------------------------------------------------------------------- */
 /* Opponent name generation                                               */
 /* ---------------------------------------------------------------------- */
-const NAME_PARTS_A = [
-  "Pivot", "Macro", "VLOOKUP", "CellBlock", "Formula", "Ctrl", "AutoFill", "RangeLord",
-  "ByteSheet", "TabKing", "GridIron", "SUMIFS", "IndexMatch", "ChartWiz", "ClipboardX",
-  "FreezePane", "HotKey", "DataDaemon", "SheetStorm", "RowRunner", "QuickSort", "QueryQueen",
-  "QuietPivot", "QuantumCell", "FlashFill", "ArrayForm", "PowerQuery", "SolverSage",
+// Hand-picked rival tags: Excel functions, features and puns paired with
+// esports-style words. No word appears in more than one name, so a league
+// table never reads as twenty variations on "Pivot". Each career draws 199
+// of these at random (see generateRivalRoster).
+const RIVAL_NAMES = [
+  "TrimReaper", "CtrlFreak", "ShiftHappens", "RoundRobin", "CellShock", "RangeRover", "AbsoluteUnit",
+  "PasteSpecialist", "FormatPainter", "EscapeArtist", "DivByZero", "InfiniteLoop", "NameBoxNebula",
+  "TurnTheTables", "FormulaOne", "SumOfAllFears", "DAYDreamer", "HourGlass", "MinuteMan", "SecondSight",
+  "TRUEGrit", "FALSEProphet", "DROPKick", "SmallFry", "BlankCanvas", "Excelsior", "TooltipSorcerer",
+  "PVPredator", "NPERNoScope", "DDBDoubleTap", "REPTRepeater", "GridlockGorilla", "TracePrecedents",
+  "VLOOKUPVandal", "XLOOKUPXenon", "HLOOKUPHawk", "SUMIFSensei", "COUNTIFCountess", "IFERRORImp",
+  "LAMBDALynx", "FILTERFalcon", "SORTBYSamurai", "UNIQUEUnicorn", "SEQUENCESerpent", "TEXTJOINTitan",
+  "CONCATCobra", "PROPERPaladin", "LEFTLeopard", "MIDMonk", "LENLlama", "RANDBandit", "OFFSETOutlaw",
+  "IndirectIbis", "CHOOSEChimera", "SwitchSwift", "MAXIFSMaverick", "MINIFSMinotaur", "IFSIfrit",
+  "XORXerxes", "NOTNecromancer", "ANDAndroid", "ISNUMBERNarwhal", "ISEVENIbex", "ADDRESSAdmiral",
+  "INDEXAvalanche", "FINDFirefly", "SEARCHSentinel", "EXACTEnigma", "VALUEVanguard", "CLEANTempest",
+  "SUBSTITUTESquid", "CODECobalt", "UNICHARUmbra", "NPVNomad", "IRRInferno", "PMTPanther", "XIRRXenomorph",
+  "MIRRMirage", "FVFireball", "RATERampage", "SLNSlingshot", "MedianMantis", "ModeMongoose", "STDEVStallion",
+  "PRODUCTSultan", "RANKRaven", "LARGELegend", "FrequencyFox", "QuantumQuartile", "PercentilePirate",
+  "CORRELCougar", "LINESTRaccoon", "ForecastFerret", "TrendlineTiger", "OutlierOcelot", "VarianceVulcan",
+  "TodayTyrant", "EOMonthEagle", "WorkdayWarlock", "DATEDIFDruid", "WeekdayWarrior", "YEARFRACYak",
+  "WEEKNUMMoth", "EDATEEcho", "TRANSPOSETroll", "MMULTMammoth", "BYCOLBerserker", "MAPMagpie",
+  "REDUCERaider", "SCANScavenger", "LETMaestro", "TAKETrickshot", "VSTACKViking", "HSTACKHurricane",
+  "TOCOLToucan", "EXPANDElk", "PivotPoltergeist", "MacroMauler", "SlicerSpartan", "PowerQueryPilot",
+  "FlashFillFinch", "AutoFitAce", "SparklineSprite", "GridlineGhost", "RibbonRogue", "SheetStorm",
+  "WorkbookWizard", "TabTamer", "ColumnCrusher", "RowRider", "HeaderHunter", "FooterFiend", "FreezePaneYeti",
+  "ChartChampion", "GanttGoblin", "WaterfallWarden", "HistogramHydra", "ScatterShark", "HeatmapHornet",
+  "DashboardDuke", "TemplateTemplar", "HyperlinkHero", "GoalSeekGoose", "SolverSage", "ScenarioScout",
+  "SpillSpecter", "ArrayArchitect", "VolatileViper", "CircularOrbit", "RelativeRonin", "ConditionalCrane",
+  "GradientGryphon", "MergeMercenary", "WrapWraith", "BorderBison", "BoldBadger", "ItalicIguana",
+  "CalibriCaptain", "ArialArcher", "UndoUndertaker", "RedoRaptor", "AltAvenger", "F4Fury", "F9Phoenix",
+  "EnterEnforcer", "ClipboardKraken", "CursorCorsair", "CrosshairHeron", "AmpersandAsp", "NANinja",
+  "DebugDemon", "ImmediateBear", "ModuleMarauder", "VariantVoyager", "WatchWindowWasp", "EvaluateEnvoy",
+  "AuditAssassin", "ProtectedPython", "PadlockPuma", "PasswordPuffin", "HiddenHyena", "GroupGuru",
+  "OutlineOtter", "SubtotalSphinx", "ConsolidateCrow", "ValidationVole", "PicklistDingo", "CheckboxCheetah",
+  "ConnectionQueen", "RefreshRhino", "DAXDragon", "DelimiterDynamo", "CSVCyclone", "XLSXExile",
+  "StatusBarSherpa", "ZoomZealot", "PageBreakPanda", "PrintAreaPelican", "LandscapeLion", "DataDaemon",
+  "A1Alpha", "R1C1Rebel", "XFDFrontier", "BandedTrooper", "TimelineTerrapin", "IconSetImpala",
+  "ColorScaleCoyote", "TopTenTurtle", "StructuredStork", "CalcChainCaracal", "BackstageMoose",
+  "IterationIris", "CubeCrusader",
 ];
-const NAME_PARTS_B = [
-  "Vex", "Prime", "Zero", "Byte", "Nova", "Reaper", "Ace", "Ghost", "Blaze", "Cross",
-  "Wolf", "Fox", "Ninja", "Prodigy", "Legend", "Master", "Kid", "Pro", "Storm", "Flux",
-  "Edge", "Rush", "Spark", "Wraith", "King", "Queen", "Titan", "Phantom",
-];
-function generateOpponentName() {
-  const a = NAME_PARTS_A[randInt(0, NAME_PARTS_A.length - 1)];
-  const b = NAME_PARTS_B[randInt(0, NAME_PARTS_B.length - 1)];
-  return a + b;
+function shuffledRivalNames() {
+  const names = RIVAL_NAMES.slice();
+  for (let i = names.length - 1; i > 0; i--) {
+    const j = randInt(0, i);
+    [names[i], names[j]] = [names[j], names[i]];
+  }
+  return names;
+}
+
+// Saves from before v4.33.0 used names built from 28 + 28 repeating parts.
+// Give every rival a name from the new list, and carry it through every
+// stored copy of the old one (fixtures, standings snapshots, brackets,
+// champions, season results) and the log, so nothing is left pointing at a
+// name that no longer exists. Ratings, records and league places are kept.
+function renameRivalsToCurrentList(s) {
+  const pool = shuffledRivalNames();
+  const map = new Map();
+  s.rivals.forEach((r, i) => {
+    const fresh = pool[i % pool.length];
+    map.set(r.name, fresh);
+    r.name = fresh;
+  });
+  const NAME_KEYS = ["name", "opponent", "opponentName"];
+  const walk = (node) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) return node.forEach(walk);
+    if (!node.isPlayer) {
+      NAME_KEYS.forEach((k) => {
+        if (typeof node[k] === "string" && map.has(node[k])) node[k] = map.get(node[k]);
+      });
+    }
+    Object.keys(node).forEach((k) => walk(node[k]));
+  };
+  Object.keys(s).forEach((k) => {
+    if (k !== "rivals" && k !== "logEntries") walk(s[k]);
+  });
+  if (Array.isArray(s.logEntries) && map.size) {
+    const olds = [...map.keys()].sort((x, y) => y.length - x.length).map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const re = new RegExp(`(?<![A-Za-z0-9])(${olds.join("|")})(?![A-Za-z0-9])`, "g");
+    s.logEntries.forEach((e) => {
+      if (typeof e.html === "string") e.html = e.html.replace(re, (m) => map.get(m) || m);
+    });
+  }
 }
 
 /* ---------------------------------------------------------------------- */
@@ -409,7 +478,7 @@ function generateOpponentName() {
 // via real simulated results and moving between tiers via promotion and
 // relegation — same as the player.
 function generateRivalRoster(playerTier) {
-  const used = new Set();
+  const names = shuffledRivalNames();
   const rivals = [];
   let id = 0;
   // Whichever tier the player occupies gets 39 rivals instead of 40, leaving
@@ -419,11 +488,7 @@ function generateRivalRoster(playerTier) {
   for (let tier = 1; tier <= 5; tier++) {
     const [lo, hi] = LEAGUE_RATING_BANDS[tier];
     for (let i = 0; i < countsByTier[tier]; i++) {
-      let name;
-      do {
-        name = generateOpponentName();
-      } while (used.has(name));
-      used.add(name);
+      const name = names[id % names.length];
       rivals.push({ id: id++, name, rating: randInt(lo, hi), league: tier, wins: 0, losses: 0, promotions: 0, relegations: 0 });
     }
   }
@@ -508,6 +573,7 @@ function freshState() {
     leagueTier, // 1 (top) - 5 (bottom); new careers start at the bottom
     peakLeagueTier: leagueTier, // numerically lowest (best) tier ever reached
     rivals, // 199 persistent named rivals, spanning all 5 leagues
+    rivalNamesVersion: 2, // 2 = names from RIVAL_NAMES (see renameRivalsToCurrentList)
     leagueStandings: { 1: null, 2: null, 3: null, 4: null, 5: null }, // last fully completed season per tier
     leagueRoundRobins: leagueData.roundRobins, // this season's full fixture list per tier, all 5 at once
     leaguePoints: leagueData.points, // this season's live running points per tier, updated every round
@@ -778,6 +844,12 @@ function migrateSave(parsed) {
   // realigned here instead of carrying the offset forever.
   if ((parsed.seasonPhase === "regular" || parsed.seasonPhase === "playoffs") && parsed.skillCycleDay !== parsed.phaseDay) {
     parsed.skillCycleDay = parsed.phaseDay;
+  }
+
+  // v4.33.0: rivals get names from the hand-picked list (no repeated words).
+  if (parsed.rivalNamesVersion !== 2 && Array.isArray(parsed.rivals) && parsed.rivals.length) {
+    renameRivalsToCurrentList(parsed);
+    parsed.rivalNamesVersion = 2;
   }
 
   return parsed;
