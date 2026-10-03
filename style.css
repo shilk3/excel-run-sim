@@ -809,3 +809,19 @@ details.match-more[open] { padding-bottom: 8px; }
 .link-name { background: none; border: none; padding: 0; color: inherit; font: inherit; text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; }
 .league-row[data-rival] { cursor: pointer; }
 .league-tab:disabled { opacity: 0.35; }
+
+/* Staff (weekly hiring) */
+.staff-week { margin-bottom: 16px; }
+.staff-card { align-items: flex-start; }
+.staff-card-hired { border-color: rgba(52, 208, 160, 0.55); }
+.staff-line { font-size: 12.5px; color: var(--text-dim); margin-top: 3px; line-height: 1.35; }
+.staff-line-locked { opacity: 0.55; }
+.staff-stat { color: var(--text); }
+.staff-prorate { font-style: italic; }
+.staff-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.staff-chip { background: var(--accent); color: #04241a; border: none; border-radius: 999px; padding: 6px 11px; font-size: 12.5px; font-weight: 800; }
+.staff-chip:disabled { background: var(--bg-elev-2); color: var(--text-dim); }
+.staff-chip.staff-unlock { background: transparent; color: var(--text); border: 1px solid var(--border); }
+.staff-chip.staff-unlock:disabled { color: var(--text-dim); }
+.staff-hired { color: var(--accent); font-weight: 800; font-size: 13px; }
+.staff-locked { color: var(--text-dim); font-size: 12px; align-self: center; }

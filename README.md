@@ -30,11 +30,16 @@ Relax, and Food. Everything is connected:
 - Every Gym hour carries a 2.5% injury chance that day (8h, the max, is
   20%; Sports Physio cuts it). An injury costs 5–10 Health and locks the
   Gym for 3–5 days, but never stops you playing matches.
-- Each skill caps at 50 until you invest match winnings in that skill's
-  dedicated Coach (5 levels, Coaching Shop) — and the effective ceiling is
-  also capped by the highest league you've ever reached, from 60 in League 5
-  up to 100 in League 1. Both gates must be cleared to hit 100. Physical
-  Health caps at 70 until you invest in Sports Physio.
+- Skills train up to 50 on your own. **Staff** are hired a week at a time
+  (a week ends after each match), paid up front, pro-rated if hired
+  mid-week, and never renewed automatically. A hired Coach lifts that
+  skill's ceiling (Lv1 60 … Lv5 100) and speeds training, but never past
+  your league cap (60 in League 5 up to 100 in League 1). Above the ceiling
+  a skill holds with an hour a day and slips with less. Physical Health caps
+  at 70 without a hired Sports Physio. Higher staff levels need a one-off
+  fee and a high enough league, and cost more per week; wages are tuned so
+  you can afford roughly 90% of what you'd want in a 1-skill week and 40% in
+  a 3-skill week.
 - **Work** funds everything else. 9h/day, every phase, no exceptions — you
   start with 3.0 chances, and the bar shows exactly what today's shortfall
   will cost before you end the day. Pay is tied to still *having* the job,
@@ -110,7 +115,7 @@ you play — tap one to reopen its full result screen — plus every result in
 all 5 leagues, round by round, for this season and last. Tap any rival's
 name (there or in a league table) to see their season so far.
 
-Rating, Cash, stats, and Coaching Shop upgrades all carry over between years
+Rating, Cash, stats, and unlocked staff levels all carry over between years
 and leagues.
 
 ## Playing it on your iPhone

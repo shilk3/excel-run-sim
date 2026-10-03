@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.35.0";
+const APP_VERSION = "4.36.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -192,13 +192,28 @@ const LEAGUE_RATING_BANDS = {
 // state.upgrades[key] stores the current level (0 = not purchased). Buying
 // goes 0->1->2->... in order; each level's fields describe that level's
 // total (not additive) effect.
+// Staff are hired a week at a time (see hireStaff). Each level is a one-off
+// fee to unlock — only once your peak league allows it — plus a weekly wage
+// to have that level on hand. Level 1 is free to unlock. Wages are tuned so
+// your weekly spare money covers ~90% of what you'd want in a 1-skill week
+// and ~40% in a 3-skill week, in every league at that league's best level.
 const SKILL_COACH_LEVELS = [
-  { cost: 150, bonus: 0.05, capAdd: 10 },
-  { cost: 300, bonus: 0.1, capAdd: 20 },
-  { cost: 500, bonus: 0.15, capAdd: 30 },
-  { cost: 800, bonus: 0.22, capAdd: 40 },
-  { cost: 1300, bonus: 0.3, capAdd: 50 },
+  { cost: 0, wage: 185, unlock: 5, bonus: 0.05, capAdd: 10 },
+  { cost: 600, wage: 245, unlock: 4, bonus: 0.1, capAdd: 20 },
+  { cost: 1000, wage: 300, unlock: 3, bonus: 0.15, capAdd: 30 },
+  { cost: 1600, wage: 360, unlock: 2, bonus: 0.22, capAdd: 40 },
+  { cost: 2500, wage: 470, unlock: 1, bonus: 0.3, capAdd: 50 },
 ];
+const SUPPORT_LEVEL_FEES = [0, 500, 1200];
+const SUPPORT_LEVEL_UNLOCK = [5, 3, 1];
+const SUPPORT_WAGES = {
+  physio: [30, 48, 75],
+  nutritionist: [20, 32, 50],
+  manager: [20, 32, 50],
+  sleepApp: [15, 24, 38],
+  meditation: [15, 24, 38],
+  recovery: [15, 24, 38],
+};
 const UPGRADES = {};
 SKILLS.forEach((sk) => {
   UPGRADES[coachKey(sk.key)] = {
@@ -206,8 +221,10 @@ SKILLS.forEach((sk) => {
     icon: sk.icon,
     levels: SKILL_COACH_LEVELS.map((lvl) => ({
       cost: lvl.cost,
+      wage: lvl.wage,
+      unlock: lvl.unlock,
       bonus: lvl.bonus,
-      desc: `+${Math.round(lvl.bonus * 100)}% ${sk.name} training gains, skill ceiling ${BAL.skillShopCapBase + lvl.capAdd}`,
+      desc: `+${Math.round(lvl.bonus * 100)}% training, ceiling ${BAL.skillShopCapBase + lvl.capAdd}`,
     })),
   };
 });
@@ -267,13 +284,54 @@ Object.assign(UPGRADES, {
     ],
   },
 });
+Object.keys(SUPPORT_WAGES).forEach((key) => {
+  UPGRADES[key].levels.forEach((lvl, i) => {
+    lvl.cost = SUPPORT_LEVEL_FEES[i];
+    lvl.wage = SUPPORT_WAGES[key][i];
+    lvl.unlock = SUPPORT_LEVEL_UNLOCK[i];
+  });
+});
 
+// Highest level unlocked (fee paid; level 1 is free, so always at least 1).
 function upgradeLevel(key) {
-  return state.upgrades[key] || 0;
+  return Math.max(1, state.upgrades[key] || 0);
+}
+// Level hired for this week (0 = not hired). Staff only do anything while
+// hired, so every effect below reads this, not the unlocked level.
+function hiredLevel(key) {
+  return (state.staff && state.staff.hired && state.staff.hired[key]) || 0;
 }
 function upgradeEffect(key) {
-  const lvl = upgradeLevel(key);
+  const lvl = hiredLevel(key);
   return lvl > 0 ? UPGRADES[key].levels[lvl - 1] : null;
+}
+// This week's wage for a level, pro-rated by the days left in the week
+// (today included) and rounded up to the dollar.
+function staffCost(key, level) {
+  const wage = UPGRADES[key].levels[level - 1].wage;
+  return Math.ceil((wage * daysLeftInWeek()) / 7);
+}
+function canUnlockLevel(key, level) {
+  const lvl = UPGRADES[key].levels[level - 1];
+  return !!lvl && state.peakLeagueTier <= lvl.unlock;
+}
+function hireStaff(key, level) {
+  if (hiredLevel(key) || level < 1 || level > upgradeLevel(key)) return false;
+  const cost = staffCost(key, level);
+  if (state.cash < cost) return false;
+  state.cash -= cost;
+  state.yearCashFlow.expenses += cost;
+  state.staff.hired[key] = level;
+  return true;
+}
+function unlockStaffLevel(key) {
+  const next = upgradeLevel(key) + 1;
+  const lvl = UPGRADES[key].levels[next - 1];
+  if (!lvl || !canUnlockLevel(key, next) || state.cash < lvl.cost) return false;
+  state.cash -= lvl.cost;
+  state.yearCashFlow.expenses += lvl.cost;
+  state.upgrades[key] = next;
+  return true;
 }
 // Today's injury chance from Gym hours — shared by the roll in resolveDay()
 // and the "#% 🤕" readout on the Gym row so the two always agree.
@@ -283,12 +341,12 @@ function injuryChance(gymHours) {
   return clamp(gymHours * BAL.injuryChancePerHour * mult, 0, 1);
 }
 function physCap() {
-  return BAL.statCapBase + BAL.statCapPerLevel * upgradeLevel("physio");
+  return BAL.statCapBase + BAL.statCapPerLevel * hiredLevel("physio");
 }
 // Effective skill ceiling stacks two independent gates: the Coaching Shop
 // (per skill, 5 levels) and the highest league ever reached (peak tier).
 function skillShopCap(key) {
-  return BAL.skillShopCapBase + BAL.skillShopCapPerLevel * upgradeLevel(coachKey(key));
+  return BAL.skillShopCapBase + BAL.skillShopCapPerLevel * hiredLevel(coachKey(key));
 }
 function leagueSkillCap() {
   return LEAGUE_SKILL_CAP[state.peakLeagueTier] || LEAGUE_SKILL_CAP[5];
@@ -297,12 +355,12 @@ function skillCap(key) {
   return Math.min(skillShopCap(key), leagueSkillCap());
 }
 // Which gate is holding a skill's ceiling down — tells the player whether
-// the fix is a coach (Coaching Shop) or a promotion (peak league).
+// the fix is hiring a coach (Staff) or a promotion (peak league).
 function skillCapCause(key) {
   const shop = skillShopCap(key);
   const league = leagueSkillCap();
   if (Math.min(shop, league) >= 100) return null;
-  const lvl = upgradeLevel(coachKey(key));
+  const lvl = hiredLevel(coachKey(key));
   const coachText = lvl > 0 ? `Coach Lv${lvl}` : "no coach";
   const leagueText = `League ${state.peakLeagueTier}`;
   if (shop < league) return coachText;
@@ -576,6 +634,7 @@ function freshState() {
     rivals, // 199 persistent named rivals, spanning all 5 leagues
     rivalNamesVersion: 2, // 2 = names from RIVAL_NAMES (see renameRivalsToCurrentList)
     matchHistory: { mine: [], league: {} }, // see recordLeagueResult / recordMyMatch
+    staff: { hired: {} }, // { [upgradeKey]: level } hired for this week only
     leagueStandings: { 1: null, 2: null, 3: null, 4: null, 5: null }, // last fully completed season per tier
     leagueRoundRobins: leagueData.roundRobins, // this season's full fixture list per tier, all 5 at once
     leaguePoints: leagueData.points, // this season's live running points per tier, updated every round
@@ -848,6 +907,9 @@ function migrateSave(parsed) {
     parsed.skillCycleDay = parsed.phaseDay;
   }
 
+  // v4.36.0: staff are hired weekly (owned levels stay unlocked).
+  if (!parsed.staff) parsed.staff = { hired: {} };
+
   // v4.35.0: match history. Earlier matches this season only kept opponent
   // and result, so they come in as simple rows; league-wide results start now.
   if (!parsed.matchHistory) {
@@ -1005,13 +1067,16 @@ function computeDayResult(allocation, stats, injuryActive, burnoutActive) {
     const coachMult = coachEff ? 1 + coachEff.bonus : 1.0;
     totalSkillH += hours;
 
+    // Above this week's ceiling (e.g. 57 with no coach, ceiling 50): an
+    // hour or more holds it steady, less lets it rust — it's never cut down
+    // to the ceiling just because the coach isn't on hand this week.
     if (hours >= BAL.skillDecayThresholdHours) {
       const eff = effectiveHours(hours);
       const gain = eff * BAL.skillGainBase * focusMult * physMult * restMult * skillDiminish(s.skills[key]) * coachMult;
-      skills[key] = clamp(s.skills[key] + gain, 0, cap);
+      skills[key] = s.skills[key] >= cap ? s.skills[key] : Math.min(s.skills[key] + gain, cap);
     } else {
       const rust = Math.min(0.15, s.skills[key] * 0.003);
-      skills[key] = clamp(s.skills[key] - rust, 0, cap);
+      skills[key] = Math.max(0, s.skills[key] - rust);
     }
   });
 
@@ -1024,7 +1089,9 @@ function computeDayResult(allocation, stats, injuryActive, burnoutActive) {
   const detrainMult = recoveryEff ? recoveryEff.detrainMult : 1.0;
   const detrain = exerciseH < BAL.detrainThresholdHours ? BAL.detrainDecay * detrainMult : 0;
   const physDelta = exerciseGain - physDecayFromRest - detrain;
-  const phys = clamp(s.phys + physDelta, 0, pCap);
+  // Same rule as skills: gains stop at the ceiling, but Health already above
+  // it (physio not hired this week) only goes down if the day's net is down.
+  const phys = physDelta > 0 ? Math.min(s.phys + physDelta, Math.max(pCap, s.phys)) : Math.max(0, s.phys + physDelta);
 
   // ---- Nutrition: governs tomorrow's total hours budget (dailyHoursCap),
   // not training effectiveness — decays below the 1h threshold same as
@@ -2312,8 +2379,8 @@ function renderPlannerRows() {
   trainableSkills().forEach((key) => {
     const meta = skillMeta(key);
     const cap = skillCap(key);
-    const lvl = upgradeLevel(coachKey(key));
-    const shopTag = lvl > 0 ? `<span class="skill-shop-tag">${meta.icon}Lv${lvl}</span>` : `<span class="skill-shop-tag skill-shop-tag-none">no coach</span>`;
+    const lvl = hiredLevel(coachKey(key));
+    const shopTag = lvl > 0 ? `<span class="skill-shop-tag">🧑‍🏫 Lv${lvl}</span>` : `<span class="skill-shop-tag skill-shop-tag-none">no coach</span>`;
     rows.push(
       comboRowHtml(key, {
         icon: meta.icon,
@@ -2739,75 +2806,84 @@ function showYearSummaryModal(summary, extraHtml = "") {
 /* ---------------------------------------------------------------------- */
 /* Shop / Menu                                                            */
 /* ---------------------------------------------------------------------- */
-// For a skill coach whose next level would lift the ceiling past what your
-// peak league allows: say so, and whether the training bonus alone is still
-// worth something (it isn't once the skill already sits at the league cap).
-function coachLeagueCapNote(key, next) {
-  const sk = SKILLS.find((x) => coachKey(x.key) === key);
-  if (!sk || !next) return "";
-  const nextCeiling = BAL.skillShopCapBase + BAL.skillShopCapPerLevel * (upgradeLevel(key) + 1);
-  const leagueCap = leagueSkillCap();
-  if (nextCeiling <= leagueCap) return "";
-  const tier = state.peakLeagueTier;
-  const unlock = Object.keys(LEAGUE_SKILL_CAP).map(Number).filter((t) => LEAGUE_SKILL_CAP[t] >= nextCeiling).sort((a, b) => b - a)[0];
-  const reach = unlock ? `reach League ${unlock}` : "get promoted";
-  if (state.stats.skills[sk.key] >= leagueCap - 0.5) {
-    return `<div class="shop-item-capnote capnote-none">⛔ Not worth it yet — ${sk.name} is already at League ${tier}'s cap of ${leagueCap}. ${reach[0].toUpperCase() + reach.slice(1)} to use a higher ceiling.</div>`;
-  }
-  // Below the cap, the only thing this level buys right now is the extra
-  // training bonus on the points still left up to the league cap — say how
-  // much, and on how many points.
-  const lvl = upgradeLevel(key);
-  const extraBonus = Math.round((SKILL_COACH_LEVELS[lvl].bonus - (lvl > 0 ? SKILL_COACH_LEVELS[lvl - 1].bonus : 0)) * 100);
-  const now = Math.round(state.stats.skills[sk.key]);
-  const left = Math.max(1, leagueCap - now);
-  const until = unlock ? `Until League ${unlock}` : "Until you're promoted";
-  return `<div class="shop-item-capnote">⚠️ League ${tier} caps ${sk.name} at ${leagueCap}. ${until}, this only adds +${extraBonus}% training on your last ${left} point${left === 1 ? "" : "s"} (${now} → ${leagueCap}).</div>`;
+// ---- Staff screen ----
+// Staff are hired one week at a time. Wages are paid up front (pro-rated
+// if you hire mid-week) and nothing renews: each new week you choose again,
+// usually around that week's focus skills.
+function weekEndPhrase() {
+  const d = daysLeftInWeek();
+  const inSeasonWeek = state.seasonPhase === "regular" || state.seasonPhase === "playoffs";
+  const end = inSeasonWeek ? "after the next match" : "at the end of the week";
+  return `${d} day${d === 1 ? "" : "s"} left — contracts end ${end}`;
 }
 
-function shopItemHtml(key, u, inThisMatch = false) {
-  const lvl = upgradeLevel(key);
-  const maxLvl = u.levels.length;
-  const isMax = lvl >= maxLvl;
-  const next = isMax ? null : u.levels[lvl];
-  const current = lvl > 0 ? u.levels[lvl - 1] : null;
-  const canAfford = next && state.cash >= next.cost;
-  const desc = isMax ? `${current.desc} — MAX` : next.desc + (current ? ` <span class="shop-item-current">(now: ${current.desc})</span>` : "");
-  const capNote = isMax ? "" : coachLeagueCapNote(key, next);
+function staffCardHtml(key, { focus = false, statNote = "" } = {}) {
+  const u = UPGRADES[key];
+  const owned = upgradeLevel(key);
+  const hired = hiredLevel(key);
+  const max = u.levels.length;
+  const isCoach = key.startsWith("coach_");
+  const days = daysLeftInWeek();
+  const hireChips = hired
+    ? `<span class="staff-hired">✓ Hired Lv${hired} this week</span>`
+    : Array.from({ length: owned }, (_, i) => i + 1)
+        .reverse()
+        .map((lvl) => {
+          const cost = staffCost(key, lvl);
+          return `<button class="staff-chip" data-hire="${key}" data-level="${lvl}" ${state.cash < cost ? "disabled" : ""}>Hire Lv${lvl} · $${fmt(cost)}</button>`;
+        })
+        .join("");
+  let unlockHtml = "";
+  if (owned < max) {
+    const next = u.levels[owned];
+    unlockHtml = canUnlockLevel(key, owned + 1)
+      ? `<button class="staff-chip staff-unlock" data-unlock="${key}" ${state.cash < next.cost ? "disabled" : ""}>Unlock Lv${owned + 1} · $${fmt(next.cost)}</button>`
+      : `<span class="staff-locked">🔒 Lv${owned + 1} unlocks in League ${next.unlock}</span>`;
+  }
+  const lvlInfo = (lvl) => `Lv${lvl}: ${u.levels[lvl - 1].desc} · $${fmt(u.levels[lvl - 1].wage)}/wk`;
+  const showLevels = Array.from({ length: Math.min(owned + 1, max) }, (_, i) => i + 1);
+  const unhired = isCoach ? `<div class="staff-line">No coach: trains up to ${BAL.skillShopCapBase}, no bonus</div>` : "";
   return `
-  <div class="shop-item${inThisMatch ? " shop-item-match" : ""}${capNote.includes("capnote-none") ? " shop-item-capped" : ""}">
+  <div class="shop-item staff-card${focus ? " shop-item-match" : ""}${hired ? " staff-card-hired" : ""}">
     <div class="shop-item-icon">${u.icon}</div>
     <div class="shop-item-info">
-      <div class="shop-item-name">${u.name}${lvl > 0 ? ` <span class="shop-item-level">Lv.${lvl}</span>` : ""}${
-        inThisMatch ? ` <span class="shop-item-match-tag">This match</span>` : ""
-      }</div>
-      <div class="shop-item-desc">${desc}</div>
-      ${capNote}
+      <div class="shop-item-name">${u.name}${focus ? ` <span class="shop-item-match-tag">This week</span>` : ""}</div>
+      ${statNote ? `<div class="staff-line staff-stat">${statNote}</div>` : ""}
+      ${unhired}
+      ${showLevels.map((lvl) => `<div class="staff-line ${lvl > owned ? "staff-line-locked" : ""}">${lvlInfo(lvl)}</div>`).join("")}
+      <div class="staff-actions">${hireChips}${unlockHtml}</div>
+      ${!hired && days < 7 ? `<div class="staff-line staff-prorate">Pro-rated: ${days}/7 of the weekly wage</div>` : ""}
     </div>
-    <button class="shop-item-btn ${isMax ? "owned" : ""}" data-upgrade="${key}" ${isMax || !canAfford ? "disabled" : ""}>
-      ${isMax ? "MAX" : "$" + next.cost}
-    </button>
   </div>`;
 }
 
 function shopHtml() {
-  // Same gate as the Career modal's "Tested this match": skills are only
-  // revealed once a fixture/playoff match is actually next.
-  const kind = getNextMatchInfo().kind;
-  const matchSkills = kind === "fixture" || kind === "playoff" ? state.activeSkills : [];
-  const skillItems = SKILLS.map((sk) => shopItemHtml(coachKey(sk.key), UPGRADES[coachKey(sk.key)], matchSkills.includes(sk.key))).join("");
-  const supportKeys = ["physio", "sleepApp", "nutritionist", "meditation", "recovery", "manager"];
-  const supportItems = supportKeys.map((key) => shopItemHtml(key, UPGRADES[key])).join("");
+  const focusKeys = inSeason() ? state.activeSkills : [];
+  const order = SKILLS.map((sk) => sk.key).sort((x, y) => focusKeys.includes(y) - focusKeys.includes(x));
+  const skillCards = order
+    .map((k) => staffCardHtml(coachKey(k), { focus: focusKeys.includes(k), statNote: `${skillMeta(k).icon} ${skillMeta(k).name} now ${fmt(state.stats.skills[k])} · league cap ${leagueSkillCap()}` }))
+    .join("");
+  const supportKeys = ["physio", "nutritionist", "manager", "sleepApp", "meditation", "recovery"];
+  const supportCards = supportKeys
+    .map((k) => staffCardHtml(k, { statNote: k === "physio" ? `🏃 Health now ${fmt(state.stats.phys)} · ceiling ${BAL.statCapBase} without a physio` : "" }))
+    .join("");
+  const weeklyTotal = Object.entries(state.staff.hired).reduce((a, [k, l]) => a + UPGRADES[k].levels[l - 1].wage, 0);
   return `
-    ${stickyHeadHtml("Coaching Shop", `<span class="sticky-cash">💰 ${fmtMoney(state.cash)}</span>`)}
+    ${stickyHeadHtml("Staff", `<span class="sticky-cash">💰 ${fmtMoney(state.cash)}</span>`)}
+    <div class="callout staff-week">
+      <div class="callout-label">This week</div>
+      <div>${weekEndPhrase()}. Pay up front; nothing renews — hire again each week.</div>
+      ${weeklyTotal ? `<div class="staff-line">Hired staff cost $${fmt(weeklyTotal)}/wk at full rate.</div>` : ""}
+    </div>
     <div class="modal-section">
       <h3>Skill Coaches</h3>
-      <p class="modal-sub">Each skill's ceiling is also capped by your highest league reached — a maxed-out coach alone won't get you past that.</p>
-      ${skillItems}
+      <p class="modal-sub">A hired coach lifts that skill's ceiling (never past your league cap of ${leagueSkillCap()}) and speeds up its training. With no coach a skill trains up to ${BAL.skillShopCapBase}; above that, an hour a day holds it and less lets it slip.</p>
+      ${skillCards}
     </div>
     <div class="modal-section">
       <h3>Support Team</h3>
-      ${supportItems}
+      <p class="modal-sub">Support staff only help in the weeks they're hired. Higher levels unlock in League 3 and League 1.</p>
+      ${supportCards}
     </div>`;
 }
 
@@ -2815,31 +2891,31 @@ function openShop(opts) {
   // Called directly as a click handler too, so opts may be an Event.
   const keepScroll = !!(opts && opts.keepScroll === true);
   openModal(shopHtml(), { ownClose: true, keepScroll });
-  document.querySelectorAll("[data-upgrade]").forEach((btn) => {
+  const refresh = () => {
+    saveState();
+    openShop({ keepScroll: true });
+    // Coaches change skill ceilings and the physio the Health ceiling —
+    // the planner behind the sheet shows both, so refresh it too.
+    renderTopbar();
+    renderStats();
+    renderPlanner();
+  };
+  document.querySelectorAll("[data-hire]").forEach((btn) =>
     btn.addEventListener("click", () => {
-      const key = btn.getAttribute("data-upgrade");
-      const u = UPGRADES[key];
-      const lvl = upgradeLevel(key);
-      if (lvl >= u.levels.length) return;
-      const next = u.levels[lvl];
-      if (state.cash < next.cost) return;
-      state.cash -= next.cost;
-      state.upgrades[key] = lvl + 1;
-      saveState();
-      openShop({ keepScroll: true });
-      // Coaches raise skill caps and Physio raises the Health cap — the
-      // planner rows behind the modal show both, so refresh them too.
-      renderTopbar();
-      renderStats();
-      renderPlanner();
-    });
-  });
+      if (hireStaff(btn.dataset.hire, Number(btn.dataset.level))) refresh();
+    })
+  );
+  document.querySelectorAll("[data-unlock]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      if (unlockStaffLevel(btn.dataset.unlock)) refresh();
+    })
+  );
 }
 
 function openMenu() {
   const html = `
     <h2>Menu</h2>
-    <div class="menu-row" id="menuShop"><span>🛒 Coaching Shop</span><span class="arrow">›</span></div>
+    <div class="menu-row" id="menuShop"><span>🧑‍🏫 Staff</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuCareer"><span>📈 Career &amp; Season</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuLeagues"><span>🏅 Leagues</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuHistory"><span>📜 Match History</span><span class="arrow">›</span></div>
@@ -2936,7 +3012,7 @@ function employmentSectionHtml() {
 // alike. Only Health has a cap below 100 (Sports Physio), hatched and named.
 function currentStatsHtml() {
   const s = state.stats;
-  const physioLvl = upgradeLevel("physio");
+  const physioLvl = hiredLevel("physio");
   const pCap = physCap();
   const rows = [
     { icon: "🏃", name: "Physical Health", val: s.phys, cap: pCap, cls: "phys", note: pCap < 100 ? `cap: ${physioLvl > 0 ? `Physio Lv${physioLvl}` : "no Physio"}` : "" },
@@ -3351,13 +3427,13 @@ function openHowTo() {
       <p><b>Decay:</b> every stat needs upkeep or it slips. Any skill that isn't active this round rusts; an active skill still rusts below ${BAL.skillDecayThresholdHours}h of training. Gym below ${BAL.skillDecayThresholdHours}h detrains Physical Health. Sleep below ${BAL.idealSleep}h drains Rest. Relax below ${BAL.relaxComposureThreshold}h drains Composure. Food below ${BAL.skillDecayThresholdHours}h drains Nutrition. Each slider shows a marker at its threshold, and each bar previews tomorrow's value based on your current plan — green for a gain, red for a loss.</p>
       <p><b>Rest</b> swings training itself: above ${BAL.restTrainingBoostThreshold} it's 150% effective, above ${BAL.restTrainingBoostHigh} it's 200% effective. <b>Composure</b> hits match day specifically — below ${BAL.composureMatchMid} your active skills count for only 75%, below ${BAL.composureMatchLow} just 50%. <b>Nutrition</b> sets how many hours you get at all: below ${BAL.nutritionHoursCapLow} your day shrinks to just ${BAL.dailyHoursFloor}h, sliding up to the full ${BAL.dailyHoursCeiling}h at ${BAL.nutritionHoursCapHigh}+.</p>
       <p><b>Gym injuries:</b> every Gym hour adds a ${+(BAL.injuryChancePerHour * 100).toFixed(1)}% chance of injury that day, so only a 0h day is risk-free — ${BAL.gymMaxHours}h (the most you can do) is a ${+(BAL.gymMaxHours * BAL.injuryChancePerHour * 100).toFixed(1)}% chance. The Gym row shows today's risk as <b>#% 🤕</b>. Sports Physio cuts that risk by 20%, 35% or 50%. An injury costs ${BAL.injuryPhysLoss[0]}–${BAL.injuryPhysLoss[1]} Health and locks the Gym for ${BAL.injuryDaysRange[0]}–${BAL.injuryDaysRange[1]} days (Recovery Program takes 1–3 days off, minimum 1); the row shows <b>🤕 #d</b> while it heals. Injuries never stop you playing matches — they only shut the Gym.</p>
-      <p><b>Stat ceilings:</b> each skill caps at ${BAL.skillShopCapBase} until you invest in that skill's dedicated Coach (5 levels, Coaching Shop) — but the effective ceiling is also capped by the highest league you've ever reached (peak, not current), from 60 in League 5 up to 100 in League 1. Both gates must be cleared to hit 100. Physical Health caps at ${BAL.statCapBase} until you invest in Sports Physio. Skill and Health bars all run to 100; the hatched end of a bar is the part your current cap locks off, and the Career screen shows what's capping each skill (a coach, or your league). The Coaching Shop warns when your league cap would waste a coach level's higher ceiling — and says outright when it's not worth buying yet because the skill is already at that cap.</p>
+      <p><b>Staff &amp; ceilings:</b> skills train up to ${BAL.skillShopCapBase} on your own. To go higher, hire that skill's <b>Coach</b> in 🧑‍🏫 Staff: a hired coach lifts the ceiling (Lv1 60 … Lv5 100) and speeds up training — but never past your league cap (the highest league you've reached: 60 in League 5 up to 100 in League 1). Above the ceiling a skill isn't cut down: an hour a day holds it, less lets it slip. Physical Health caps at ${BAL.statCapBase} without a hired Sports Physio. Staff are hired <b>a week at a time</b> (a week ends after each match): you pay the weekly wage up front (pro-rated if you hire mid-week) and nothing renews, so each week you choose who's worth it — usually that week's focus skills. Higher levels cost a one-off fee to unlock, only once your league allows it (coaches: Lv2 in League 4 … Lv5 in League 1; support team: Lv2 in League 3, Lv3 in League 1), and cost more per week. The hatched end of a bar is the part this week's ceiling locks off.</p>
       <p><b>End Day / To Match:</b> <b>End Day ▶</b> plays one day. <b>To Match ▶▶</b> repeats today's plan every day up to and including the next match, then shows the result with a summary of how your stats moved over the week (outside the season it's <b>End Week ▶▶</b>, up to 7 days, to the end of the week). It stops early so you can re-plan if you get injured, lose or find a job (or go pro), burn out, get a new technique to master, or Nutrition drops so far that your plan no longer fits in the day.</p>
       <p><b>The season:</b> a ${BAL.preseasonDays}-day preseason to train, then a ${BAL.seasonRounds}-round regular season — one match a week against a named rival, all scheduled in advance, each testing that week's active skills. Finish in the top ${BAL.playoffSize} of your ${BAL.seasonRounds + 1}-competitor league to reach the knockout playoffs. Lose a playoff match and you're out; win the Final and you're champion.</p>
       <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken. Get knocked out of the playoffs and you go to training camp too, for the rest of the playoff window (at least ${BAL.offseasonDays} days) — so an early exit gets its time back as training, just like missing the cut. Only the champion gets a plain ${BAL.offseasonDays}-day break.</p>
       <p><b>Match day:</b> both players get a <b>match-day rating</b> = rating + performance + luck. Your performance comes from your stats (each point above 70 adds 3, below 70 costs 3); every rival has a performance on the same scale. Luck is random for both sides every match — usually between about −150 and +120, occasionally +400 or more on an inspired day. The higher match-day rating wins, so the bigger your rating gap the likelier you are to win, but upsets always stay possible. The result screen shows every number side by side.</p>
       <p><b>Leagues:</b> there are ${BAL.leagueCount} leagues, League 1 at the top and League 5 at the bottom — you start in League 5. Every league has a persistent roster of named rivals whose ratings evolve from real simulated results every week, same as yours — every tier's table is live from round 1, not just visible once the season ends. Four go up from every league below League 1: the playoff champion, plus the top ${BAL.promotionTablePlaces} of the table other than the champion — so a top-${BAL.promotionTablePlaces} finish is always promoted, and anyone in the playoffs can still win their way up. Finish bottom ${BAL.relegationCount} and you're relegated. This applies to every competitor in every league, not just you — every league plays out its own knockout too — so the standings you see are a living world, not scenery. Check the Leagues screen any time (Menu, or the shortcut in Career) to see all ${BAL.leagueCount} tables. <b>Match History</b> keeps every match you play (tap one to see its full result again) and every result in all ${BAL.leagueCount} leagues for this season and last — tap a rival's name, there or in a league table, to see their season.</p>
-      <p><b>Rating</b> is your skill score (the 🏆 number), the same scale every rival is measured on — it rises and falls with each result, and it's what your win chance is worked out from. Your <b>table position</b> (#1–#40) is separate: it comes from league points, 3 per win. Cash and Rating carry across seasons and leagues — spend cash in the Coaching Shop any time.</p>
+      <p><b>Rating</b> is your skill score (the 🏆 number), the same scale every rival is measured on — it rises and falls with each result, and it's what your win chance is worked out from. Your <b>table position</b> (#1–#40) is separate: it comes from league points, 3 per win. Cash and Rating carry across seasons and leagues — spend cash on Staff each week.</p>
       <p><b>Employment:</b> your day job funds everything else, every phase, no exceptions. Work ${BAL.workHoursRequired}h/day (every phase, preseason included), starting at $${BAL.workPayMin}/day — pay is tied to still <i>having</i> the job, not to hitting the exact hour target every day, so falling short doesn't cost you income, only a chunk of a chance scaled to the shortfall (regained ${BAL.strikeWindowDays} days later). Run out of your ${fmt1(BAL.strikesToFire)} chances and <i>that's</i> when pay actually stops — you're fired: the same slider becomes a Job Search, needing a random ${BAL.jobSearchHoursRange[0]}–${BAL.jobSearchHoursRange[1]} cumulative hours (rolled when you lose the job and shown on the slider) to get rehired — at least ${BAL.jobSearchMinHours}h of searching a day, or the day can't end. Reach League ${BAL.goProLeagueTier} or higher with $${BAL.goProCash}+ banked while employed and you go Pro automatically — Work drops to just ${BAL.proDutyHoursRequired}h/day of Pro Duties, starting at $${BAL.proPayMin}/day, with the same chances rule and the same fallback to Job Search if you're dropped.</p>
       <p><b>Pay &amp; seniority:</b> pay rises $${BAL.payRaisePerYear}/year for your first ${BAL.payRaiseMaxYears} years in a role, then holds — Work tops out at $${BAL.workPayMin + BAL.payRaisePerYear * BAL.payRaiseMaxYears}/day, Pro Duties at $${BAL.proPayMin + BAL.payRaisePerYear * BAL.payRaiseMaxYears}/day. Lose the job or get dropped from Pro and that role's pay resets to its minimum for next time — seniority isn't carried over.</p>
       <p><b>Cost of living:</b> $${BAL.dailyExpenses}/day, charged every single day no matter your employment status — stay employed and you net a profit, but lose your job and the bills don't stop, so cash actively drains while you're out of work. Each new year opens with a summary of that year's full cash flow: pay earned, match winnings, and expenses paid.</p>
@@ -3637,6 +3713,8 @@ function endDayBlocker() {
 // Resolves one day with the current plan and logs it. Shared by End Day and
 // End Week; saving, re-rendering and modals are left to the caller.
 function runDay() {
+  // Staff contracts run to the end of the week (match day in season).
+  const weekEndsToday = daysLeftInWeek() === 1;
   const dayHeaderHtml = `Day ${state.day} — Results`;
   const entry = { html: dayHeaderHtml, cls: "day-header" };
   state.logEntries.push(entry);
@@ -3700,6 +3778,13 @@ function runDay() {
     const raiseText = yearSummary.newPayRate != null ? ` 📈 Pay is now $${fmt(yearSummary.newPayRate)}/day.` : "";
     const summary = `💰 Year ${yearSummary.year} cash flow: +$${fmt(yearSummary.workPay)} work, +$${fmt(yearSummary.matchCash)} matches, -$${fmt(yearSummary.expenses)} expenses → net ${fmtSigned(yearSummary.net, 0)}.${raiseText}`;
     const e = { html: summary, cls: "event-season" };
+    state.logEntries.push(e);
+    appendLog(e.html, e.cls);
+  }
+
+  if (weekEndsToday && state.staff && Object.keys(state.staff.hired).length) {
+    state.staff.hired = {};
+    const e = { html: "📋 Staff contracts have ended — hire for the new week in 🧑‍🏫 Staff.", cls: "event-season" };
     state.logEntries.push(e);
     appendLog(e.html, e.cls);
   }
