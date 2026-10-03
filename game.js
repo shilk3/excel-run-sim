@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.34.1";
+const APP_VERSION = "4.34.2";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -3569,7 +3569,7 @@ function weekSummaryHtml({ start, shownSkills, daysRun, planned, stopReason }) {
   const cashDelta = state.cash - start.cash;
   return `
     <div class="week-summary">
-      <h3>${daysRun === 1 ? "Today" : `This week · ${daysRun} days`}</h3>
+      <h3 class="week-summary-title">${daysRun} day skip summary for this week</h3>
       ${stopReason ? `<div class="week-stop">⏸️ Stopped after ${daysRun} of ${planned} days — ${stopReason}</div>` : ""}
       <table class="perf-table week-table">
         <thead><tr><th>Stat</th><th>Start</th><th>Now</th><th>Change</th></tr></thead>
