@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.34.0";
+const APP_VERSION = "4.34.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1725,6 +1725,11 @@ function resolvePlayoffRound() {
       matchResult = resolveMatch(liveOpponentRating(opp));
       matchResult.opponentName = opp.name;
       matchResult.roundLabel = roundName;
+      // Playoffs have no live table: show where each finished the regular season.
+      const finalTable = state.lastStandings || [];
+      const youFinal = finalTable.findIndex((t) => t.isPlayer) + 1;
+      const oppFinal = finalTable.findIndex((t) => !t.isPlayer && t.rivalId === opp.rivalId) + 1;
+      if (youFinal > 0 && oppFinal > 0) matchResult.h2hTable = { you: youFinal, opp: oppFinal, label: "📊 Final table" };
       const win = matchResult.win;
       recordRivalResultVsPlayer(opp.rivalId, win, matchResult.matchRating);
       winners.push(win ? player : opp);
@@ -1823,6 +1828,9 @@ function processDayEnd() {
       const standingsAfter = buildStandingsFromPoints(state.leagueTier);
       matchResult.positionBefore = positionBefore;
       matchResult.positionAfter = standingsAfter.findIndex((r) => r.isPlayer) + 1;
+      // Both sides' table places going into the match, for Head to Head.
+      const oppPos = standingsBefore.findIndex((r) => r.rivalId === fixture.rivalId) + 1;
+      if (oppPos > 0) matchResult.h2hTable = { you: positionBefore, opp: oppPos, label: "📊 Table" };
       matchResult.leagueSize = standingsAfter.length;
       state.roundIndex += 1;
 
@@ -2577,6 +2585,7 @@ function headToHeadHtml(result) {
       <thead><tr><th>Head to Head</th><th>You</th><th class="h2h-opp">${result.opponentName || "Opponent"}</th></tr></thead>
       <tbody>
         ${row("🏆 Rating", y.rating, o.rating)}
+        ${result.h2hTable ? row(result.h2hTable.label, `#${result.h2hTable.you}`, `#${result.h2hTable.opp}`) : ""}
         ${row("📈 Performance", `${y.perfScore.toFixed(1)} → ${signedNum(y.perfAdj)}`, `${o.perfScore} → ${signedNum(o.perfAdj)}`)}
         ${row("🎲 Luck on the day", signedNum(y.luck), signedNum(o.luck))}
       </tbody>
