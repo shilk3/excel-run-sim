@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.33.0";
+const APP_VERSION = "4.34.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -99,7 +99,8 @@ const BAL = {
   // this is what makes losing your job actually cost you money, not just stall your income
   strikeWindowDays: 21, // 3 weeks — each strike expires this many days after it's earned
   strikesToFire: 3,
-  jobSearchHoursRange: [10, 40], // Unemployed: cumulative hours (any daily amount counts) to get re-hired — rolled fresh each time you lose a job
+  jobSearchHoursRange: [10, 40], // Unemployed: cumulative hours to get re-hired — rolled fresh each time you lose a job
+  jobSearchMinHours: 1, // Unemployed: at least this much Job Search a day, or the day can't end (no idling into endless debt)
   goProLeagueTier: 2, // Employed + leagueTier <= this + cash >= goProCash -> Pro, automatically
   goProCash: 5000,
   // Pros must stay current: a new technique queues up periodically: only
@@ -2200,7 +2201,7 @@ function workRowHtml() {
       cap: jobSearchTarget(),
       hours,
       maxHours,
-      markerHours: 0,
+      markerHours: BAL.jobSearchMinHours,
       barClass: "work",
     });
   }
@@ -2358,14 +2359,17 @@ function renderPlanner() {
   // Over-allocated (the cap can shrink overnight via Nutrition after hours
   // were already set against yesterday's higher cap) — block ending the day
   // until it's brought back down to the new, smaller budget.
+  const blocker = endDayBlocker();
   const endDayBtn = $("endDayBtn");
-  endDayBtn.disabled = left < 0;
-  endDayBtn.title = left < 0 ? "Over today's hours budget — reduce allocation before ending the day" : "";
+  endDayBtn.disabled = !!blocker;
+  endDayBtn.title = blocker || "";
+  const hint = $("endDayHint");
+  if (hint) hint.textContent = blocker || "";
   const endWeekBtn = $("endWeekBtn");
   if (endWeekBtn) {
     const days = daysLeftInWeek();
     const toMatch = state.seasonPhase === "regular" || state.seasonPhase === "playoffs";
-    endWeekBtn.disabled = left < 0;
+    endWeekBtn.disabled = !!blocker;
     endWeekBtn.innerHTML = `${toMatch ? "To Match" : "End Week"} ▶▶ <span class="end-week-days">${days}d</span>`;
     endWeekBtn.title = toMatch
       ? `Repeat today's plan for ${days} day${days === 1 ? "" : "s"}, through the next match`
@@ -2829,7 +2833,7 @@ function employmentSectionHtml() {
   const expensesLine = `<p class="modal-sub">💸 Cost of living: $${fmt(BAL.dailyExpenses)}/day, every day, regardless of employment status.</p>`;
 
   if (emp.status === "unemployed") {
-    return `${expensesLine}<p>🔍 <b>Unemployed</b> — job searching: ${fmt(emp.jobSearchHours)} / ${jobSearchTarget()}h accumulated (each search needs a random ${BAL.jobSearchHoursRange[0]}–${BAL.jobSearchHoursRange[1]}h). Any hours allocated to the slider count, no daily minimum.</p>`;
+    return `${expensesLine}<p>🔍 <b>Unemployed</b> — job searching: ${fmt(emp.jobSearchHours)} / ${jobSearchTarget()}h accumulated (each search needs a random ${BAL.jobSearchHoursRange[0]}–${BAL.jobSearchHoursRange[1]}h). Every hour counts toward it, and you need at least ${BAL.jobSearchMinHours}h a day to end the day.</p>`;
   }
 
   if (emp.status === "pro") {
@@ -3091,7 +3095,7 @@ function openHowTo() {
       <p><b>Match day:</b> both players get a <b>match-day rating</b> = rating + performance + luck. Your performance comes from your stats (each point above 70 adds 3, below 70 costs 3); every rival has a performance on the same scale. Luck is random for both sides every match — usually between about −150 and +120, occasionally +400 or more on an inspired day. The higher match-day rating wins, so the bigger your rating gap the likelier you are to win, but upsets always stay possible. The result screen shows every number side by side.</p>
       <p><b>Leagues:</b> there are ${BAL.leagueCount} leagues, League 1 at the top and League 5 at the bottom — you start in League 5. Every league has a persistent roster of named rivals whose ratings evolve from real simulated results every week, same as yours — every tier's table is live from round 1, not just visible once the season ends. Four go up from every league below League 1: the playoff champion, plus the top ${BAL.promotionTablePlaces} of the table other than the champion — so a top-${BAL.promotionTablePlaces} finish is always promoted, and anyone in the playoffs can still win their way up. Finish bottom ${BAL.relegationCount} and you're relegated. This applies to every competitor in every league, not just you — every league plays out its own knockout too — so the standings you see are a living world, not scenery. Check the Leagues screen any time (Menu, or the shortcut in Career) to see all ${BAL.leagueCount} tables.</p>
       <p><b>Rating</b> is your skill score (the 🏆 number), the same scale every rival is measured on — it rises and falls with each result, and it's what your win chance is worked out from. Your <b>table position</b> (#1–#40) is separate: it comes from league points, 3 per win. Cash and Rating carry across seasons and leagues — spend cash in the Coaching Shop any time.</p>
-      <p><b>Employment:</b> your day job funds everything else, every phase, no exceptions. Work ${BAL.workHoursRequired}h/day (every phase, preseason included), starting at $${BAL.workPayMin}/day — pay is tied to still <i>having</i> the job, not to hitting the exact hour target every day, so falling short doesn't cost you income, only a chunk of a chance scaled to the shortfall (regained ${BAL.strikeWindowDays} days later). Run out of your ${fmt1(BAL.strikesToFire)} chances and <i>that's</i> when pay actually stops — you're fired: the same slider becomes a Job Search, needing a random ${BAL.jobSearchHoursRange[0]}–${BAL.jobSearchHoursRange[1]} cumulative hours (rolled when you lose the job and shown on the slider; any daily amount counts) to get rehired. Reach League ${BAL.goProLeagueTier} or higher with $${BAL.goProCash}+ banked while employed and you go Pro automatically — Work drops to just ${BAL.proDutyHoursRequired}h/day of Pro Duties, starting at $${BAL.proPayMin}/day, with the same chances rule and the same fallback to Job Search if you're dropped.</p>
+      <p><b>Employment:</b> your day job funds everything else, every phase, no exceptions. Work ${BAL.workHoursRequired}h/day (every phase, preseason included), starting at $${BAL.workPayMin}/day — pay is tied to still <i>having</i> the job, not to hitting the exact hour target every day, so falling short doesn't cost you income, only a chunk of a chance scaled to the shortfall (regained ${BAL.strikeWindowDays} days later). Run out of your ${fmt1(BAL.strikesToFire)} chances and <i>that's</i> when pay actually stops — you're fired: the same slider becomes a Job Search, needing a random ${BAL.jobSearchHoursRange[0]}–${BAL.jobSearchHoursRange[1]} cumulative hours (rolled when you lose the job and shown on the slider) to get rehired — at least ${BAL.jobSearchMinHours}h of searching a day, or the day can't end. Reach League ${BAL.goProLeagueTier} or higher with $${BAL.goProCash}+ banked while employed and you go Pro automatically — Work drops to just ${BAL.proDutyHoursRequired}h/day of Pro Duties, starting at $${BAL.proPayMin}/day, with the same chances rule and the same fallback to Job Search if you're dropped.</p>
       <p><b>Pay &amp; seniority:</b> pay rises $${BAL.payRaisePerYear}/year for your first ${BAL.payRaiseMaxYears} years in a role, then holds — Work tops out at $${BAL.workPayMin + BAL.payRaisePerYear * BAL.payRaiseMaxYears}/day, Pro Duties at $${BAL.proPayMin + BAL.payRaisePerYear * BAL.payRaiseMaxYears}/day. Lose the job or get dropped from Pro and that role's pay resets to its minimum for next time — seniority isn't carried over.</p>
       <p><b>Cost of living:</b> $${BAL.dailyExpenses}/day, charged every single day no matter your employment status — stay employed and you net a profit, but lose your job and the bills don't stop, so cash actively drains while you're out of work. Each new year opens with a summary of that year's full cash flow: pay earned, match winnings, and expenses paid.</p>
       <p>Pros have one more thing to manage: staying current. Roughly every ${BAL.techniqueIntervalDays} days a new Excel technique appears that needs ${BAL.techniqueMinHours}-${BAL.techniqueMaxHours}h to master — any Pro Duties hours beyond the ${BAL.proDutyHoursRequired}h minimum go toward it. Falling behind never costs you progress (new ones just queue up), but every technique still unmastered costs ${Math.round(BAL.techniquePenaltyPerUnmastered * 100)}% match performance, stacking.</p>
@@ -3357,6 +3361,16 @@ function isOverAllocated() {
   return dailyHoursCap(state.stats.nutrition) - totalAssigned() < 0;
 }
 
+// Why today's plan can't be played yet (null = it can). Shared by both
+// buttons and both actions, and shown as a hint under the buttons.
+function endDayBlocker() {
+  if (isOverAllocated()) return "Over today's hours budget — trim your plan to end the day.";
+  if (state.employment.status === "unemployed" && (state.allocation.work || 0) < BAL.jobSearchMinHours) {
+    return `🔍 Put at least ${BAL.jobSearchMinHours}h into Job Search to end the day.`;
+  }
+  return null;
+}
+
 // Resolves one day with the current plan and logs it. Shared by End Day and
 // End Week; saving, re-rendering and modals are left to the caller.
 function runDay() {
@@ -3437,7 +3451,7 @@ function finishTurn() {
 function endDay() {
   // Defensive: the button is disabled whenever this is true, but guard the
   // action itself too in case it's ever reachable another way.
-  if (isOverAllocated()) return;
+  if (endDayBlocker()) return;
   const { matchResult, yearSummary } = runDay();
   finishTurn();
   if (matchResult) {
@@ -3500,7 +3514,7 @@ function weekStopReason(before) {
 }
 
 function endWeek() {
-  if (isOverAllocated()) return;
+  if (endDayBlocker()) return;
   const planned = daysLeftInWeek();
   const start = weekSnapshot();
   // This week's match skills always; otherwise only skills you trained
