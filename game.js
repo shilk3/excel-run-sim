@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.31.1";
+const APP_VERSION = "4.32.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -2733,9 +2733,16 @@ function openNameModal(isFirstTime) {
 function employmentSectionHtml() {
   const emp = state.employment;
   const lives = livesRemaining();
-  const strikeLines = emp.strikes
-    .map((s) => `-${fmt1(s.amount != null ? s.amount : 1)} chance on Day ${s.day} (clears Day ${s.day + BAL.strikeWindowDays})`)
-    .join("<br>");
+  // Chances lost come back strikeWindowDays later — detail tucked away in a
+  // collapsed row so the section stays short.
+  const returning = emp.strikes
+    .map((s) => ({ amount: s.amount != null ? s.amount : 1, lost: s.day, back: s.day + BAL.strikeWindowDays }))
+    .sort((a, b) => a.back - b.back);
+  const strikeLines = returning.length
+    ? `<details class="match-more emp-returns"><summary>Chances coming back (${fmt1(returning.reduce((a, r) => a + r.amount, 0))})</summary>${returning
+        .map((r) => `<div class="kv-row"><span>+${fmt1(r.amount)} on Day ${r.back}</span><span class="kv-dim">lost Day ${r.lost} · in ${r.back - state.day} day${r.back - state.day === 1 ? "" : "s"}</span></div>`)
+        .join("")}</details>`
+    : "";
   // Shown regardless of status — it's charged every day no matter what, so
   // it belongs here rather than cluttering the main planner row, which
   // already shows the pay side of the ledger.
@@ -2751,15 +2758,15 @@ function employmentSectionHtml() {
     const queueHtml = queue.length
       ? queue.map((t, i) => `${i === 0 ? "▶" : "⏸"} ${t.name}: ${fmt(t.hoursDone)}/${t.hoursNeeded}h`).join("<br>")
       : "Fully caught up — no match penalty.";
-    return `${expensesLine}<p>🏆 <b>Pro</b> · Pro Duties ${BAL.proDutyHoursRequired}h/day required ($${fmt(emp.proPay)}/day) · ${fmt1(lives)}/${fmt1(BAL.strikesToFire)} chances${strikeLines ? "<br>" + strikeLines : ""}</p>
+    return `${expensesLine}<p>🏆 <b>Pro</b> · Pro Duties ${BAL.proDutyHoursRequired}h/day required ($${fmt(emp.proPay)}/day) · ${fmt1(lives)}/${fmt1(BAL.strikesToFire)} chances</p>${strikeLines}
       <p><b>Technique queue</b> (hours above ${BAL.proDutyHoursRequired}h/day go here)${penalty > 0 ? ` — currently <b>-${penalty}%</b> match performance` : ""}:<br>${queueHtml}</p>`;
   }
 
   const goProHint = checkGoProEligible()
     ? "Thresholds met — going pro next time a day resolves."
     : `Go pro at League ${BAL.goProLeagueTier} or higher with $${BAL.goProCash}+ banked (currently League ${state.leagueTier}, ${fmtMoney(state.cash)}).`;
-  return `${expensesLine}<p>💼 <b>Employed</b> · Work ${BAL.workHoursRequired}h/day required ($${fmt(emp.workPay)}/day) · ${fmt1(lives)}/${fmt1(BAL.strikesToFire)} chances${strikeLines ? "<br>" + strikeLines : ""}</p>
-    <p>${goProHint}</p>`;
+  return `${expensesLine}<p>💼 <b>Employed</b> · Work ${BAL.workHoursRequired}h/day required ($${fmt(emp.workPay)}/day) · ${fmt1(lives)}/${fmt1(BAL.strikesToFire)} chances</p>${strikeLines}
+    <p class="modal-sub">${goProHint}</p>`;
 }
 
 // Same 0-100 bar layout as the Career skill list, so stats and skills read
@@ -2790,29 +2797,34 @@ function openCareer() {
   let nextSection;
   if (info.kind === "fixture" || info.kind === "playoff") {
     const rival = info.opponentRivalId != null ? findRival(info.opponentRivalId) : null;
+    // Their league is only worth saying if it isn't yours (it always is,
+    // outside of edge cases) — the record is what tells you something.
     const opponentExtra = rival
-      ? ` · League ${rival.league} · Record ${rival.wins}-${rival.losses}`
+      ? `${rival.league !== state.leagueTier ? ` · League ${rival.league}` : ""} · ${rival.wins}–${rival.losses}`
       : "";
     const skillsForMatch = state.activeSkills
       .map((k) => {
         const meta = skillMeta(k);
-        return `${meta.icon} ${meta.name}: ${fmt(state.stats.skills[k])}/${skillCap(k)}`;
+        return `<div class="kv-row"><span>${meta.icon} ${meta.name}</span><span>${fmt(state.stats.skills[k])}/${skillCap(k)}</span></div>`;
       })
-      .join(" · ");
+      .join("");
+    const matchName = info.kind === "playoff" ? PLAYOFF_ROUND_NAMES[state.playoff.stage] : `Round ${state.roundIndex + 1}/${BAL.seasonRounds}`;
+    const when = info.daysUntil <= 0 ? "today" : daysUntilPhrase(info.daysUntil);
     nextSection = `
-      <p>${info.label}</p>
+      <div class="kv-row"><span>Match</span><span>${matchName} · ${when}</span></div>
+      <div class="kv-row"><span>Opponent</span><span>${info.opponentName} · ${info.opponentRating}${opponentExtra}</span></div>
+      <div class="kv-row"><span>Win chance</span><span><b>${info.winPct}%</b> · performance ${fmt(performanceScore())}/100</span></div>
       <div class="callout">
         <div class="callout-label">Tested this match</div>
-        <div>${skillsForMatch}</div>
-      </div>
-      <p><b>Opponent:</b> ${info.opponentName} · Rating ${info.opponentRating}${opponentExtra}<br>
-      <b>Your odds:</b> ${info.winPct}% win chance (performance ${fmt(performanceScore())}/100)</p>`;
+        ${skillsForMatch}
+      </div>`;
   } else {
     nextSection = `<p>${info.label}</p>`;
   }
 
   const seasonWins = state.seasonResults.filter((r) => r.win).length;
   const seasonPlayed = state.seasonResults.length;
+  const tablePos = playerTablePosition();
 
   let standingsSection = "";
   if (state.lastStandings) {
@@ -2845,24 +2857,25 @@ function openCareer() {
     </div>
     <div class="modal-section">
       <h3>This Season</h3>
-      <p>Year ${state.year} · League ${state.leagueTier} · Round ${seasonPlayed}/${BAL.seasonRounds} · Record ${seasonWins}-${seasonPlayed - seasonWins}<br>
-      Highest league reached: League ${state.peakLeagueTier}</p>
+      <div class="kv-row"><span>Year ${state.year} · League ${state.leagueTier}</span><span>Played ${seasonPlayed}/${BAL.seasonRounds}</span></div>
+      <div class="kv-row"><span>Record</span><span>${seasonWins}–${seasonPlayed - seasonWins}${tablePos ? ` · #${tablePos.pos} of ${tablePos.size}` : ""}</span></div>
+      ${state.peakLeagueTier !== state.leagueTier ? `<div class="kv-row"><span>Highest league reached</span><span>League ${state.peakLeagueTier}</span></div>` : ""}
       <div class="menu-row" id="viewLeaguesLink"><span>📊 View League Standings</span><span class="arrow">›</span></div>
     </div>
     ${playoffSection}
     ${standingsSection}
     <div class="modal-section">
-      <h3>Career Record</h3>
-      <p>${escapeHtml(state.playerName || "Player")} · Rating ${fmt(state.rank)} (peak ${fmt(state.peakRank)})<br>
-      All-time: ${state.wins}W – ${state.losses}L<br>
-      Cash: ${fmtMoney(state.cash)}</p>
+      <h3>Career — ${escapeHtml(state.playerName || "Player")}</h3>
+      <div class="kv-row"><span>Rating</span><span>${fmt(state.rank)} · peak ${fmt(state.peakRank)}</span></div>
+      ${state.wins !== seasonWins || state.losses !== seasonPlayed - seasonWins ? `<div class="kv-row"><span>All-time record</span><span>${state.wins}–${state.losses}</span></div>` : ""}
     </div>
     <div class="modal-section">
       <h3>Employment</h3>
       ${employmentSectionHtml()}
     </div>
     <div class="modal-section">
-      <h3>Skills — ${!inSeason() ? `${isPreseason() ? "preseason" : "off-season"}: train anything` : `this week's focus: ${state.activeSkills.map((k) => skillMeta(k).name).join(", ")}`}</h3>
+      <h3>Skills${!inSeason() ? ` — ${isPreseason() ? "preseason" : "off-season"}: train anything` : ""}</h3>
+      ${inSeason() ? `<p class="modal-sub skills-legend">🟢 = this week's focus, the only skills you can train and the ones tested in the next match.</p>` : ""}
       ${SKILLS.map((sk) => {
         const cap = skillCap(sk.key);
         const val = state.stats.skills[sk.key];

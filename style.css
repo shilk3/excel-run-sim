@@ -763,3 +763,14 @@ details.match-more[open] > summary::after { transform: rotate(90deg); }
 details.match-more[open] { padding-bottom: 8px; }
 .calc-table { margin-top: 2px; }
 .calc-table + .perf-note { margin-bottom: 14px; }
+
+/* Career & Season: label / value rows */
+.kv-row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-top: 1px solid var(--border); font-size: 14px; }
+.kv-row:first-of-type { border-top: none; }
+.kv-row > span:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.kv-row > span:first-child { color: var(--text-dim); }
+.callout .kv-row { border-top-color: rgba(52, 208, 160, 0.2); }
+.callout .kv-row > span:first-child { color: var(--text); }
+.emp-returns .kv-row > span:first-child { color: var(--text); }
+.kv-row .kv-dim { color: var(--text-dim); font-size: 12.5px; align-self: center; }
+.skills-legend { margin-bottom: 10px !important; }
