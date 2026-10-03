@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.32.0";
+const APP_VERSION = "4.32.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -2342,12 +2342,18 @@ function stickyHeadHtml(title, extraHtml = "") {
     </div>`;
 }
 
-function openModal(html, { ownClose = false } = {}) {
+function openModal(html, { ownClose = false, keepScroll = false } = {}) {
   $("modalBody").innerHTML = html;
   // Modals with their own sticky header carry their own ✕; hide the
   // floating one, which scrolls away with the content.
   $("modal").classList.toggle("modal-own-close", ownClose);
   $("modalOverlay").classList.remove("hidden");
+  // The sheet is reused for every pop-up, so it remembers how far the last
+  // one was scrolled — start each new one at the top. Must happen after it
+  // is shown: browsers ignore scrolling an element that's display:none. A
+  // pop-up redrawing itself in place (the Shop after a purchase) keeps its
+  // position.
+  if (!keepScroll) $("modal").scrollTop = 0;
   const inlineClose = $("modalBody").querySelector("[data-modal-close]");
   if (inlineClose) inlineClose.addEventListener("click", closeModal);
 }
@@ -2652,8 +2658,10 @@ function shopHtml() {
     </div>`;
 }
 
-function openShop() {
-  openModal(shopHtml(), { ownClose: true });
+function openShop(opts) {
+  // Called directly as a click handler too, so opts may be an Event.
+  const keepScroll = !!(opts && opts.keepScroll === true);
+  openModal(shopHtml(), { ownClose: true, keepScroll });
   document.querySelectorAll("[data-upgrade]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const key = btn.getAttribute("data-upgrade");
@@ -2665,7 +2673,7 @@ function openShop() {
       state.cash -= next.cost;
       state.upgrades[key] = lvl + 1;
       saveState();
-      openShop();
+      openShop({ keepScroll: true });
       // Coaches raise skill caps and Physio raises the Health cap — the
       // planner rows behind the modal show both, so refresh them too.
       renderTopbar();
