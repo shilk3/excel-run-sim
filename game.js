@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.30.1";
+const APP_VERSION = "4.31.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1367,7 +1367,9 @@ function resolveMatch(opponentRating) {
     ratingChange,
     ratingChangeRaw: Math.round(K * (actual - winProb)),
     rankLossMult,
+    cashBonusMult,
     rankBefore,
+    rankAfterMatch: state.rank,
     cashReward,
     cashBefore,
     recordBefore,
@@ -2432,20 +2434,55 @@ function matchResultTableHtml(result) {
   rows.push(row("💰 Cash", fmtMoney(result.cashBefore), fmtMoney(cashAfter), `+${fmtMoney(cashDelta)}`, "wk-up"));
   rows.push(row("📋 Record", `${rec.wins}–${rec.losses}`, `${recAfter.wins}–${recAfter.losses}`, result.win ? "W" : "L", result.win ? "wk-up" : "wk-down"));
 
-  const raw = result.ratingChangeRaw;
-  let why = result.win
-    ? `A win earns 24 × the ${100 - result.winProb}% chance you'd lose = ${signedNum(raw)}.`
-    : `A loss costs 24 × your ${result.winProb}% win chance = ${signedNum(raw)}${
-        result.ratingChange !== raw ? `, cut to ${signedNum(result.ratingChange)} by your Team Manager` : ""
-      }.`;
-  why += " Unlikely results move your rating more.";
-  if (bonus.rating) why += ` Plus a ${signedNum(bonus.rating)} champion bonus.`;
   return `
     <table class="perf-table result-table">
       <thead><tr><th>Your Result</th><th>Before</th><th>After</th><th>Change</th></tr></thead>
       <tbody>${rows.join("")}</tbody>
+    </table>`;
+}
+
+// Collapsed "How were rating and cash worked out?": the two sums behind the
+// Your Result table's Rating and Cash changes.
+function ratingCashExplainerHtml(result) {
+  const bonus = result.championBonus || { cash: 0, rating: 0 };
+  const row = (label, value, cls = "") => `<tr class="${cls}"><td>${label}</td><td>${value}</td></tr>`;
+  const raw = result.ratingChangeRaw;
+  const ratingRows = [
+    result.win
+      ? row(`Win: 24 × your ${100 - result.winProb}% chance to lose`, signedNum(raw))
+      : row(`Loss: 24 × your ${result.winProb}% chance to win`, signedNum(raw)),
+  ];
+  if (result.ratingChange !== raw) {
+    ratingRows.push(row(`🧑‍💼 Team Manager (−${Math.round((1 - result.rankLossMult) * 100)}% on losses)`, signedNum(result.ratingChange - raw), "perf-sub"));
+  }
+  if (bonus.rating) ratingRows.push(row("👑 Champion bonus", signedNum(bonus.rating), "perf-sub"));
+  const ratingTotal = state.rank - result.rankBefore;
+
+  const basePrize = result.win ? 150 + result.rankAfterMatch / 10 : 40;
+  const cashRows = [
+    result.win
+      ? row(`Win: $150 + your new rating (${fmt(result.rankAfterMatch)}) ÷ 10`, `+${fmtMoney(Math.round(basePrize))}`)
+      : row("Loss: flat prize", `+${fmtMoney(40)}`),
+  ];
+  if (result.cashBonusMult > 1) {
+    cashRows.push(row(`🧑‍💼 Team Manager (+${Math.round((result.cashBonusMult - 1) * 100)}% prize money)`, `+${fmtMoney(result.cashReward - Math.round(basePrize))}`, "perf-sub"));
+  }
+  if (bonus.cash) cashRows.push(row("👑 Champion bonus", `+${fmtMoney(bonus.cash)}`, "perf-sub"));
+  const cashTotal = result.cashReward + bonus.cash;
+
+  return `
+    <table class="perf-table calc-table">
+      <thead><tr><th>🏆 Rating</th><th></th></tr></thead>
+      <tbody>${ratingRows.join("")}</tbody>
+      <tfoot><tr><td>Rating change</td><td>${signedNum(ratingTotal)}</td></tr></tfoot>
     </table>
-    <div class="match-sub perf-note">${why}</div>`;
+    <div class="match-sub perf-note">A win is worth up to 24 points and a loss costs up to 24. The less likely the result, the bigger the change — beating a favourite earns a lot, beating an underdog very little.</div>
+    <table class="perf-table calc-table">
+      <thead><tr><th>💰 Cash</th><th></th></tr></thead>
+      <tbody>${cashRows.join("")}</tbody>
+      <tfoot><tr><td>Prize money</td><td>+${fmtMoney(cashTotal)}</td></tr></tfoot>
+    </table>
+    <div class="match-sub perf-note">Your cash "Before" already includes today's pay and living costs, so the change is just this match's prize.</div>`;
 }
 
 function headToHeadHtml(result) {
@@ -2505,6 +2542,10 @@ function showMatchModal(result, extraHtml = "") {
         <details class="match-more">
           <summary>How do luck and win chance work?</summary>
           ${luckExplainerHtml(result)}
+        </details>
+        <details class="match-more">
+          <summary>How were rating and cash worked out?</summary>
+          ${ratingCashExplainerHtml(result)}
         </details>
         ${extraHtml}
         <button class="primary-btn" id="matchOk">Continue</button>

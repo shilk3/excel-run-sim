@@ -761,3 +761,5 @@ details.match-more > summary::-webkit-details-marker { display: none; }
 details.match-more > summary::after { content: "▸"; color: var(--text-dim); transition: transform 0.15s; }
 details.match-more[open] > summary::after { transform: rotate(90deg); }
 details.match-more[open] { padding-bottom: 8px; }
+.calc-table { margin-top: 2px; }
+.calc-table + .perf-note { margin-bottom: 14px; }
