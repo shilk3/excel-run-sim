@@ -105,6 +105,11 @@ fall in the background. Promotion/relegation is applied once the playoffs
 are over. Check the Leagues screen any time to see all 5 tables, or jump
 there directly from the Career modal.
 
+**Match History** (menu, the Log header, Leagues and Career) keeps every match
+you play — tap one to reopen its full result screen — plus every result in
+all 5 leagues, round by round, for this season and last. Tap any rival's
+name (there or in a league table) to see their season so far.
+
 Rating, Cash, stats, and Coaching Shop upgrades all carry over between years
 and leagues.
 

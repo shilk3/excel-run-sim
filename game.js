@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.34.3";
+const APP_VERSION = "4.35.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -575,6 +575,7 @@ function freshState() {
     peakLeagueTier: leagueTier, // numerically lowest (best) tier ever reached
     rivals, // 199 persistent named rivals, spanning all 5 leagues
     rivalNamesVersion: 2, // 2 = names from RIVAL_NAMES (see renameRivalsToCurrentList)
+    matchHistory: { mine: [], league: {} }, // see recordLeagueResult / recordMyMatch
     leagueStandings: { 1: null, 2: null, 3: null, 4: null, 5: null }, // last fully completed season per tier
     leagueRoundRobins: leagueData.roundRobins, // this season's full fixture list per tier, all 5 at once
     leaguePoints: leagueData.points, // this season's live running points per tier, updated every round
@@ -845,6 +846,23 @@ function migrateSave(parsed) {
   // realigned here instead of carrying the offset forever.
   if ((parsed.seasonPhase === "regular" || parsed.seasonPhase === "playoffs") && parsed.skillCycleDay !== parsed.phaseDay) {
     parsed.skillCycleDay = parsed.phaseDay;
+  }
+
+  // v4.35.0: match history. Earlier matches this season only kept opponent
+  // and result, so they come in as simple rows; league-wide results start now.
+  if (!parsed.matchHistory) {
+    const tier = parsed.lastStandingsTier || parsed.leagueTier;
+    parsed.matchHistory = {
+      mine: (parsed.seasonResults || []).map((r, i) => ({
+        legacy: true,
+        year: parsed.year,
+        tier,
+        roundLabel: `Round ${i + 1}/${BAL.seasonRounds}`,
+        opponentName: r.opponent,
+        win: r.win,
+      })),
+      league: {},
+    };
   }
 
   // v4.33.0: rivals get names from the hand-picked list (no repeated words).
@@ -1482,6 +1500,40 @@ function eloChange(ratingA, ratingB, aWon, K = 24) {
 // Resolves one NPC-vs-NPC match and updates both rivals' persistent ratings
 // and lifetime records — this is what makes the other 199 rivals a real,
 // evolving world rather than static names.
+// ---- Match history ----
+// mine: every match you play, as the full result object (so its result
+//   screen can be reopened later). Kept for the whole career.
+// league: compact results for every match in all 5 leagues —
+//   league[year][tier][roundKey] = [[winnerId, loserId, winnerRating,
+//   loserRating], …], roundKey "1".."39" or a playoff stage; you are id -1.
+//   Only this season and last are kept.
+const HISTORY_PLAYER_ID = -1;
+const HISTORY_ROUND_KEYS = Array.from({ length: BAL.seasonRounds }, (_, i) => String(i + 1)).concat(["r16", "qf", "sf", "f"]);
+const BRACKET_STAGE_BY_SIZE = { 16: "r16", 8: "qf", 4: "sf", 2: "f" };
+
+function ensureHistory() {
+  if (!state.matchHistory) state.matchHistory = { mine: [], league: {} };
+  return state.matchHistory;
+}
+
+function recordLeagueResult(tier, roundKey, winnerId, loserId, winnerRating, loserRating) {
+  if (!tier || !roundKey) return;
+  const h = ensureHistory();
+  const year = state.year;
+  Object.keys(h.league).forEach((y) => {
+    if (Number(y) < year - 1) delete h.league[y];
+  });
+  const byTier = (h.league[year] = h.league[year] || {});
+  const rounds = (byTier[tier] = byTier[tier] || {});
+  (rounds[roundKey] = rounds[roundKey] || []).push([winnerId, loserId, Math.round(winnerRating), Math.round(loserRating)]);
+}
+
+function recordMyMatch(result) {
+  const copy = JSON.parse(JSON.stringify(result));
+  copy.year = state.year;
+  ensureHistory().mine.push(copy);
+}
+
 function resolveNpcMatch(rivalA, rivalB) {
   const aWon = simulateNpcMatch(rivalA.rating, rivalB.rating);
   const change = eloChange(rivalA.rating, rivalB.rating, aWon);
@@ -1510,8 +1562,10 @@ function resolveLeagueRoundForTier(tier, roundIndex) {
     const rivalA = findRival(a);
     const rivalB = findRival(b);
     if (!rivalA || !rivalB) return;
+    const ra = rivalA.rating, rb = rivalB.rating;
     const aWon = resolveNpcMatch(rivalA, rivalB);
     const winnerId = aWon ? a : b;
+    recordLeagueResult(tier, String(roundIndex + 1), aWon ? a : b, aWon ? b : a, aWon ? ra : rb, aWon ? rb : ra);
     state.leaguePoints[tier][winnerId] = (state.leaguePoints[tier][winnerId] || 0) + 3;
   });
 }
@@ -1643,16 +1697,22 @@ function buildPlayoffBracket(standings, tier) {
 
 // Plays an all-rival knockout from the given round (teams in bracket order)
 // down to one champion. Never called with the player still in it.
-function finishNpcBracket(teams) {
+function finishNpcBracket(teams, tier) {
   let round = teams;
   while (round.length > 1) {
     const next = [];
+    const stage = BRACKET_STAGE_BY_SIZE[round.length];
     for (let i = 0; i < round.length; i += 2) {
       const a = round[i];
       const b = round[i + 1];
       const ra = findRival(a.rivalId);
       const rb = findRival(b.rivalId);
+      const ratingA = ra ? ra.rating : a.rating, ratingB = rb ? rb.rating : b.rating;
       const aWins = ra && rb ? resolveNpcMatch(ra, rb) : simulateNpcMatch(a.rating, b.rating);
+      if (tier && stage) {
+        const w = aWins ? a : b, l = aWins ? b : a;
+        recordLeagueResult(tier, stage, w.isPlayer ? HISTORY_PLAYER_ID : w.rivalId, l.isPlayer ? HISTORY_PLAYER_ID : l.rivalId, aWins ? ratingA : ratingB, aWins ? ratingB : ratingA);
+      }
       next.push(aWins ? a : b);
     }
     round = next;
@@ -1671,7 +1731,7 @@ function finalizeSeasonMovement(playerTierChampion) {
   for (let tier = 1; tier <= BAL.leagueCount; tier++) {
     const standings = state.leagueStandings[tier];
     if (!standings) continue;
-    const champ = tier === playedTier && playerTierChampion ? playerTierChampion : finishNpcBracket(seedBracket(standings));
+    const champ = tier === playedTier && playerTierChampion ? playerTierChampion : finishNpcBracket(seedBracket(standings), tier);
     champions[tier] = { name: champ.name, rivalId: champ.rivalId, isPlayer: !!champ.isPlayer };
   }
   state.playoffChampions = champions;
@@ -1731,6 +1791,8 @@ function resolvePlayoffRound() {
       const oppFinal = finalTable.findIndex((t) => !t.isPlayer && t.rivalId === opp.rivalId) + 1;
       if (youFinal > 0 && oppFinal > 0) matchResult.h2hTable = { you: youFinal, opp: oppFinal, label: "📊 Final table" };
       const win = matchResult.win;
+      matchResult.tier = p.tier;
+      recordLeagueResult(p.tier, p.stage, win ? HISTORY_PLAYER_ID : opp.rivalId, win ? opp.rivalId : HISTORY_PLAYER_ID, win ? matchResult.rankBefore : matchResult.opponentRating, win ? matchResult.opponentRating : matchResult.rankBefore);
       recordRivalResultVsPlayer(opp.rivalId, win, matchResult.matchRating);
       winners.push(win ? player : opp);
       summary = win ? `🏆 ${roundName} WIN vs ${opp.name}!` : `💔 Eliminated in the ${roundName} by ${opp.name}.`;
@@ -1741,7 +1803,9 @@ function resolvePlayoffRound() {
       // season's round-robin does.
       const rivalA = findRival(teamA.rivalId);
       const rivalB = findRival(teamB.rivalId);
+      const ratingA = rivalA ? rivalA.rating : teamA.rating, ratingB = rivalB ? rivalB.rating : teamB.rating;
       const aWins = rivalA && rivalB ? resolveNpcMatch(rivalA, rivalB) : simulateNpcMatch(teamA.rating, teamB.rating);
+      recordLeagueResult(p.tier, p.stage, (aWins ? teamA : teamB).rivalId, (aWins ? teamB : teamA).rivalId, aWins ? ratingA : ratingB, aWins ? ratingB : ratingA);
       winners.push(aWins ? teamA : teamB);
     }
   }
@@ -1752,7 +1816,7 @@ function resolvePlayoffRound() {
     seasonOver = true;
     // The bracket still needs a champion (they're promoted) — play out the
     // remaining rounds without the player.
-    champion = finishNpcBracket(winners);
+    champion = finishNpcBracket(winners, p.tier);
   } else if (p.stage === "f") {
     p.champion = true;
     seasonOver = true;
@@ -1811,6 +1875,8 @@ function processDayEnd() {
       matchResult = resolveMatch(liveOpponentRating(fixture));
       matchResult.opponentName = fixture.name;
       matchResult.roundLabel = `Round ${state.roundIndex + 1}/${BAL.seasonRounds}`;
+      matchResult.tier = state.leagueTier;
+      recordLeagueResult(state.leagueTier, String(state.roundIndex + 1), matchResult.win ? HISTORY_PLAYER_ID : fixture.rivalId, matchResult.win ? fixture.rivalId : HISTORY_PLAYER_ID, matchResult.win ? matchResult.rankBefore : matchResult.opponentRating, matchResult.win ? matchResult.opponentRating : matchResult.rankBefore);
       const win = matchResult.win;
       recordRivalResultVsPlayer(fixture.rivalId, win, matchResult.matchRating);
       fixture.played = true;
@@ -2511,7 +2577,7 @@ function gapLabel(gap) {
 
 function matchResultTableHtml(result) {
   const bonus = result.championBonus || { cash: 0, rating: 0 };
-  const ratingAfter = state.rank;
+  const ratingAfter = result.ratingAfter != null ? result.ratingAfter : state.rank;
   const cashAfter = result.cashBefore + result.cashReward + bonus.cash;
   const rec = result.recordBefore;
   const recAfter = { wins: rec.wins + (result.win ? 1 : 0), losses: rec.losses + (result.win ? 0 : 1) };
@@ -2548,7 +2614,7 @@ function ratingCashExplainerHtml(result) {
     ratingRows.push(row(`🧑‍💼 Team Manager (−${Math.round((1 - result.rankLossMult) * 100)}% on losses)`, signedNum(result.ratingChange - raw), "perf-sub"));
   }
   if (bonus.rating) ratingRows.push(row("👑 Champion bonus", signedNum(bonus.rating), "perf-sub"));
-  const ratingTotal = state.rank - result.rankBefore;
+  const ratingTotal = (result.ratingAfter != null ? result.ratingAfter : state.rank) - result.rankBefore;
 
   const basePrize = result.win ? 150 + result.rankAfterMatch / 10 : 40;
   const cashRows = [
@@ -2616,7 +2682,7 @@ function luckExplainerHtml(result) {
     </table>`;
 }
 
-function showMatchModal(result, extraHtml = "") {
+function showMatchModal(result, extraHtml = "", { onContinue = null, continueLabel = "Continue" } = {}) {
   const context = result.roundLabel ? `${result.roundLabel}${result.opponentName ? " vs " + result.opponentName : ""}` : "";
   const title = `<span class="match-head ${result.win ? "win" : "loss"}">${result.win ? "VICTORY" : "DEFEAT"}</span>${
     context ? `<span class="match-head-sub">${context}</span>` : ""
@@ -2641,10 +2707,10 @@ function showMatchModal(result, extraHtml = "") {
           ${ratingCashExplainerHtml(result)}
         </details>
         ${extraHtml}
-        <button class="primary-btn" id="matchOk">Continue</button>
+        <button class="primary-btn" id="matchOk">${continueLabel}</button>
       </div>`;
   openModal(html, { ownClose: true });
-  $("matchOk").addEventListener("click", closeModal);
+  $("matchOk").addEventListener("click", onContinue || closeModal);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -2776,6 +2842,7 @@ function openMenu() {
     <div class="menu-row" id="menuShop"><span>🛒 Coaching Shop</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuCareer"><span>📈 Career &amp; Season</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuLeagues"><span>🏅 Leagues</span><span class="arrow">›</span></div>
+    <div class="menu-row" id="menuHistory"><span>📜 Match History</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuRename"><span>✏️ Rename Player</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuHow"><span>❓ How to Play</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuInstall"><span>📲 Add to Home Screen</span><span class="arrow">›</span></div>
@@ -2787,6 +2854,7 @@ function openMenu() {
   $("menuShop").addEventListener("click", openShop);
   $("menuCareer").addEventListener("click", openCareer);
   $("menuLeagues").addEventListener("click", () => openLeagues(state.leagueTier));
+  $("menuHistory").addEventListener("click", () => openHistory());
   $("menuRename").addEventListener("click", () => openNameModal(false));
   $("menuHow").addEventListener("click", openHowTo);
   $("menuInstall").addEventListener("click", openInstall);
@@ -2956,6 +3024,7 @@ function openCareer() {
       <div class="kv-row"><span>Record</span><span>${seasonWins}–${seasonPlayed - seasonWins}${tablePos ? ` · #${tablePos.pos} of ${tablePos.size}` : ""}</span></div>
       ${state.peakLeagueTier !== state.leagueTier ? `<div class="kv-row"><span>Highest league reached</span><span>League ${state.peakLeagueTier}</span></div>` : ""}
       <div class="menu-row" id="viewLeaguesLink"><span>📊 View League Standings</span><span class="arrow">›</span></div>
+      <div class="menu-row" id="viewHistoryLink"><span>📜 Match History</span><span class="arrow">›</span></div>
     </div>
     ${playoffSection}
     ${standingsSection}
@@ -2990,6 +3059,7 @@ function openCareer() {
     </div>`;
   openModal(html, { ownClose: true });
   $("viewLeaguesLink").addEventListener("click", () => openLeagues(state.leagueTier));
+  $("viewHistoryLink").addEventListener("click", () => openHistory());
 }
 
 function leagueTableHtml(tier) {
@@ -3035,7 +3105,7 @@ function leagueTableHtml(tier) {
       // Dashed divider straight after the last qualifying place.
       const cutLine = pos === BAL.playoffSize ? `<div class="league-cutline">Playoff line — top ${BAL.playoffSize} qualify</div>` : "";
       return `
-      <div class="league-row ${zone} ${playoff} ${t.isPlayer ? "league-row-you" : ""}">
+      <div class="league-row ${zone} ${playoff} ${t.isPlayer ? "league-row-you" : ""}" ${!t.isPlayer && t.rivalId != null ? `data-rival="${t.rivalId}"` : ""}>
         <span class="league-pos">${pos}</span>
         <span class="league-name">${isChamp ? "🏆 " : ""}${t.name}${t.isPlayer ? " (You)" : ""}</span>
         <span class="league-rating">${fmt(t.rating)}</span>
@@ -3070,16 +3140,198 @@ function openLeagues(startTier) {
         )
         .join("")}
     </div>
+    <div class="menu-row" id="leaguesHistoryLink"><span>📜 Results by round</span><span class="arrow">›</span></div>
     <div id="leagueTableContainer">${leagueTableHtml(startTier)}</div>`;
   openModal(html);
+  let shownTier = startTier;
+  $("leaguesHistoryLink").addEventListener("click", () => openHistory({ tab: "league", view: { tier: shownTier } }));
+  // Tap a rival in the table to see their season (delegated: the table is
+  // rebuilt whenever the tab changes).
+  $("leagueTableContainer").addEventListener("click", (e) => {
+    const row = e.target.closest("[data-rival]");
+    if (row) openRival(Number(row.dataset.rival), () => openLeagues(shownTier));
+  });
   document.querySelectorAll(".league-tab").forEach((btn) => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".league-tab").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
       const tier = Number(btn.getAttribute("data-tier"));
+      shownTier = tier;
       $("leagueTableContainer").innerHTML = leagueTableHtml(tier);
     });
   });
+}
+
+
+/* ---------------------------------------------------------------------- */
+/* Match History + rival pages                                            */
+/* ---------------------------------------------------------------------- */
+function historyName(id) {
+  if (id === HISTORY_PLAYER_ID) return `${escapeHtml(state.playerName || "You")} (You)`;
+  const r = findRival(id);
+  return r ? r.name : "Unknown";
+}
+function historyNameLink(id) {
+  if (id === HISTORY_PLAYER_ID) return `<b>${historyName(id)}</b>`;
+  return `<button class="link-name" data-rival="${id}">${historyName(id)}</button>`;
+}
+function roundKeyLabel(key) {
+  return PLAYOFF_ROUND_NAMES[key] || `Round ${key}`;
+}
+function roundShort(label) {
+  if (!label) return "";
+  const m = label.match(/^Round (\d+)/);
+  if (m) return `R${m[1]}`;
+  return { "Round of 16": "R16", Quarterfinal: "QF", Semifinal: "SF", Final: "F" }[label] || label;
+}
+
+function myMatchesHtml() {
+  const mine = ensureHistory().mine;
+  if (!mine.length) return `<p class="modal-sub">No matches played yet. Every match you play from now on is kept here — tap one to see its full result again.</p>`;
+  const years = [...new Set(mine.map((m) => m.year))].sort((a, b) => b - a);
+  return years
+    .map((y) => {
+      const list = mine.map((m, i) => ({ m, i })).filter((x) => x.m.year === y).reverse();
+      const w = list.filter((x) => x.m.win).length;
+      const tiers = [...new Set(list.map((x) => x.m.tier).filter(Boolean))];
+      const rows = list
+        .map(({ m, i }) => {
+          const n = (x) => (x < 0 ? `−${-x}` : `${x}`);
+          const score = m.sides ? `${n(m.sides.you.final)}–${n(m.sides.opp.final)}` : "—";
+          const delta = m.ratingAfter != null ? signedNum(m.ratingAfter - m.rankBefore) : "";
+          return `<div class="hist-row ${m.legacy ? "hist-legacy" : ""}" ${m.legacy ? "" : `data-mi="${i}"`}>
+            <span class="hist-round">${roundShort(m.roundLabel)}</span>
+            <span class="hist-wl ${m.win ? "win" : "loss"}">${m.win ? "W" : "L"}</span>
+            <span class="hist-opp">${m.opponentName || "?"}</span>
+            <span class="hist-score">${score}</span>
+            <span class="hist-delta ${deltaClass(m.ratingAfter != null ? m.ratingAfter - m.rankBefore : 0)}">${delta}</span>
+          </div>`;
+        })
+        .join("");
+      const legacyNote = list.some((x) => x.m.legacy) ? `<p class="modal-sub">Matches without a score were played before full results were saved.</p>` : "";
+      return `<div class="modal-section">
+        <h3>Year ${y}${tiers.length ? ` · League ${tiers.join(" → ")}` : ""} · ${w}–${list.length - w}</h3>
+        <div class="hist-list">${rows}</div>${legacyNote}
+      </div>`;
+    })
+    .join("");
+}
+
+// Which season / league / round the League results tab shows by default:
+// your league, the latest round with results.
+function defaultLeagueView(view = {}) {
+  const league = ensureHistory().league;
+  const years = Object.keys(league).map(Number).sort((a, b) => b - a);
+  const year = view.year != null && league[view.year] ? view.year : years[0];
+  if (year == null) return null;
+  const tiers = league[year];
+  // Default to the league you played in that season (you may have been
+  // promoted or relegated since), else your current one.
+  const playedIn = Object.keys(tiers).map(Number).find((t) => Object.values(tiers[t]).some((rs) => rs.some((x) => x[0] === HISTORY_PLAYER_ID || x[1] === HISTORY_PLAYER_ID)));
+  const tier = view.tier && tiers[view.tier] ? view.tier : playedIn || (tiers[state.leagueTier] ? state.leagueTier : Number(Object.keys(tiers)[0]));
+  const keys = HISTORY_ROUND_KEYS.filter((k) => tiers[tier] && tiers[tier][k]);
+  const round = view.round && keys.includes(view.round) ? view.round : keys[keys.length - 1];
+  return { year, tier, round, years, keys };
+}
+
+function leagueResultsHtml(view) {
+  const v = defaultLeagueView(view);
+  if (!v) return `<p class="modal-sub">No results yet. Every match in all 5 leagues is recorded from now on — this season and last are kept.</p>`;
+  const league = ensureHistory().league;
+  const results = (league[v.year][v.tier] && league[v.year][v.tier][v.round]) || [];
+  const idx = v.keys.indexOf(v.round);
+  const yearPills = v.years.length > 1
+    ? `<div class="league-tabs">${v.years.map((y) => `<button class="league-tab ${y === v.year ? "active" : ""}" data-hyear="${y}">Year ${y}${y === state.year ? " (now)" : ""}</button>`).join("")}</div>`
+    : "";
+  const tierTabs = `<div class="league-tabs">${[1, 2, 3, 4, 5]
+    .map((t) => `<button class="league-tab ${t === v.tier ? "active" : ""}" data-htier="${t}" ${league[v.year][t] ? "" : "disabled"}>L${t}</button>`)
+    .join("")}</div>`;
+  const stepper = `<div class="round-stepper">
+      <button class="icon-btn" data-hround="${idx > 0 ? v.keys[idx - 1] : ""}" ${idx > 0 ? "" : "disabled"} aria-label="Previous round">◀</button>
+      <span>${roundKeyLabel(v.round)}</span>
+      <button class="icon-btn" data-hround="${idx < v.keys.length - 1 ? v.keys[idx + 1] : ""}" ${idx < v.keys.length - 1 ? "" : "disabled"} aria-label="Next round">▶</button>
+    </div>`;
+  const rows = results
+    .map(([w, l, wr, lr]) => `<div class="res-row ${w === HISTORY_PLAYER_ID || l === HISTORY_PLAYER_ID ? "res-you" : ""}">
+        <span class="res-side">${historyNameLink(w)} <span class="res-rt">${wr}</span></span>
+        <span class="res-beat">beat</span>
+        <span class="res-side">${historyNameLink(l)} <span class="res-rt">${lr}</span></span>
+      </div>`)
+    .join("");
+  return `${yearPills}${tierTabs}${stepper}
+    <div class="res-list">${rows}</div>
+    <p class="modal-sub">Ratings are as they stood going into the match. Tap a name to see that rival's season.</p>`;
+}
+
+function openHistory(opts = {}) {
+  const tab = opts.tab || "mine";
+  const view = opts.view || {};
+  const html = `
+    ${stickyHeadHtml("Match History")}
+    <div class="league-tabs history-tabs">
+      <button class="league-tab ${tab === "mine" ? "active" : ""}" data-htab="mine">My matches</button>
+      <button class="league-tab ${tab === "league" ? "active" : ""}" data-htab="league">League results</button>
+    </div>
+    <div id="historyBody">${tab === "mine" ? myMatchesHtml() : leagueResultsHtml(view)}</div>`;
+  openModal(html, { ownClose: true, keepScroll: !!opts.keepScroll });
+  const body = $("modalBody");
+  body.querySelectorAll("[data-htab]").forEach((b) => b.addEventListener("click", () => openHistory({ tab: b.dataset.htab })));
+  const cur = tab === "league" ? defaultLeagueView(view) : null;
+  body.querySelectorAll("[data-hyear]").forEach((b) => b.addEventListener("click", () => openHistory({ tab, view: { year: Number(b.dataset.hyear), tier: cur && cur.tier }, keepScroll: true })));
+  body.querySelectorAll("[data-htier]").forEach((b) => b.addEventListener("click", () => openHistory({ tab, view: { year: cur.year, tier: Number(b.dataset.htier) }, keepScroll: true })));
+  body.querySelectorAll("[data-hround]").forEach((b) => b.addEventListener("click", () => b.dataset.hround && openHistory({ tab, view: { year: cur.year, tier: cur.tier, round: b.dataset.hround }, keepScroll: true })));
+  body.querySelectorAll("[data-rival]").forEach((b) =>
+    b.addEventListener("click", () => openRival(Number(b.dataset.rival), () => openHistory({ tab, view: cur ? { year: cur.year, tier: cur.tier, round: cur.round } : view })))
+  );
+  body.querySelectorAll("[data-mi]").forEach((row) =>
+    row.addEventListener("click", () => {
+      const m = ensureHistory().mine[Number(row.dataset.mi)];
+      showMatchModal(m, "", { onContinue: () => openHistory({ tab: "mine" }), continueLabel: "◀ Back to Match History" });
+    })
+  );
+}
+
+// A rival's season so far, read straight from the stored league results —
+// nothing extra is saved for this page.
+function openRival(id, back) {
+  const r = findRival(id);
+  if (!r) return;
+  const yearData = ensureHistory().league[state.year] || {};
+  const games = [];
+  Object.keys(yearData).forEach((tier) =>
+    HISTORY_ROUND_KEYS.forEach((key) =>
+      (yearData[tier][key] || []).forEach(([w, l, wr, lr]) => {
+        if (w === id) games.push({ key, win: true, opp: l, oppRating: lr, rating: wr });
+        else if (l === id) games.push({ key, win: false, opp: w, oppRating: wr, rating: lr });
+      })
+    )
+  );
+  const w = games.filter((g) => g.win).length;
+  const rows = games
+    .slice()
+    .reverse()
+    .map((g) => `<div class="hist-row">
+        <span class="hist-round">${roundShort(roundKeyLabel(g.key))}</span>
+        <span class="hist-wl ${g.win ? "win" : "loss"}">${g.win ? "W" : "L"}</span>
+        <span class="hist-opp">${g.win ? "beat" : "lost to"} ${historyName(g.opp)}</span>
+        <span class="hist-score">${g.oppRating}</span>
+      </div>`)
+    .join("");
+  const html = `
+    ${stickyHeadHtml(r.name)}
+    <div class="modal-section">
+      <div class="kv-row"><span>League</span><span>League ${r.league}</span></div>
+      <div class="kv-row"><span>Rating</span><span>${fmt(r.rating)}</span></div>
+      <div class="kv-row"><span>This season</span><span>${w}–${games.length - w}</span></div>
+      <div class="kv-row"><span>All-time record</span><span>${r.wins}–${r.losses}</span></div>
+    </div>
+    <div class="modal-section">
+      <h3>Year ${state.year} results</h3>
+      ${games.length ? `<div class="hist-list">${rows}</div><p class="modal-sub">Number = the opponent's rating going into the match.</p>` : `<p class="modal-sub">No results recorded for them this season yet.</p>`}
+    </div>
+    ${back ? `<button class="ghost-btn" id="rivalBack">◀ Back</button>` : ""}`;
+  openModal(html, { ownClose: true });
+  if (back) $("rivalBack").addEventListener("click", back);
 }
 
 function openHowTo() {
@@ -3104,7 +3356,7 @@ function openHowTo() {
       <p><b>The season:</b> a ${BAL.preseasonDays}-day preseason to train, then a ${BAL.seasonRounds}-round regular season — one match a week against a named rival, all scheduled in advance, each testing that week's active skills. Finish in the top ${BAL.playoffSize} of your ${BAL.seasonRounds + 1}-competitor league to reach the knockout playoffs. Lose a playoff match and you're out; win the Final and you're champion.</p>
       <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken. Get knocked out of the playoffs and you go to training camp too, for the rest of the playoff window (at least ${BAL.offseasonDays} days) — so an early exit gets its time back as training, just like missing the cut. Only the champion gets a plain ${BAL.offseasonDays}-day break.</p>
       <p><b>Match day:</b> both players get a <b>match-day rating</b> = rating + performance + luck. Your performance comes from your stats (each point above 70 adds 3, below 70 costs 3); every rival has a performance on the same scale. Luck is random for both sides every match — usually between about −150 and +120, occasionally +400 or more on an inspired day. The higher match-day rating wins, so the bigger your rating gap the likelier you are to win, but upsets always stay possible. The result screen shows every number side by side.</p>
-      <p><b>Leagues:</b> there are ${BAL.leagueCount} leagues, League 1 at the top and League 5 at the bottom — you start in League 5. Every league has a persistent roster of named rivals whose ratings evolve from real simulated results every week, same as yours — every tier's table is live from round 1, not just visible once the season ends. Four go up from every league below League 1: the playoff champion, plus the top ${BAL.promotionTablePlaces} of the table other than the champion — so a top-${BAL.promotionTablePlaces} finish is always promoted, and anyone in the playoffs can still win their way up. Finish bottom ${BAL.relegationCount} and you're relegated. This applies to every competitor in every league, not just you — every league plays out its own knockout too — so the standings you see are a living world, not scenery. Check the Leagues screen any time (Menu, or the shortcut in Career) to see all ${BAL.leagueCount} tables.</p>
+      <p><b>Leagues:</b> there are ${BAL.leagueCount} leagues, League 1 at the top and League 5 at the bottom — you start in League 5. Every league has a persistent roster of named rivals whose ratings evolve from real simulated results every week, same as yours — every tier's table is live from round 1, not just visible once the season ends. Four go up from every league below League 1: the playoff champion, plus the top ${BAL.promotionTablePlaces} of the table other than the champion — so a top-${BAL.promotionTablePlaces} finish is always promoted, and anyone in the playoffs can still win their way up. Finish bottom ${BAL.relegationCount} and you're relegated. This applies to every competitor in every league, not just you — every league plays out its own knockout too — so the standings you see are a living world, not scenery. Check the Leagues screen any time (Menu, or the shortcut in Career) to see all ${BAL.leagueCount} tables. <b>Match History</b> keeps every match you play (tap one to see its full result again) and every result in all ${BAL.leagueCount} leagues for this season and last — tap a rival's name, there or in a league table, to see their season.</p>
       <p><b>Rating</b> is your skill score (the 🏆 number), the same scale every rival is measured on — it rises and falls with each result, and it's what your win chance is worked out from. Your <b>table position</b> (#1–#40) is separate: it comes from league points, 3 per win. Cash and Rating carry across seasons and leagues — spend cash in the Coaching Shop any time.</p>
       <p><b>Employment:</b> your day job funds everything else, every phase, no exceptions. Work ${BAL.workHoursRequired}h/day (every phase, preseason included), starting at $${BAL.workPayMin}/day — pay is tied to still <i>having</i> the job, not to hitting the exact hour target every day, so falling short doesn't cost you income, only a chunk of a chance scaled to the shortfall (regained ${BAL.strikeWindowDays} days later). Run out of your ${fmt1(BAL.strikesToFire)} chances and <i>that's</i> when pay actually stops — you're fired: the same slider becomes a Job Search, needing a random ${BAL.jobSearchHoursRange[0]}–${BAL.jobSearchHoursRange[1]} cumulative hours (rolled when you lose the job and shown on the slider) to get rehired — at least ${BAL.jobSearchMinHours}h of searching a day, or the day can't end. Reach League ${BAL.goProLeagueTier} or higher with $${BAL.goProCash}+ banked while employed and you go Pro automatically — Work drops to just ${BAL.proDutyHoursRequired}h/day of Pro Duties, starting at $${BAL.proPayMin}/day, with the same chances rule and the same fallback to Job Search if you're dropped.</p>
       <p><b>Pay &amp; seniority:</b> pay rises $${BAL.payRaisePerYear}/year for your first ${BAL.payRaiseMaxYears} years in a role, then holds — Work tops out at $${BAL.workPayMin + BAL.payRaisePerYear * BAL.payRaiseMaxYears}/day, Pro Duties at $${BAL.proPayMin + BAL.payRaisePerYear * BAL.payRaiseMaxYears}/day. Lose the job or get dropped from Pro and that role's pay resets to its minimum for next time — seniority isn't carried over.</p>
@@ -3415,6 +3667,12 @@ function runDay() {
   // rerolls — the match grades the skills actually trained this week, not
   // whatever gets revealed for the week ahead.
   const { matchResult, phaseEvent, yearSummary } = processDayEnd();
+  if (matchResult) {
+    // Rating after everything this match did (incl. a champion bonus), so a
+    // replay of the result screen shows the same numbers later on.
+    matchResult.ratingAfter = state.rank;
+    recordMyMatch(matchResult);
+  }
 
   if (matchResult) {
     const oppText = matchResult.opponentName ? ` vs ${matchResult.opponentName}` : "";
@@ -3646,6 +3904,7 @@ function wireInputs() {
   $("cashChip").addEventListener("click", openShop);
   $("rankChip").addEventListener("click", openCareer);
   $("leaguesBtn").addEventListener("click", () => openLeagues(state.leagueTier));
+  $("historyLink").addEventListener("click", () => openHistory());
 }
 
 /* ---------------------------------------------------------------------- */
