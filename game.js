@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.36.0";
+const APP_VERSION = "4.37.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -635,6 +635,9 @@ function freshState() {
     rivalNamesVersion: 2, // 2 = names from RIVAL_NAMES (see renameRivalsToCurrentList)
     matchHistory: { mine: [], league: {} }, // see recordLeagueResult / recordMyMatch
     staff: { hired: {} }, // { [upgradeKey]: level } hired for this week only
+    phaseStart: null, // snapshot taken when each phase begins (phaseSnapshot) — for the phase splash
+    pendingSplash: null, // a phase splash not yet dismissed
+    tutorialSeen: false,
     leagueStandings: { 1: null, 2: null, 3: null, 4: null, 5: null }, // last fully completed season per tier
     leagueRoundRobins: leagueData.roundRobins, // this season's full fixture list per tier, all 5 at once
     leaguePoints: leagueData.points, // this season's live running points per tier, updated every round
@@ -906,6 +909,10 @@ function migrateSave(parsed) {
   if ((parsed.seasonPhase === "regular" || parsed.seasonPhase === "playoffs") && parsed.skillCycleDay !== parsed.phaseDay) {
     parsed.skillCycleDay = parsed.phaseDay;
   }
+
+  // v4.37.0: phase splash screens + tutorial. Existing careers have seen
+  // the game already; their current phase's summary starts from now.
+  if (parsed.tutorialSeen === undefined) parsed.tutorialSeen = true;
 
   // v4.36.0: staff are hired weekly (owned levels stay unlocked).
   if (!parsed.staff) parsed.staff = { hired: {} };
@@ -2561,7 +2568,11 @@ function stickyHeadHtml(title, extraHtml = "") {
     </div>`;
 }
 
-function openModal(html, { ownClose = false, keepScroll = false } = {}) {
+// onDismiss runs once if this pop-up is closed (✕, tapping outside, or
+// closeModal) rather than replaced by another pop-up.
+let modalDismissHook = null;
+function openModal(html, { ownClose = false, keepScroll = false, onDismiss = null } = {}) {
+  modalDismissHook = onDismiss;
   $("modalBody").innerHTML = html;
   // Modals with their own sticky header carry their own ✕; hide the
   // floating one, which scrolls away with the content.
@@ -2578,6 +2589,9 @@ function openModal(html, { ownClose = false, keepScroll = false } = {}) {
 }
 function closeModal() {
   $("modalOverlay").classList.add("hidden");
+  const hook = modalDismissHook;
+  modalDismissHook = null;
+  if (hook) hook();
 }
 $("modalClose").addEventListener("click", closeModal);
 $("modalOverlay").addEventListener("click", (e) => {
@@ -2749,7 +2763,7 @@ function luckExplainerHtml(result) {
     </table>`;
 }
 
-function showMatchModal(result, extraHtml = "", { onContinue = null, continueLabel = "Continue" } = {}) {
+function showMatchModal(result, extraHtml = "", { onContinue = null, continueLabel = "Continue", continueAlsoOnClose = false } = {}) {
   const context = result.roundLabel ? `${result.roundLabel}${result.opponentName ? " vs " + result.opponentName : ""}` : "";
   const title = `<span class="match-head ${result.win ? "win" : "loss"}">${result.win ? "VICTORY" : "DEFEAT"}</span>${
     context ? `<span class="match-head-sub">${context}</span>` : ""
@@ -2776,31 +2790,8 @@ function showMatchModal(result, extraHtml = "", { onContinue = null, continueLab
         ${extraHtml}
         <button class="primary-btn" id="matchOk">${continueLabel}</button>
       </div>`;
-  openModal(html, { ownClose: true });
+  openModal(html, { ownClose: true, onDismiss: onContinue && continueAlsoOnClose ? onContinue : null });
   $("matchOk").addEventListener("click", onContinue || closeModal);
-}
-
-/* ---------------------------------------------------------------------- */
-/* Year-end cash flow summary — shown right as a new year begins          */
-/* ---------------------------------------------------------------------- */
-function showYearSummaryModal(summary, extraHtml = "") {
-  const html = `
-    <div class="match-card">
-      <div class="match-result neutral">YEAR ${summary.year} COMPLETE</div>
-      <div class="match-sub">Cash flow for the year — this is what a new year starting means</div>
-      <div class="match-stats">
-        <div><b>$${fmt(summary.workPay)}</b>Work/Pro pay</div>
-        <div><b>$${fmt(summary.matchCash)}</b>Match winnings</div>
-        <div><b>-$${fmt(summary.expenses)}</b>Expenses</div>
-      </div>
-      <div class="match-sub">Net for the year: <b style="color:${summary.net >= 0 ? "var(--accent)" : "var(--danger)"}">${fmtSigned(summary.net, 0)}</b></div>
-      <div class="match-sub">Cash now: ${fmtMoney(summary.cashNow)}</div>
-      ${summary.newPayRate != null ? `<div class="match-sub">📈 Annual raise: pay is now $${fmt(summary.newPayRate)}/day</div>` : ""}
-      ${extraHtml}
-      <button class="primary-btn" id="yearSummaryOk">Continue</button>
-    </div>`;
-  openModal(html);
-  $("yearSummaryOk").addEventListener("click", closeModal);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -2921,6 +2912,7 @@ function openMenu() {
     <div class="menu-row" id="menuHistory"><span>📜 Match History</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuRename"><span>✏️ Rename Player</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuHow"><span>❓ How to Play</span><span class="arrow">›</span></div>
+    <div class="menu-row" id="menuTutorial"><span>📖 Quick Tutorial</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuInstall"><span>📲 Add to Home Screen</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuSaveTransfer"><span>💾 Export / Import Save</span><span class="arrow">›</span></div>
     <button class="ghost-btn" id="menuReset">Reset Career</button>
@@ -2933,6 +2925,7 @@ function openMenu() {
   $("menuHistory").addEventListener("click", () => openHistory());
   $("menuRename").addEventListener("click", () => openNameModal(false));
   $("menuHow").addEventListener("click", openHowTo);
+  $("menuTutorial").addEventListener("click", () => openTutorial(0));
   $("menuInstall").addEventListener("click", openInstall);
   $("menuSaveTransfer").addEventListener("click", openSaveTransfer);
   $("menuReset").addEventListener("click", () => {
@@ -2962,6 +2955,7 @@ function openNameModal(isFirstTime) {
     state.playerName = val;
     saveState();
     closeModal();
+    if (isFirstTime && !state.tutorialSeen) openTutorial(0);
   };
   $("nameSaveBtn").addEventListener("click", save);
   input.addEventListener("keydown", (e) => {
@@ -3410,6 +3404,175 @@ function openRival(id, back) {
   if (back) $("rivalBack").addEventListener("click", back);
 }
 
+
+/* ---------------------------------------------------------------------- */
+/* Phase splash screens                                                    */
+/* ---------------------------------------------------------------------- */
+// Snapshot of where things stood when a phase began, so its splash can say
+// how the phase went.
+function phaseSnapshot() {
+  return {
+    day: state.day,
+    year: state.year,
+    phase: state.seasonPhase,
+    tier: state.leagueTier,
+    rank: state.rank,
+    cash: state.cash,
+    phys: state.stats.phys,
+    skills: { ...state.stats.skills },
+  };
+}
+
+const PHASE_NAMES = { preseason: "Preseason", regular: "Regular season", playoffs: "Playoffs", offseason: "Offseason" };
+
+// A splash is plain data (stored on the state until dismissed), rendered by
+// showPhaseSplash. Rows are [label, value] pairs.
+function buildPhaseSplash(from, to, { yearSummary = null, tierBefore = state.leagueTier } = {}) {
+  const start = state.phaseStart;
+  const how = [];
+  const next = [];
+  const notes = [];
+  const money = [];
+  const sgn = (n) => (n === 0 ? "±0" : n > 0 ? `+${fmt(n)}` : `−${fmt(-n)}`);
+  if (start) {
+    if (state.rank !== start.rank) how.push(["🏆 Rating", `${fmt(start.rank)} → ${fmt(state.rank)} (${sgn(state.rank - start.rank)})`]);
+    if (!yearSummary) how.push(["💰 Cash", `${fmtMoney(start.cash)} → ${fmtMoney(state.cash)}`]);
+    const gains = SKILL_KEYS.map((k) => ({ k, d: state.stats.skills[k] - (start.skills[k] || 0) })).filter((g) => Math.abs(g.d) >= 0.5).sort((a, b) => b.d - a.d);
+    gains.filter((g) => g.d > 0).slice(0, 3).forEach((g) => how.push([`${skillMeta(g.k).icon} ${skillMeta(g.k).name}`, `${fmt(start.skills[g.k])} → ${fmt(state.stats.skills[g.k])} (${sgn(g.d)})`]));
+    if (!gains.some((g) => g.d > 0)) how.push(["Skills", "no gains this phase"]);
+  }
+  const season = state.seasonResults || [];
+  const w = season.filter((r) => r.win).length;
+  const moveText = (from2, to2) => (to2 < from2 ? `⬆️ Promoted to League ${to2}` : to2 > from2 ? `⬇️ Relegated to League ${to2}` : `Staying in League ${to2}`);
+  const playedTier = state.lastStandingsTier || tierBefore;
+  let icon = "📅", title = "", sub = "";
+
+  if (from === "preseason" && to === "regular") {
+    icon = "🏁"; title = "The season starts!"; sub = `Year ${state.year} · League ${state.leagueTier}`;
+    const info = getNextMatchInfo();
+    next.push(["Format", `${BAL.seasonRounds} rounds, one match a week`]);
+    next.push(["This week's focus", state.activeSkills.map((k) => `${skillMeta(k).icon} ${skillMeta(k).name}`).join(", ")]);
+    if (info.opponentName) next.push(["First match", `${info.opponentName} (${info.opponentRating}) · ${info.winPct}% to win`]);
+    const zones = [`top ${BAL.playoffSize} reach the playoffs`];
+    if (state.leagueTier > 1) zones.push(`top ${BAL.promotionTablePlaces} promoted`);
+    if (state.leagueTier < BAL.leagueCount) zones.push(`bottom ${BAL.relegationCount} relegated`);
+    next.push(["The table", zones.join(" · ")]);
+    notes.push("Only the week's focus skills can be trained now — hire their coaches in 🧑‍🏫 Staff. Contracts end after each match.");
+  } else if (from === "regular" && to === "playoffs") {
+    icon = "🏆"; title = "Through to the playoffs!"; sub = `Year ${state.year} · League ${playedTier}`;
+    how.unshift(["📊 Finished", `#${state.lastPlayerPosition} of ${BAL.seasonRounds + 1} · ${w}–${season.length - w}`]);
+    if (playedTier > 1 && state.lastPlayerPosition <= BAL.promotionTablePlaces) how.unshift(["⬆️ Promotion", "secured — top " + BAL.promotionTablePlaces + " finish"]);
+    const info = getNextMatchInfo();
+    next.push(["Your seed", `#${state.playoff.playerSeed} of ${BAL.playoffSize}`]);
+    if (info.opponentName) next.push(["Round of 16", `${info.opponentName} (${info.opponentRating}) · ${info.winPct}% to win`]);
+    next.push(["Format", "single elimination, one match a week: R16 → QF → SF → Final"]);
+    next.push(["Win it all", `champion: +$2,000, +40 rating${playedTier > 1 ? ", promoted" : ""}`]);
+    next.push(["Knocked out", "training camp until the Final would have finished"]);
+  } else if (from === "regular" && to === "offseason") {
+    icon = "📋"; title = "Regular season over"; sub = `Year ${state.year} · League ${playedTier}`;
+    how.unshift(["📊 Finished", `#${state.lastPlayerPosition} of ${BAL.seasonRounds + 1} · ${w}–${season.length - w} — missed the top ${BAL.playoffSize}`]);
+    how.push(["Next season", moveText(playedTier, state.leagueTier)]);
+    next.push(["Training camp", `${state.offseasonDays} days — all 7 skills trainable, no matches`]);
+    next.push(["Then", `Year ${state.year + 1} preseason in League ${state.leagueTier}`]);
+  } else if (from === "playoffs" && to === "offseason") {
+    const p = state.playoff || {};
+    const champ = !!p.champion;
+    icon = champ ? "👑" : "💔"; title = champ ? "Champions!" : "Knocked out"; sub = `Year ${state.year} · League ${playedTier} playoffs`;
+    how.unshift(["Playoff run", champ ? "won the Final 🏆" : `out in the ${PLAYOFF_ROUND_NAMES[p.stage] || "playoffs"}`]);
+    const c = state.playoffChampions && state.playoffChampions[playedTier];
+    if (c && !c.isPlayer) how.push(["League champion", c.name]);
+    how.push(["Next season", moveText(playedTier, state.leagueTier)]);
+    next.push([champ ? "Offseason" : "Training camp", `${state.offseasonDays} days — all 7 skills trainable, no matches`]);
+    next.push(["Then", `Year ${state.year + 1} preseason in League ${state.leagueTier}`]);
+  } else if (from === "offseason" && to === "preseason") {
+    icon = "🎉"; title = `Year ${state.year} begins`; sub = `League ${state.leagueTier}`;
+    if (yearSummary) {
+      money.push(["💼 Pay earned", `+${fmtMoney(yearSummary.workPay)}`]);
+      money.push(["🏆 Match winnings", `+${fmtMoney(yearSummary.matchCash)}`]);
+      money.push(["💸 Living & staff", `−${fmtMoney(yearSummary.expenses)}`]);
+      money.push(["Net", `${yearSummary.net < 0 ? "−" : "+"}${fmtMoney(Math.abs(yearSummary.net))} · cash now ${fmtMoney(state.cash)}`]);
+      if (yearSummary.newPayRate != null) money.push(["📈 Annual raise", `pay is now $${fmt(yearSummary.newPayRate)}/day`]);
+    }
+    next.push(["Preseason", `${BAL.preseasonDays} days — all 7 skills trainable, no matches`]);
+    next.push(["League cap", `skills can reach ${leagueSkillCap()} (League ${state.peakLeagueTier} best)`]);
+    next.push(["Fresh start", "Rest, Composure and Nutrition are back to 100"]);
+    const unlockable = [];
+    if (SKILL_COACH_LEVELS.some((l, i) => l.unlock === state.peakLeagueTier && i > 0)) unlockable.push(`Coach Lv${SKILL_COACH_LEVELS.findIndex((l) => l.unlock === state.peakLeagueTier) + 1}`);
+    const supIdx = SUPPORT_LEVEL_UNLOCK.indexOf(state.peakLeagueTier);
+    if (supIdx > 0) unlockable.push(`support staff Lv${supIdx + 1}`);
+    if (unlockable.length) notes.push(`New in 🧑‍🏫 Staff: ${unlockable.join(" and ")} can now be unlocked.`);
+  } else {
+    title = `${PHASE_NAMES[to] || to}`;
+  }
+  const moneyTitle = yearSummary ? `Year ${yearSummary.year} money` : "";
+  return { icon, title, sub, fromName: PHASE_NAMES[from] || from, how, money, moneyTitle, next, notes };
+}
+
+function showPhaseSplash(sp, extraHtml = "") {
+  const rows = (list) => list.map(([k, v]) => `<div class="kv-row"><span>${k}</span><span>${v}</span></div>`).join("");
+  const html = `
+    <div class="splash">
+      <div class="splash-icon">${sp.icon}</div>
+      <div class="splash-title">${sp.title}</div>
+      ${sp.sub ? `<div class="splash-sub">${sp.sub}</div>` : ""}
+      ${sp.how.length ? `<div class="modal-section splash-section"><h3>How the ${sp.fromName.toLowerCase()} went</h3>${rows(sp.how)}</div>` : ""}
+      ${sp.money && sp.money.length ? `<div class="modal-section splash-section"><h3>${sp.moneyTitle}</h3>${rows(sp.money)}</div>` : ""}
+      ${sp.next.length ? `<div class="modal-section splash-section"><h3>What's next</h3>${rows(sp.next)}</div>` : ""}
+      ${sp.notes.map((n) => `<div class="callout splash-note">${n}</div>`).join("")}
+      ${extraHtml}
+      <button class="primary-btn" id="splashGo">Let's go ▶</button>
+    </div>`;
+  // Dismissing it any way counts as seen — no nagging on the next launch.
+  openModal(html, {
+    onDismiss: () => {
+      state.pendingSplash = null;
+      saveState();
+    },
+  });
+  $("splashGo").addEventListener("click", closeModal);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Quick tutorial (after naming your player; replayable from the menu)     */
+/* ---------------------------------------------------------------------- */
+function tutorialPages() {
+  return [
+    { icon: "👋", title: `Welcome, ${escapeHtml(state.playerName || "rookie")}`, body: `You're an Excel esports rookie starting at the bottom: <b>League ${BAL.leagueCount}</b> of ${BAL.leagueCount}. Win matches, climb the table and get promoted — all the way to League 1.` },
+    { icon: "🗓️", title: "Plan your day", body: `Each day you share out up to 24 hours with the sliders. <b>💼 Work ${BAL.workHoursRequired}h</b> pays the bills — $${BAL.dailyExpenses}/day living costs never stop. Train skills, and keep <b>🏃 Gym</b>, <b>🌙 Sleep</b> (${BAL.idealSleep}h+), <b>🎮 Relax</b> and <b>🥗 Food</b> topped up. The small marker on each slider is the minimum to avoid losing ground; bars preview tomorrow — green up, red down.` },
+    { icon: "🏋️", title: `This preseason: ${BAL.preseasonDays} days`, body: `No matches yet, and <b>all 7 skills</b> can be trained. Once the season starts only 1–3 <b>focus skills</b> a week can be trained — and they're exactly what that week's match tests. Tap <b>End Day ▶</b> for one day, or <b>End Week ▶▶</b> to play the week out.` },
+    { icon: "🧑‍🏫", title: "Staff & money", body: `Skills train up to <b>${BAL.skillShopCapBase}</b> on your own. To go higher, hire that skill's <b>Coach</b> in Staff — one week at a time, paid up front. At $${SKILL_COACH_LEVELS[0].wage}/week a coach is a big chunk of your pay, so you can't hire everyone every week: spend where it counts.` },
+    { icon: "⚔️", title: "Match day", body: `One match a week. Your stats set your <b>performance</b>, add some luck, and the higher match-day rating wins. Top ${BAL.playoffSize} reach the playoffs; top ${BAL.promotionTablePlaces} are promoted. Every result is explained on its result screen, and ☰ <b>How to Play</b> has the full rules.` },
+  ];
+}
+
+function openTutorial(i) {
+  const pages = tutorialPages();
+  const pg = pages[i];
+  const last = i === pages.length - 1;
+  const html = `
+    <div class="splash tutorial">
+      <div class="splash-icon">${pg.icon}</div>
+      <div class="splash-title">${pg.title}</div>
+      <p class="tutorial-body">${pg.body}</p>
+      <div class="tutorial-dots">${pages.map((_, j) => `<span class="${j === i ? "on" : ""}"></span>`).join("")}</div>
+      <div class="tutorial-nav">
+        <button class="ghost-btn" id="tutBack" ${i === 0 ? "disabled" : ""}>◀ Back</button>
+        <button class="primary-btn" id="tutNext">${last ? "Start playing ▶" : "Next ▶"}</button>
+      </div>
+      ${last ? "" : `<button class="link-btn tutorial-skip" id="tutSkip">Skip tutorial</button>`}
+    </div>`;
+  // Closing it at any page counts as seen.
+  openModal(html, {
+    onDismiss: () => {
+      state.tutorialSeen = true;
+      saveState();
+    },
+  });
+  if (i > 0) $("tutBack").addEventListener("click", () => openTutorial(i - 1));
+  $("tutNext").addEventListener("click", () => (last ? closeModal() : openTutorial(i + 1)));
+  if (!last) $("tutSkip").addEventListener("click", closeModal);
+}
+
 function openHowTo() {
   const html = `
     ${stickyHeadHtml("How to Play")}
@@ -3715,6 +3878,9 @@ function endDayBlocker() {
 function runDay() {
   // Staff contracts run to the end of the week (match day in season).
   const weekEndsToday = daysLeftInWeek() === 1;
+  const phaseBefore = state.seasonPhase;
+  const tierBefore = state.leagueTier;
+  if (!state.phaseStart) state.phaseStart = phaseSnapshot();
   const dayHeaderHtml = `Day ${state.day} — Results`;
   const entry = { html: dayHeaderHtml, cls: "day-header" };
   state.logEntries.push(entry);
@@ -3789,8 +3955,18 @@ function runDay() {
     appendLog(e.html, e.cls);
   }
 
+  // A new phase: build its splash screen (summary of the phase just played,
+  // preview of the next) and start a fresh snapshot for the next one. It's
+  // kept on the state until dismissed, so closing the app doesn't lose it.
+  let splash = null;
+  if (state.seasonPhase !== phaseBefore) {
+    splash = buildPhaseSplash(phaseBefore, state.seasonPhase, { yearSummary, tierBefore });
+    state.pendingSplash = splash;
+    state.phaseStart = phaseSnapshot();
+  }
+
   state.day += 1;
-  return { matchResult, phaseEvent, yearSummary };
+  return { matchResult, phaseEvent, yearSummary, splash };
 }
 
 function finishTurn() {
@@ -3806,12 +3982,13 @@ function endDay() {
   // Defensive: the button is disabled whenever this is true, but guard the
   // action itself too in case it's ever reachable another way.
   if (endDayBlocker()) return;
-  const { matchResult, yearSummary } = runDay();
+  const { matchResult, splash } = runDay();
   finishTurn();
+  // The match result comes first; its Continue (or ✕) leads to the splash.
   if (matchResult) {
-    showMatchModal(matchResult);
-  } else if (yearSummary) {
-    showYearSummaryModal(yearSummary);
+    showMatchModal(matchResult, "", splash ? { onContinue: () => showPhaseSplash(splash), continueAlsoOnClose: true } : {});
+  } else if (splash) {
+    showPhaseSplash(splash);
   }
 }
 
@@ -3879,12 +4056,14 @@ function endWeek() {
   let stopReason = null;
   let matchResult = null;
   let yearSummary = null;
+  let splash = null;
   while (daysRun < planned) {
     const before = weekSnapshot();
     const result = runDay();
     daysRun += 1;
     matchResult = result.matchResult;
     yearSummary = result.yearSummary;
+    splash = result.splash || splash;
     stopReason = weekStopReason(before);
     if (stopReason || matchResult || yearSummary || state.seasonPhase !== startPhase) break;
   }
@@ -3895,8 +4074,8 @@ function endWeek() {
   }
   finishTurn();
   const summaryHtml = weekSummaryHtml({ start, shownSkills, daysRun, planned, stopReason });
-  if (matchResult) showMatchModal(matchResult, summaryHtml);
-  else if (yearSummary) showYearSummaryModal(yearSummary, summaryHtml);
+  if (matchResult) showMatchModal(matchResult, summaryHtml, splash ? { onContinue: () => showPhaseSplash(splash), continueAlsoOnClose: true } : {});
+  else if (splash) showPhaseSplash(splash, summaryHtml);
   else showWeekSummaryModal(summaryHtml, daysRun);
 }
 
@@ -4020,11 +4199,14 @@ function renderAll() {
 }
 
 function init() {
+  if (!state.phaseStart) state.phaseStart = phaseSnapshot();
   wireInputs();
   renderAll();
 
   if (!state.playerName) {
     openNameModal(true);
+  } else if (state.pendingSplash) {
+    showPhaseSplash(state.pendingSplash);
   }
 
   if ("serviceWorker" in navigator) {

@@ -825,3 +825,21 @@ details.match-more[open] { padding-bottom: 8px; }
 .staff-chip.staff-unlock:disabled { color: var(--text-dim); }
 .staff-hired { color: var(--accent); font-weight: 800; font-size: 13px; }
 .staff-locked { color: var(--text-dim); font-size: 12px; align-self: center; }
+
+/* Phase splash + tutorial */
+.splash { text-align: center; padding-top: 4px; }
+.splash-icon { font-size: 44px; line-height: 1.1; }
+.splash-title { font-size: 24px; font-weight: 800; margin-top: 6px; }
+.splash-sub { color: var(--text-dim); font-size: 14px; margin-top: 2px; }
+.splash-section { text-align: left; margin-top: 18px; }
+.splash-section .kv-row span:first-child { flex-shrink: 0; white-space: nowrap; }
+.splash-section .kv-row span:last-child { text-align: right; }
+.splash-note { text-align: left; font-size: 13.5px; margin: 6px 0 14px; }
+.tutorial-body { font-size: 15px; line-height: 1.5; color: var(--text); text-align: left; margin: 16px 2px 18px; }
+.tutorial-dots { display: flex; justify-content: center; gap: 7px; margin-bottom: 16px; }
+.tutorial-dots span { width: 8px; height: 8px; border-radius: 50%; background: var(--border); }
+.tutorial-dots span.on { background: var(--accent); }
+.tutorial-nav { display: flex; gap: 10px; }
+.tutorial-nav .ghost-btn, .tutorial-nav .primary-btn { flex: 1; margin-top: 0; }
+.tutorial-nav .ghost-btn:disabled { opacity: 0.35; }
+.tutorial-skip { display: block; margin: 12px auto 0; color: var(--text-dim); }

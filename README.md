@@ -62,9 +62,9 @@ Relax, and Food. Everything is connected:
   $100/day, each rising $10/year for your first 5 years in that role before
   plateauing at $120 and $150. Lose the job or get dropped from Pro and
   that role's pay resets to its minimum for next time — seniority isn't
-  carried over. Every new year opens with a cash-flow summary of the year
-  just finished — pay earned, match winnings, expenses paid, the net, and
-  any raise you just earned.
+  carried over. The new-year screen includes a cash-flow summary of the
+  year just finished — pay earned, match winnings, expenses paid, the net,
+  and any raise you just earned.
 
 **End Day / To Match**: End Day plays one day. To Match (End Week outside the
 season, up to 7 days) repeats today's plan up to and including the next match,
@@ -109,6 +109,13 @@ plays out its own knockout too — so rivals you've never played can climb or
 fall in the background. Promotion/relegation is applied once the playoffs
 are over. Check the Leagues screen any time to see all 5 tables, or jump
 there directly from the Career modal.
+
+**Phase screens**: every change of phase (preseason → season, season →
+playoffs or training camp, playoffs → camp/offseason, offseason → the new
+year) opens a screen that sums up the phase just finished — table finish,
+rating, cash and biggest skill gains — and says what's coming next. A new
+career starts with a five-page quick tutorial right after you name your
+player; replay it any time from the menu (📖 Quick Tutorial).
 
 **Match History** (menu, the Log header, Leagues and Career) keeps every match
 you play — tap one to reopen its full result screen — plus every result in
