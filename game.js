@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.34.2";
+const APP_VERSION = "4.34.3";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -2030,7 +2030,7 @@ function getNextMatchInfo() {
     if (isTrainingCamp(s)) outcome = "Training camp";
     else if (s.playoff && s.playoff.champion) outcome = "🏆 Champion!";
     else if (s.playoff && s.playoff.eliminated) outcome = "Eliminated";
-    return { kind: "offseason", daysUntil, label: `${outcome} — Year ${s.year + 1} ${daysUntilPhrase(daysUntil)}` };
+    return { kind: "offseason", daysUntil, label: `${outcome} · Year ${s.year + 1} ${daysUntilPhrase(daysUntil)}` };
   }
   return { kind: "unknown", label: "" };
 }
@@ -2064,7 +2064,9 @@ function phaseLabelText() {
   if (s.seasonPhase === "preseason") return league + "Preseason";
   if (s.seasonPhase === "regular") return league + "Regular";
   if (s.seasonPhase === "playoffs") return league + "Playoffs";
-  if (s.seasonPhase === "offseason") return league + (isTrainingCamp(s) ? "Camp" : "Offseason");
+  // The offseason label right after this already names it (Training camp,
+  // 🏆 Champion!, …), so don't say "Camp" twice.
+  if (s.seasonPhase === "offseason") return `League ${s.leagueTier}`;
   return "";
 }
 
@@ -3688,7 +3690,19 @@ function init() {
     // own (much lazier) update heuristic.
     navigator.serviceWorker
       .register("sw.js", { updateViaCache: "none" })
-      .then((reg) => reg.update())
+      .then((reg) => {
+        reg.update();
+        // A Home Screen app is often just resumed, not relaunched, so the
+        // launch-time check above can be days old. Check again whenever the
+        // app comes back to the foreground (at most every 10 minutes); a new
+        // version then takes over and reloads via controllerchange below.
+        let lastCheck = Date.now();
+        document.addEventListener("visibilitychange", () => {
+          if (document.visibilityState !== "visible" || Date.now() - lastCheck < 10 * 60 * 1000) return;
+          lastCheck = Date.now();
+          reg.update().catch(() => {});
+        });
+      })
       .catch(() => {});
     // If a newer service worker takes over (a fresh deploy was installed),
     // reload once so the page's own HTML/JS is the new version too, instead
