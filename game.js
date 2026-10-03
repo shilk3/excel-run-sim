@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.31.0";
+const APP_VERSION = "4.31.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -2595,7 +2595,15 @@ function coachLeagueCapNote(key, next) {
   if (state.stats.skills[sk.key] >= leagueCap - 0.5) {
     return `<div class="shop-item-capnote capnote-none">⛔ Not worth it yet — ${sk.name} is already at League ${tier}'s cap of ${leagueCap}. ${reach[0].toUpperCase() + reach.slice(1)} to use a higher ceiling.</div>`;
   }
-  return `<div class="shop-item-capnote">⚠️ League ${tier} caps ${sk.name} at ${leagueCap}, so the ceiling of ${nextCeiling} won't help until you ${reach} — only the training bonus does.</div>`;
+  // Below the cap, the only thing this level buys right now is the extra
+  // training bonus on the points still left up to the league cap — say how
+  // much, and on how many points.
+  const lvl = upgradeLevel(key);
+  const extraBonus = Math.round((SKILL_COACH_LEVELS[lvl].bonus - (lvl > 0 ? SKILL_COACH_LEVELS[lvl - 1].bonus : 0)) * 100);
+  const now = Math.round(state.stats.skills[sk.key]);
+  const left = Math.max(1, leagueCap - now);
+  const until = unlock ? `Until League ${unlock}` : "Until you're promoted";
+  return `<div class="shop-item-capnote">⚠️ League ${tier} caps ${sk.name} at ${leagueCap}. ${until}, this only adds +${extraBonus}% training on your last ${left} point${left === 1 ? "" : "s"} (${now} → ${leagueCap}).</div>`;
 }
 
 function shopItemHtml(key, u, inThisMatch = false) {
