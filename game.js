@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.30.0";
+const APP_VERSION = "4.30.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -2442,7 +2442,7 @@ function matchResultTableHtml(result) {
   if (bonus.rating) why += ` Plus a ${signedNum(bonus.rating)} champion bonus.`;
   return `
     <table class="perf-table result-table">
-      <thead><tr><th>Result</th><th>Before</th><th>After</th><th>Change</th></tr></thead>
+      <thead><tr><th>Your Result</th><th>Before</th><th>After</th><th>Change</th></tr></thead>
       <tbody>${rows.join("")}</tbody>
     </table>
     <div class="match-sub perf-note">${why}</div>`;
@@ -2455,7 +2455,7 @@ function headToHeadHtml(result) {
   const marginText = result.margin === 0 ? "by less than 1" : `by ${result.margin}`;
   return `
     <table class="perf-table h2h-table">
-      <thead><tr><th></th><th>You</th><th class="h2h-opp">${result.opponentName || "Opponent"}</th></tr></thead>
+      <thead><tr><th>Head to Head</th><th>You</th><th class="h2h-opp">${result.opponentName || "Opponent"}</th></tr></thead>
       <tbody>
         ${row("🏆 Rating", y.rating, o.rating)}
         ${row("📈 Performance", `${y.perfScore.toFixed(1)} → ${signedNum(y.perfAdj)}`, `${o.perfScore} → ${signedNum(o.perfAdj)}`)}
@@ -2483,8 +2483,7 @@ function luckExplainerHtml(result) {
     <table class="perf-table win-ladder">
       <thead><tr><th>Rating gap</th><th>Win chance</th></tr></thead>
       <tbody>${ladder}</tbody>
-    </table>
-    <div class="match-sub perf-note">A rival's performance uses the same scale as yours — each point above 70 adds 3, below 70 costs 3. Rivals don't train stats, so how they perform is simply part of how their day goes.</div>`;
+    </table>`;
 }
 
 function showMatchModal(result, extraHtml = "") {
