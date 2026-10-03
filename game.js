@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.37.0";
+const APP_VERSION = "4.37.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -3454,7 +3454,7 @@ function buildPhaseSplash(from, to, { yearSummary = null, tierBefore = state.lea
     next.push(["This week's focus", state.activeSkills.map((k) => `${skillMeta(k).icon} ${skillMeta(k).name}`).join(", ")]);
     if (info.opponentName) next.push(["First match", `${info.opponentName} (${info.opponentRating}) · ${info.winPct}% to win`]);
     const zones = [`top ${BAL.playoffSize} reach the playoffs`];
-    if (state.leagueTier > 1) zones.push(`top ${BAL.promotionTablePlaces} promoted`);
+    if (state.leagueTier > 1) zones.push(`playoff champion + next ${BAL.promotionTablePlaces} in the table promoted`);
     if (state.leagueTier < BAL.leagueCount) zones.push(`bottom ${BAL.relegationCount} relegated`);
     next.push(["The table", zones.join(" · ")]);
     notes.push("Only the week's focus skills can be trained now — hire their coaches in 🧑‍🏫 Staff. Contracts end after each match.");
@@ -3541,7 +3541,7 @@ function tutorialPages() {
     { icon: "🗓️", title: "Plan your day", body: `Each day you share out up to 24 hours with the sliders. <b>💼 Work ${BAL.workHoursRequired}h</b> pays the bills — $${BAL.dailyExpenses}/day living costs never stop. Train skills, and keep <b>🏃 Gym</b>, <b>🌙 Sleep</b> (${BAL.idealSleep}h+), <b>🎮 Relax</b> and <b>🥗 Food</b> topped up. The small marker on each slider is the minimum to avoid losing ground; bars preview tomorrow — green up, red down.` },
     { icon: "🏋️", title: `This preseason: ${BAL.preseasonDays} days`, body: `No matches yet, and <b>all 7 skills</b> can be trained. Once the season starts only 1–3 <b>focus skills</b> a week can be trained — and they're exactly what that week's match tests. Tap <b>End Day ▶</b> for one day, or <b>End Week ▶▶</b> to play the week out.` },
     { icon: "🧑‍🏫", title: "Staff & money", body: `Skills train up to <b>${BAL.skillShopCapBase}</b> on your own. To go higher, hire that skill's <b>Coach</b> in Staff — one week at a time, paid up front. At $${SKILL_COACH_LEVELS[0].wage}/week a coach is a big chunk of your pay, so you can't hire everyone every week: spend where it counts.` },
-    { icon: "⚔️", title: "Match day", body: `One match a week. Your stats set your <b>performance</b>, add some luck, and the higher match-day rating wins. Top ${BAL.playoffSize} reach the playoffs; top ${BAL.promotionTablePlaces} are promoted. Every result is explained on its result screen, and ☰ <b>How to Play</b> has the full rules.` },
+    { icon: "⚔️", title: "Match day", body: `One match a week. Your stats set your <b>performance</b>, add some luck, and the higher match-day rating wins. Top ${BAL.playoffSize} reach the playoffs. <b>Four are promoted</b>: the playoff champion, plus the next ${BAL.promotionTablePlaces} highest in the table — so a top-${BAL.promotionTablePlaces} finish always goes up. Every result is explained on its result screen, and ☰ <b>How to Play</b> has the full rules.` },
   ];
 }
 
