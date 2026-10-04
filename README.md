@@ -32,8 +32,9 @@ Relax, and Food. Everything is connected:
   Gym for 3–5 days, but never stops you playing matches.
 - Skills train up to 50 on your own. **Staff** are hired a week at a time
   (a week ends after each match), paid up front, pro-rated if hired
-  mid-week. Coaches never renew; each support-team member has an optional
+  mid-week. Every coach and support-team member has an optional
   🔁 Auto-rehire switch that keeps them on at the same level each new week
+  (a coach even when their skill isn't in that week's focus)
   while you can afford it (if you can't, they're off that week, the switch
   turns itself off and you're told). A hired Coach lifts that
   skill's ceiling (Lv1 60 … Lv5 100) and speeds training, but never past
