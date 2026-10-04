@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.38.0";
+const APP_VERSION = "4.39.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -324,6 +324,41 @@ function hireStaff(key, level) {
   state.staff.hired[key] = level;
   return true;
 }
+const SUPPORT_KEYS = ["physio", "nutritionist", "manager", "sleepApp", "meditation", "recovery"];
+function isAutoRehire(key) {
+  return !!(state.staff.auto && state.staff.auto[key]);
+}
+// A week's contracts just ended: support staff on auto-rehire are kept on
+// at the same level for the new week if the cash is there; everyone else
+// waits to be hired again.
+function staffWeekEnded(ended) {
+  const rehired = [];
+  const missed = [];
+  let others = 0;
+  for (const key of Object.keys(ended)) {
+    const level = ended[key];
+    const name = `${UPGRADES[key].name} Lv${level}`;
+    if (!SUPPORT_KEYS.includes(key) || !isAutoRehire(key)) {
+      others += 1;
+      continue;
+    }
+    const cost = staffCost(key, level);
+    if (hireStaff(key, level)) rehired.push(`${name} ($${fmt(cost)})`);
+    else missed.push({ name, cost });
+  }
+  state.staff.missed = missed;
+  const parts = ["📋 Staff contracts have ended."];
+  if (rehired.length) parts.push(`🔁 Auto-rehired ${rehired.join(", ")}.`);
+  if (others) parts.push(`Hire ${rehired.length ? "the rest" : "for the new week"} in 🧑‍🏫 Staff.`);
+  const e = { html: parts.join(" "), cls: "event-season" };
+  state.logEntries.push(e);
+  appendLog(e.html, e.cls);
+  for (const m of missed) {
+    const bad = { html: `🔁 Couldn't afford to rehire ${m.name} ($${fmt(m.cost)}) — not hired this week.`, cls: "event-bad" };
+    state.logEntries.push(bad);
+    appendLog(bad.html, bad.cls);
+  }
+}
 function unlockStaffLevel(key) {
   const next = upgradeLevel(key) + 1;
   const lvl = UPGRADES[key].levels[next - 1];
@@ -634,7 +669,10 @@ function freshState() {
     rivals, // 199 persistent named rivals, spanning all 5 leagues
     rivalNamesVersion: 2, // 2 = names from RIVAL_NAMES (see renameRivalsToCurrentList)
     matchHistory: { mine: [], league: {} }, // see recordLeagueResult / recordMyMatch
-    staff: { hired: {} }, // { [upgradeKey]: level } hired for this week only
+    // hired: { [upgradeKey]: level } for this week only. auto: support staff
+    // to rehire at the same level when a week ends. missed: names that
+    // auto-rehire couldn't afford today (for the event screen).
+    staff: { hired: {}, auto: {}, missed: [] },
     phaseStart: null, // snapshot taken when each phase begins (phaseSnapshot) — for the phase splash
     pendingSplash: null, // a phase splash not yet dismissed
     tutorialSeen: false,
@@ -916,6 +954,9 @@ function migrateSave(parsed) {
 
   // v4.36.0: staff are hired weekly (owned levels stay unlocked).
   if (!parsed.staff) parsed.staff = { hired: {} };
+  // v4.39.0: auto-rehire for support staff.
+  if (!parsed.staff.auto) parsed.staff.auto = {};
+  if (!parsed.staff.missed) parsed.staff.missed = [];
 
   // v4.35.0: match history. Earlier matches this season only kept opponent
   // and result, so they come in as simple rows; league-wide results start now.
@@ -2801,8 +2842,9 @@ function showMatchModal(result, extraHtml = "", { onContinue = null, continueLab
 /* ---------------------------------------------------------------------- */
 // ---- Staff screen ----
 // Staff are hired one week at a time. Wages are paid up front (pro-rated
-// if you hire mid-week) and nothing renews: each new week you choose again,
-// usually around that week's focus skills.
+// if you hire mid-week). Coaches never renew: each new week you choose
+// again, usually around that week's focus skills. Support staff can be set
+// to auto-rehire (staffWeekEnded).
 function weekEndPhrase() {
   const d = daysLeftInWeek();
   const inSeasonWeek = state.seasonPhase === "regular" || state.seasonPhase === "playoffs";
@@ -2836,6 +2878,15 @@ function staffCardHtml(key, { focus = false, statNote = "" } = {}) {
   const lvlInfo = (lvl) => `Lv${lvl}: ${u.levels[lvl - 1].desc} · $${fmt(u.levels[lvl - 1].wage)}/wk`;
   const showLevels = Array.from({ length: Math.min(owned + 1, max) }, (_, i) => i + 1);
   const unhired = isCoach ? `<div class="staff-line">No coach: trains up to ${BAL.skillShopCapBase}, no bonus</div>` : "";
+  const auto = isAutoRehire(key);
+  const autoHtml = isCoach
+    ? ""
+    : `<label class="staff-auto">
+        <input type="checkbox" data-auto="${key}" ${auto ? "checked" : ""} />
+        <span class="staff-auto-switch"></span>
+        <span>🔁 Auto-rehire each week</span>
+      </label>
+      ${auto ? `<div class="staff-line">${hired ? `Kept on at Lv${hired} ($${fmt(u.levels[hired - 1].wage)}/wk) when each new week starts, if you have the cash.` : "Hire them once and they'll be kept on at that level every week."}</div>` : ""}`;
   return `
   <div class="shop-item staff-card${focus ? " shop-item-match" : ""}${hired ? " staff-card-hired" : ""}">
     <div class="shop-item-icon">${u.icon}</div>
@@ -2846,6 +2897,7 @@ function staffCardHtml(key, { focus = false, statNote = "" } = {}) {
       ${showLevels.map((lvl) => `<div class="staff-line ${lvl > owned ? "staff-line-locked" : ""}">${lvlInfo(lvl)}</div>`).join("")}
       <div class="staff-actions">${hireChips}${unlockHtml}</div>
       ${!hired && days < 7 ? `<div class="staff-line staff-prorate">Pro-rated: ${days}/7 of the weekly wage</div>` : ""}
+      ${autoHtml}
     </div>
   </div>`;
 }
@@ -2856,8 +2908,7 @@ function shopHtml() {
   const skillCards = order
     .map((k) => staffCardHtml(coachKey(k), { focus: focusKeys.includes(k), statNote: `${skillMeta(k).icon} ${skillMeta(k).name} now ${fmt(state.stats.skills[k])} · league cap ${leagueSkillCap()}` }))
     .join("");
-  const supportKeys = ["physio", "nutritionist", "manager", "sleepApp", "meditation", "recovery"];
-  const supportCards = supportKeys
+  const supportCards = SUPPORT_KEYS
     .map((k) => staffCardHtml(k, { statNote: k === "physio" ? `🏃 Health now ${fmt(state.stats.phys)} · ceiling ${BAL.statCapBase} without a physio` : "" }))
     .join("");
   const weeklyTotal = Object.entries(state.staff.hired).reduce((a, [k, l]) => a + UPGRADES[k].levels[l - 1].wage, 0);
@@ -2865,7 +2916,7 @@ function shopHtml() {
     ${stickyHeadHtml("Staff", `<span class="sticky-cash">💰 ${fmtMoney(state.cash)}</span>`)}
     <div class="callout staff-week">
       <div class="callout-label">This week</div>
-      <div>${weekEndPhrase()}. Pay up front; nothing renews — hire again each week.</div>
+      <div>${weekEndPhrase()}. Pay up front; only support staff set to 🔁 Auto-rehire renew — hire everyone else again each week.</div>
       ${weeklyTotal ? `<div class="staff-line">Hired staff cost $${fmt(weeklyTotal)}/wk at full rate.</div>` : ""}
     </div>
     <div class="modal-section">
@@ -2875,7 +2926,7 @@ function shopHtml() {
     </div>
     <div class="modal-section">
       <h3>Support Team</h3>
-      <p class="modal-sub">Support staff only help in the weeks they're hired. Higher levels unlock in League 3 and League 1.</p>
+      <p class="modal-sub">Support staff only help in the weeks they're hired. Higher levels unlock in League 3 and League 1. Turn on 🔁 Auto-rehire to keep one on at the same level each new week.</p>
       ${supportCards}
     </div>`;
 }
@@ -2896,6 +2947,12 @@ function openShop(opts) {
   document.querySelectorAll("[data-hire]").forEach((btn) =>
     btn.addEventListener("click", () => {
       if (hireStaff(btn.dataset.hire, Number(btn.dataset.level))) refresh();
+    })
+  );
+  document.querySelectorAll("[data-auto]").forEach((box) =>
+    box.addEventListener("change", () => {
+      state.staff.auto[box.dataset.auto] = box.checked;
+      refresh();
     })
   );
   document.querySelectorAll("[data-unlock]").forEach((btn) =>
@@ -3599,6 +3656,14 @@ function dayEventCards(before) {
       tip: "Add an hour or two to Pro Duties to work through it.",
     });
   }
+  const missed = (state.staff && state.staff.missed) || [];
+  if (missed.length) {
+    cards.push({
+      icon: "🔁", tone: "bad", title: "Couldn't rehire staff",
+      body: `Not enough cash to keep on ${missed.map((m) => `<b>${m.name}</b> ($${fmt(m.cost)})`).join(" and ")} — they're off this week. Auto-rehire stays on and tries again next week.`,
+      tip: "Hire them in 🧑‍🏫 Staff once you can afford it, or turn auto-rehire off.",
+    });
+  }
   if (isOverAllocated()) {
     cards.push({
       icon: "🥗", tone: "bad", title: "A shorter day",
@@ -3688,7 +3753,7 @@ function openHowTo() {
       <p><b>Decay:</b> every stat needs upkeep or it slips. Any skill that isn't active this round rusts; an active skill still rusts below ${BAL.skillDecayThresholdHours}h of training. Gym below ${BAL.skillDecayThresholdHours}h detrains Physical Health. Sleep below ${BAL.idealSleep}h drains Rest. Relax below ${BAL.relaxComposureThreshold}h drains Composure. Food below ${BAL.skillDecayThresholdHours}h drains Nutrition. Each slider shows a marker at its threshold, and each bar previews tomorrow's value based on your current plan — green for a gain, red for a loss.</p>
       <p><b>Rest</b> swings training itself: above ${BAL.restTrainingBoostThreshold} it's 150% effective, above ${BAL.restTrainingBoostHigh} it's 200% effective. <b>Composure</b> hits match day specifically — below ${BAL.composureMatchMid} your active skills count for only 75%, below ${BAL.composureMatchLow} just 50%. <b>Nutrition</b> sets how many hours you get at all: below ${BAL.nutritionHoursCapLow} your day shrinks to just ${BAL.dailyHoursFloor}h, sliding up to the full ${BAL.dailyHoursCeiling}h at ${BAL.nutritionHoursCapHigh}+.</p>
       <p><b>Gym injuries:</b> every Gym hour adds a ${+(BAL.injuryChancePerHour * 100).toFixed(1)}% chance of injury that day, so only a 0h day is risk-free — ${BAL.gymMaxHours}h (the most you can do) is a ${+(BAL.gymMaxHours * BAL.injuryChancePerHour * 100).toFixed(1)}% chance. The Gym row shows today's risk as <b>#% 🤕</b>. Sports Physio cuts that risk by 20%, 35% or 50%. An injury costs ${BAL.injuryPhysLoss[0]}–${BAL.injuryPhysLoss[1]} Health and locks the Gym for ${BAL.injuryDaysRange[0]}–${BAL.injuryDaysRange[1]} days (Recovery Program takes 1–3 days off, minimum 1); the row shows <b>🤕 #d</b> while it heals. Injuries never stop you playing matches — they only shut the Gym.</p>
-      <p><b>Staff &amp; ceilings:</b> skills train up to ${BAL.skillShopCapBase} on your own. To go higher, hire that skill's <b>Coach</b> in 🧑‍🏫 Staff: a hired coach lifts the ceiling (Lv1 60 … Lv5 100) and speeds up training — but never past your league cap (the highest league you've reached: 60 in League 5 up to 100 in League 1). Above the ceiling a skill isn't cut down: an hour a day holds it, less lets it slip. Physical Health caps at ${BAL.statCapBase} without a hired Sports Physio. Staff are hired <b>a week at a time</b> (a week ends after each match): you pay the weekly wage up front (pro-rated if you hire mid-week) and nothing renews, so each week you choose who's worth it — usually that week's focus skills. Higher levels cost a one-off fee to unlock, only once your league allows it (coaches: Lv2 in League 4 … Lv5 in League 1; support team: Lv2 in League 3, Lv3 in League 1), and cost more per week. The hatched end of a bar is the part this week's ceiling locks off.</p>
+      <p><b>Staff &amp; ceilings:</b> skills train up to ${BAL.skillShopCapBase} on your own. To go higher, hire that skill's <b>Coach</b> in 🧑‍🏫 Staff: a hired coach lifts the ceiling (Lv1 60 … Lv5 100) and speeds up training — but never past your league cap (the highest league you've reached: 60 in League 5 up to 100 in League 1). Above the ceiling a skill isn't cut down: an hour a day holds it, less lets it slip. Physical Health caps at ${BAL.statCapBase} without a hired Sports Physio. Staff are hired <b>a week at a time</b> (a week ends after each match): you pay the weekly wage up front (pro-rated if you hire mid-week) and coaches never renew, so each week you choose who's worth it — usually that week's focus skills. Support staff can be switched to <b>🔁 Auto-rehire</b>: when a week ends they're kept on at the same level for the next one, as long as you have the cash (if not, they're off that week and you're told). Higher levels cost a one-off fee to unlock, only once your league allows it (coaches: Lv2 in League 4 … Lv5 in League 1; support team: Lv2 in League 3, Lv3 in League 1), and cost more per week. The hatched end of a bar is the part this week's ceiling locks off.</p>
       <p><b>End Day / To Match:</b> <b>End Day ▶</b> plays one day. <b>To Match ▶▶</b> repeats today's plan every day up to and including the next match, then shows the result with a summary of how your stats moved over the week (outside the season it's <b>End Week ▶▶</b>, up to 7 days, to the end of the week). It stops early so you can re-plan if you get injured, lose or find a job (or go pro), burn out, get a new technique to master, or Nutrition drops so far that your plan no longer fits in the day.</p>
       <p><b>The season:</b> a ${BAL.preseasonDays}-day preseason to train, then a ${BAL.seasonRounds}-round regular season — one match a week against a named rival, all scheduled in advance, each testing that week's active skills. Finish in the top ${BAL.playoffSize} of your ${BAL.seasonRounds + 1}-competitor league to reach the knockout playoffs. Lose a playoff match and you're out; win the Final and you're champion.</p>
       <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken. Get knocked out of the playoffs and you go to training camp too, for the rest of the playoff window (at least ${BAL.offseasonDays} days) — so an early exit gets its time back as training, just like missing the cut. Only the champion gets a plain ${BAL.offseasonDays}-day break.</p>
@@ -4046,11 +4111,10 @@ function runDay() {
     appendLog(e.html, e.cls);
   }
 
+  let endedHires = {};
   if (weekEndsToday && state.staff && Object.keys(state.staff.hired).length) {
+    endedHires = state.staff.hired;
     state.staff.hired = {};
-    const e = { html: "📋 Staff contracts have ended — hire for the new week in 🧑‍🏫 Staff.", cls: "event-season" };
-    state.logEntries.push(e);
-    appendLog(e.html, e.cls);
   }
 
   // A new phase: build its splash screen (summary of the phase just played,
@@ -4064,6 +4128,9 @@ function runDay() {
   }
 
   state.day += 1;
+  // After the day ticks over, so the new week's wage is pro-rated for it.
+  state.staff.missed = [];
+  if (Object.keys(endedHires).length) staffWeekEnded(endedHires);
   return { matchResult, phaseEvent, yearSummary, splash };
 }
 

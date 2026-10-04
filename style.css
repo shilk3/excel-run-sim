@@ -825,6 +825,13 @@ details.match-more[open] { padding-bottom: 8px; }
 .staff-chip.staff-unlock:disabled { color: var(--text-dim); }
 .staff-hired { color: var(--accent); font-weight: 800; font-size: 13px; }
 .staff-locked { color: var(--text-dim); font-size: 12px; align-self: center; }
+.staff-auto { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; font-weight: 700; color: var(--text); cursor: pointer; }
+.staff-auto input { position: absolute; opacity: 0; width: 0; height: 0; }
+.staff-auto-switch { position: relative; flex: 0 0 auto; width: 34px; height: 20px; border-radius: 999px; background: var(--bg-elev-2); border: 1px solid var(--border); transition: background 0.15s; }
+.staff-auto-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--text-dim); transition: transform 0.15s, background 0.15s; }
+.staff-auto input:checked + .staff-auto-switch { background: var(--accent); border-color: var(--accent); }
+.staff-auto input:checked + .staff-auto-switch::after { transform: translateX(14px); background: #04241a; }
+.staff-auto input:focus-visible + .staff-auto-switch { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* Phase splash + tutorial */
 .splash { text-align: center; padding-top: 4px; }
