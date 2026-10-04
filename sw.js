@@ -1,6 +1,6 @@
 // Bump this on every deploy that changes cached files — it's what makes the
 // browser notice this file changed and install a new service worker.
-const CACHE_NAME = "cellgrind-v92";
+const CACHE_NAME = "cellgrind-v93";
 const ASSETS = [
   "./",
   "index.html",

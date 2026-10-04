@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.46.2";
+const APP_VERSION = "4.47.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -3101,7 +3101,10 @@ function staffCardHtml(key, { focus = false, statNote = "" } = {}) {
   </div>`;
 }
 
-function shopHtml() {
+// Which tab of the Staff & Items screen is showing; remembered for the
+// session so reopening lands where you left off.
+let shopTab = "staff";
+function shopHtml(tab = shopTab) {
   const focusKeys = inSeason() ? state.activeSkills : [];
   const order = SKILLS.map((sk) => sk.key).sort((x, y) => focusKeys.includes(y) - focusKeys.includes(x));
   const skillCards = order
@@ -3143,13 +3146,11 @@ function shopHtml() {
         }</div>
       </div>
     </div>`).join("");
-  return `
-    ${stickyHeadHtml("Staff & Items", `<span class="sticky-cash">💰 ${fmtMoney(state.cash)}</span>`)}
-    <div class="callout staff-week">
-      <div class="callout-label">This week</div>
-      <div>${weekEndPhrase()}. Pay up front; only staff set to 🔁 Auto-rehire renew — hire everyone else again each week.</div>
-      ${weeklyTotal ? `<div class="staff-line">Hired staff cost $${fmt(weeklyTotal)}/wk at full rate.</div>` : ""}
-    </div>
+  const tabBtn = (key, label) => `<button class="tab-btn${tab === key ? " active" : ""}" data-shop-tab="${key}" aria-pressed="${tab === key}">${label}</button>`;
+  const head = stickyHeadHtml(`<span class="tab-switch">${tabBtn("staff", "🧑‍🏫 Staff")}${tabBtn("items", "⚡ Items")}</span>`, `<span class="sticky-cash">💰 ${fmtMoney(state.cash)}</span>`);
+  if (tab === "items") {
+    return `
+    ${head}
     <div class="modal-section">
       <h3>Energy Items</h3>
       <p class="modal-sub">An instant top-up, each once a week. Rest ${fmt(state.stats.rest)} · Calm ${fmt(Math.min(100, state.stats.composure))} now (items don't go past 100).</p>
@@ -3159,6 +3160,14 @@ function shopHtml() {
       <h3>Equipment</h3>
       <p class="modal-sub">Works until Year ${state.year} ends (${PHASE_NAMES[state.seasonPhase] || state.seasonPhase} now), then it's worn out. The full price is paid whenever you buy, so it's best value early in the year.</p>
       ${gearCards}
+    </div>`;
+  }
+  return `
+    ${head}
+    <div class="callout staff-week">
+      <div class="callout-label">This week</div>
+      <div>${weekEndPhrase()}. Pay up front; only staff set to 🔁 Auto-rehire renew — hire everyone else again each week.</div>
+      ${weeklyTotal ? `<div class="staff-line">Hired staff cost $${fmt(weeklyTotal)}/wk at full rate.</div>` : ""}
     </div>
     <div class="modal-section">
       <h3>Skill Coaches</h3>
@@ -3175,7 +3184,13 @@ function shopHtml() {
 function openShop(opts) {
   // Called directly as a click handler too, so opts may be an Event.
   const keepScroll = !!(opts && opts.keepScroll === true);
+  if (opts && (opts.tab === "staff" || opts.tab === "items")) shopTab = opts.tab;
   openModal(shopHtml(), { ownClose: true, keepScroll });
+  document.querySelectorAll("[data-shop-tab]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      if (btn.dataset.shopTab !== shopTab) openShop({ tab: btn.dataset.shopTab });
+    })
+  );
   const refresh = () => {
     saveState();
     openShop({ keepScroll: true });
