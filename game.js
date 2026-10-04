@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.43.0";
+const APP_VERSION = "4.43.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -2404,7 +2404,9 @@ function lockedZoneHtml(cap, scaleMax) {
   return `<div class="bar-locked" style="left:${capPct}%;width:${100 - capPct}%"></div>`;
 }
 
-function comboRowHtml(key, { icon, label, outcomeText, value, previewValue, cap, scaleMax = cap, hours, maxHours, markerHours, shopTag, disabled, barClass }) {
+// heldBelow: something else (a hired coach) stops this stat slipping, so
+// under the marker reads neutral rather than red.
+function comboRowHtml(key, { icon, label, outcomeText, value, previewValue, cap, scaleMax = cap, hours, maxHours, markerHours, shopTag, disabled, barClass, heldBelow = false }) {
   const barPct = clamp((value / scaleMax) * 100, 0, 100);
   const previewPct = previewValue == null ? barPct : clamp((previewValue / scaleMax) * 100, 0, 100);
   const overlayLeft = Math.min(barPct, previewPct);
@@ -2417,7 +2419,7 @@ function comboRowHtml(key, { icon, label, outcomeText, value, previewValue, cap,
   // Tint the slider track itself so meeting (or missing) a stat's decay
   // threshold reads at a glance, not just from the marker tick.
   const meetsMarker = markerHours > 0 ? hours >= markerHours : null;
-  const sliderCls = meetsMarker === null ? "" : meetsMarker ? "slider-meets" : "slider-under";
+  const sliderCls = meetsMarker === null ? "" : meetsMarker ? "slider-meets" : heldBelow ? "slider-held" : "slider-under";
   return `
   <div class="activity combo-row ${barClass === "skill" ? "skill-row" : ""}" data-act="${key}" style="${disabled ? "opacity:0.45" : ""}">
     <div class="activity-row">
@@ -2505,15 +2507,16 @@ function renderPlannerRows() {
       comboRowHtml(key, {
         icon: meta.icon,
         label: meta.name,
-        outcomeText: `${fmt(s.skills[key])}/${cap}`,
+        outcomeText: `${fmt(s.skills[key])}/${cap}${lvl > 0 && (a.skills[key] || 0) < BAL.skillDecayThresholdHours ? " · held" : ""}`,
         value: s.skills[key],
         previewValue: preview.skills[key],
         cap,
         scaleMax: 100,
         hours: a.skills[key] || 0,
         maxHours: SKILL_MAX_HOURS,
-        // A hired coach stops rust, so there's no minimum to hit.
-        markerHours: lvl > 0 ? 0 : BAL.skillDecayThresholdHours,
+        // A hired coach stops rust: under 1h shows neutral, not red.
+        markerHours: BAL.skillDecayThresholdHours,
+        heldBelow: lvl > 0,
         shopTag,
         barClass: "skill",
       })
