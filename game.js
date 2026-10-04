@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.41.0";
+const APP_VERSION = "4.42.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -2122,10 +2122,6 @@ function processDayEnd() {
       state.leagueRoundRobins = newLeagueData.roundRobins;
       state.leaguePoints = newLeagueData.points;
       state.playoff = null;
-      // Offseason recovery — a clean slate for the new year.
-      state.stats.composure = 100;
-      state.stats.rest = 100;
-      state.stats.nutrition = 100;
       phaseEvent = `🎉 Year ${state.year} begins! A fresh ${BAL.seasonRounds}-round season has been scheduled — good luck.`;
     }
     return { matchResult, phaseEvent, yearSummary };
@@ -3567,7 +3563,6 @@ function buildPhaseSplash(from, to, { yearSummary = null, tierBefore = state.lea
     }
     next.push(["Preseason", `${BAL.preseasonDays} days — all 7 skills trainable, no matches`]);
     next.push(["League cap", `skills can reach ${leagueSkillCap()} (League ${state.peakLeagueTier} best)`]);
-    next.push(["Fresh start", "Rest, Composure and Nutrition are back to 100"]);
     const unlockable = [];
     if (SKILL_COACH_LEVELS.some((l, i) => l.unlock === state.peakLeagueTier && i > 0)) unlockable.push(`Coach Lv${SKILL_COACH_LEVELS.findIndex((l) => l.unlock === state.peakLeagueTier) + 1}`);
     const supIdx = SUPPORT_LEVEL_UNLOCK.indexOf(state.peakLeagueTier);
