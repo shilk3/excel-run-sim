@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.43.1";
+const APP_VERSION = "4.44.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -11,7 +11,7 @@ const SAVE_KEY = "cellgrind_save_v1";
 /* ---------------------------------------------------------------------- */
 const BAL = {
   idealSleep: 7, // also the Rest decay threshold: sleep below this drains Rest
-  relaxComposureThreshold: 3, // Composure's decay threshold, in relaxation hours
+  relaxComposureThreshold: 3, // Calm's decay threshold, in relaxation hours
   skillDecayThresholdHours: 1, // an active skill/Exercise below this hour count rusts
   skillGainBase: 0.24,
   exerciseGainBase: 0.6,
@@ -21,14 +21,22 @@ const BAL = {
   hardFatigueCap: 12,
   fatigueMultSoft: 0.6, // effectiveness for hours between soft and hard cap
   fatigueMultHard: 0.3, // effectiveness for hours beyond hard cap
-  // Composure comes from Relax alone: 3h holds it, each hour short costs
+  // Calm comes from Relax alone: 3h holds it, each hour short costs
   // this much a day, each hour over adds it (only 3 extra hours count).
   relaxComposureRelief: 2.4,
-  // Sleep's bonus to Composure on top: 7h gives half, 8h+ the full amount.
+  // Sleep's bonus to Calm on top: 7h gives half, 8h+ the full amount.
   sleepComposureBonusIdeal: 1.5,
   sleepComposureBonusLong: 3,
-  // Rest below this starts wearing on Composure and Health, by these much
+  // Rest below this starts wearing on Calm and Health, by these much
   // per point under it per day.
+  // Calm above 100 is a reserve: Relax past what's needed banks at half
+  // rate up to this cap, fading this much a day. Match day counts 100 max.
+  calmBankCap: 130,
+  calmBankRate: 0.5,
+  calmBankFade: 1,
+  // Employed: Work can run this many hours past the requirement, each paid
+  // at the job's normal hourly rate.
+  overtimeMaxHours: 4,
   restDragThreshold: 80,
   restDragComposure: 0.08,
   restDragHealth: 0.04,
@@ -44,9 +52,9 @@ const BAL = {
   // Rest is the only stat with a training-effectiveness effect: a smooth
   // slide from ×1 at this Rest (and below) up to ×2 at 100.
   restTrainingBoostFloor: 70,
-  // Composure's match-day effect: low Composure halves your skill on the
+  // Calm's match-day effect: low Calm halves your skill on the
   // day it matters most, recovering in the same step pattern in reverse.
-  composureMatchLow: 10, // <10 Composure: 50% skill
+  composureMatchLow: 10, // <10 Calm: 50% skill
   composureMatchMid: 20, // 10-19: 75% skill; >=20: 100% skill
   // Nutrition governs the total hours available to allocate each day —
   // neglect it and the day itself gets shorter, not just less effective.
@@ -268,9 +276,9 @@ Object.assign(UPGRADES, {
     name: "Meditation Coach",
     icon: "🧘",
     levels: [
-      { cost: 200, reliefMult: 1.2, desc: "+20% Composure relief from Relax" },
-      { cost: 450, reliefMult: 1.4, desc: "+40% Composure relief from Relax" },
-      { cost: 850, reliefMult: 1.65, desc: "+65% Composure relief from Relax" },
+      { cost: 200, reliefMult: 1.2, desc: "+20% Calm relief from Relax" },
+      { cost: 450, reliefMult: 1.4, desc: "+40% Calm relief from Relax" },
+      { cost: 850, reliefMult: 1.65, desc: "+65% Calm relief from Relax" },
     ],
   },
   recovery: {
@@ -351,7 +359,7 @@ function useEnergyItem(key) {
   state.yearCashFlow.expenses += item.price;
   const s = state.stats;
   const restGain = Math.min(item.rest, 100 - s.rest);
-  const compGain = Math.min(item.composure, 100 - s.composure);
+  const compGain = Math.max(0, Math.min(item.composure, 100 - s.composure));
   s.rest += restGain;
   s.composure += compGain;
   state.items.used[key] = true;
@@ -359,7 +367,7 @@ function useEnergyItem(key) {
     state.items.crash.rest += item.crash.rest;
     state.items.crash.composure += item.crash.composure;
   }
-  const gains = [item.rest ? `Rest +${fmt(restGain)}` : "", item.composure ? `Composure +${fmt(compGain)}` : ""].filter(Boolean).join(", ");
+  const gains = [item.rest ? `Rest +${fmt(restGain)}` : "", item.composure ? `Calm +${fmt(compGain)}` : ""].filter(Boolean).join(", ");
   const crashText = item.crash ? ` — crash tomorrow` : "";
   const e = { html: `${item.icon} ${item.name} (−$${item.price}): ${gains}${crashText}`, cls: "event-good" };
   state.logEntries.push(e);
@@ -451,7 +459,23 @@ function restTrainingMultiplier(rest) {
   const floor = BAL.restTrainingBoostFloor;
   return 1 + clamp((rest - floor) / (100 - floor), 0, 1);
 }
-// Sleep's Composure bonus: half at the ideal 7h, full from 8h.
+// Calm's reserve: above 100 it fades a little each day, and gains past 100
+// bank at half rate up to the cap. Losses come straight off (the reserve
+// drains first, since it's on top).
+function applyCalmChange(calm, delta) {
+  let c = calm > 100 ? Math.max(100, calm - BAL.calmBankFade) : calm;
+  if (delta > 0) {
+    const toHundred = Math.min(delta, Math.max(0, 100 - c));
+    c += toHundred + (delta - toHundred) * BAL.calmBankRate;
+  } else {
+    c += delta;
+  }
+  return clamp(c, 0, BAL.calmBankCap);
+}
+function calmBank(calm = state.stats.composure) {
+  return Math.max(0, calm - 100);
+}
+// Sleep's Calm bonus: half at the ideal 7h, full from 8h.
 function sleepComposureBonus(sleepH) {
   if (sleepH >= BAL.idealSleep + 1) return BAL.sleepComposureBonusLong;
   if (sleepH >= BAL.idealSleep) return BAL.sleepComposureBonusIdeal;
@@ -514,7 +538,15 @@ function jobSecurityPreviewPct(hours, isPro) {
 function workMaxHours(st = state.employment.status) {
   if (st === "pro") return 12; // 5 required + headroom to push a technique
   if (st === "unemployed") return 16; // no requirement, just a generous daily ceiling
-  return BAL.workHoursRequired; // Employed: no benefit to going beyond the requirement
+  return BAL.workHoursRequired + BAL.overtimeMaxHours; // Employed: overtime past the requirement
+}
+// Employed only: each hour past the requirement pays the job's hourly rate.
+function overtimeRate(emp = state.employment) {
+  return Math.round(emp.workPay / BAL.workHoursRequired);
+}
+function overtimePay(workH, emp = state.employment) {
+  if (emp.status !== "employed") return 0;
+  return Math.max(0, workH - BAL.workHoursRequired) * overtimeRate(emp);
 }
 function techniqueStatusText() {
   const q = state.employment.techniqueQueue;
@@ -859,10 +891,10 @@ function migrateSave(parsed) {
 
   // v4.0.0 replaced the single Excel Skill stat with 7 case specialties
   // (only 1-3 "active" and trainable each round), and renamed/inverted
-  // Sleep Debt -> Rest and Stress -> Composure (both higher-is-better now,
+  // Sleep Debt -> Rest and Stress -> Calm (both higher-is-better now,
   // matching every other stat). Any save still on the old single-skill
   // shape gets migrated: every new skill starts at the old Excel Skill
-  // level (simplest continuity, no worse than a fresh grind), Rest/Composure
+  // level (simplest continuity, no worse than a fresh grind), Rest/Calm
   // are seeded from their old inverse, and cash is refunded for whatever
   // was invested in the old single Personal Coach upgrade (it no longer
   // exists — 5 flat levels: 300/650/1200 cumulative) since that progress
@@ -1223,7 +1255,7 @@ function computeDayResult(allocation, stats, injuryActive, burnoutActive) {
   const crash = (state.items && state.items.crash) || { rest: 0, composure: 0 };
   const rest = clamp(s.rest + restDelta - crash.rest, 0, 100);
 
-  // ---- Composure (renamed/inverted Stress: higher = better) ----
+  // ---- Calm (renamed/inverted Stress: higher = better) ----
   // Relax alone keeps it level at 3h; training doesn't touch it. Sleep adds
   // a bonus and low Rest wears it down.
   const meditationMult = meditationEff ? meditationEff.reliefMult : 1.0;
@@ -1232,7 +1264,7 @@ function computeDayResult(allocation, stats, injuryActive, burnoutActive) {
   const sleepBonus = sleepComposureBonus(sleepH);
   const composurePenaltyFromRest = restShortfall * BAL.restDragComposure;
   const composureDelta = relaxDelta + sleepBonus - composurePenaltyFromRest;
-  const composure = clamp(s.composure + composureDelta - crash.composure, 0, 100);
+  const composure = clamp(applyCalmChange(s.composure, composureDelta) - crash.composure, 0, BAL.calmBankCap);
 
   return {
     skills,
@@ -1296,7 +1328,7 @@ function resolveDay() {
       else if (result.physMult < 0.75) note = " (low Health capped your gains)";
       events.push({ type: delta > 0.5 ? "good" : "neutral", text: `${meta.icon} ${meta.name} (${hours}h): ${fmtSigned(delta)} skill${note}` });
     } else if (delta < 0 && isActive) {
-      events.push({ type: "bad", text: `${meta.icon} No ${meta.name} training: skill rusted slightly (${fmtSigned(delta)})` });
+      events.push({ type: "bad", text: `${meta.icon} No ${meta.name} training: skill rusted slightly (${fmtSigned(delta, Math.abs(delta) < 0.1 ? 2 : 1)})` });
     } else if (isActive && hiredLevel(coachKey(key))) {
       events.push({ type: "neutral", text: `${meta.icon} No ${meta.name} training: your coach kept it steady` });
     }
@@ -1349,15 +1381,18 @@ function resolveDay() {
     events.push({ type: "good", text: `🌙 Slept ${result.sleepH}h: well rested (Rest ${fmtSigned(result.restDelta)})` });
   }
 
-  // ---- Composure ----
+  // ---- Calm (stored as stats.composure) ----
+  const calmBefore = s.composure;
   s.composure = result.composure;
+  const calmChange = s.composure - calmBefore;
+  const bankNote = calmBank() >= 0.5 ? ` (${fmt(calmBank())} banked)` : "";
   if (result.relaxH < BAL.relaxComposureThreshold) {
-    events.push({ type: "bad", text: `🔥 Under ${BAL.relaxComposureThreshold}h Relax: Composure ${fmtSigned(result.composureDelta)} (now ${fmt(s.composure)})` });
+    events.push({ type: "bad", text: `🔥 Under ${BAL.relaxComposureThreshold}h Relax: Calm ${fmtSigned(calmChange)} (now ${fmt(s.composure)})` });
   } else {
-    events.push({ type: "good", text: `🎮 Relaxed ${result.relaxH}h: Composure ${fmtSigned(result.composureDelta)}` });
+    events.push({ type: "good", text: `🎮 Relaxed ${result.relaxH}h: Calm ${fmtSigned(calmChange)}${bankNote}` });
   }
   if (result.crash.rest || result.crash.composure) {
-    const parts = [result.crash.rest ? `Rest −${result.crash.rest}` : "", result.crash.composure ? `Composure −${result.crash.composure}` : ""].filter(Boolean);
+    const parts = [result.crash.rest ? `Rest −${result.crash.rest}` : "", result.crash.composure ? `Calm −${result.crash.composure}` : ""].filter(Boolean);
     events.push({ type: "bad", text: `☕ Caffeine crash: ${parts.join(", ")}` });
     state.items.crash = { rest: 0, composure: 0 };
   }
@@ -1365,7 +1400,7 @@ function resolveDay() {
   // ---- Burnout state transitions ----
   if (!state.burnout.active && s.composure <= BAL.burnoutComposureThreshold) {
     state.burnout = { active: true, daysLeft: 1 };
-    events.push({ type: "bad", text: `⚠️ BURNOUT! Composure ran out. Skill training is far less effective until it recovers — Relax more.` });
+    events.push({ type: "bad", text: `⚠️ BURNOUT! Calm ran out. Skill training is far less effective until it recovers — Relax more.` });
   } else if (state.burnout.active && s.composure >= BAL.burnoutRecoverThreshold) {
     state.burnout = { active: false, daysLeft: 0 };
     events.push({ type: "good", text: `✅ Recovered from burnout. You're focused again.` });
@@ -1430,6 +1465,12 @@ function resolveEmploymentDay() {
     state.yearCashFlow.workPay += pay;
 
     if (workH >= required) {
+      const ot = overtimePay(workH, emp);
+      if (ot > 0) {
+        state.cash += ot;
+        state.yearCashFlow.workPay += ot;
+        events.push({ type: "good", text: `💼 Overtime ${workH - required}h: +$${ot}` });
+      }
       if (isPro) {
         const extra = workH - required;
         if (extra > 0 && emp.techniqueQueue.length > 0) {
@@ -1510,14 +1551,14 @@ function activeSkillAverage() {
 
 // Single source of truth for what a match performance score is made of, so
 // the result modal can show the breakdown instead of just the final number
-// (skill isn't the whole story — Physical Health, Composure and Rest all
+// (skill isn't the whole story — Physical Health, Calm and Rest all
 // weigh in too).
 const PERF_WEIGHTS = { skill: 0.55, phys: 0.25, composure: 0.15, rest: 0.05 };
 
 function performanceBreakdown() {
   const s = state.stats;
-  // Low Composure hits you hardest where it matters most: match day. This
-  // stacks on top of (doesn't replace) Composure's own weighted contribution
+  // Low Calm hits you hardest where it matters most: match day. This
+  // stacks on top of (doesn't replace) Calm's own weighted contribution
   // below, same as before.
   const composureMult = composureMatchMultiplier(s.composure);
   const skillAvg = activeSkillAverage();
@@ -1525,7 +1566,7 @@ function performanceBreakdown() {
   const weighted = {
     skill: skillComponent * PERF_WEIGHTS.skill,
     phys: s.phys * PERF_WEIGHTS.phys,
-    composure: s.composure * PERF_WEIGHTS.composure,
+    composure: Math.min(100, s.composure) * PERF_WEIGHTS.composure,
     rest: s.rest * PERF_WEIGHTS.rest,
   };
   // Raw inputs, snapshotted for the match result table.
@@ -1534,7 +1575,7 @@ function performanceBreakdown() {
     skillAvg,
     skillComponent,
     phys: s.phys,
-    composure: s.composure,
+    composure: Math.min(100, s.composure),
     rest: s.rest,
   };
   let score = clamp(weighted.skill + weighted.phys + weighted.composure + weighted.rest, 0, 100);
@@ -2367,7 +2408,7 @@ function renderStats() {
   const banner = $("warningBanner");
   const msgs = [];
   if (state.burnout.active) msgs.push("🔥 Burnout active — training & exercise are far less effective. Relax to recover.");
-  else if (s.composure <= 10) msgs.push("🔥 Composure critical — burnout imminent. Schedule relaxation soon.");
+  else if (s.composure <= 10) msgs.push("🔥 Calm critical — burnout imminent. Schedule relaxation soon.");
   if (state.injury.active) msgs.push(`🤕 Injured — Gym locked for ${state.injury.daysLeft} more ${state.injury.daysLeft === 1 ? "day" : "days"}.`);
   if (s.rest <= 30) msgs.push("🌙 Severely low Rest — your body is breaking down. Sleep more.");
   if (s.phys <= 20) msgs.push("💪 Health critically low — it's capping your training gains.");
@@ -2406,7 +2447,9 @@ function lockedZoneHtml(cap, scaleMax) {
 
 // heldBelow: something else (a hired coach) stops this stat slipping, so
 // under the marker reads neutral rather than red.
-function comboRowHtml(key, { icon, label, outcomeText, value, previewValue, cap, scaleMax = cap, hours, maxHours, markerHours, shopTag, disabled, barClass, heldBelow = false }) {
+// bank / bankPreview: a reserve above 100 (Calm), drawn as a bright strip
+// over the full bar — its width is the reserve's share of the most it can hold.
+function comboRowHtml(key, { icon, label, outcomeText, value, previewValue, cap, scaleMax = cap, hours, maxHours, markerHours, shopTag, disabled, barClass, heldBelow = false, bank = 0, bankPreview = 0 }) {
   const barPct = clamp((value / scaleMax) * 100, 0, 100);
   const previewPct = previewValue == null ? barPct : clamp((previewValue / scaleMax) * 100, 0, 100);
   const overlayLeft = Math.min(barPct, previewPct);
@@ -2429,7 +2472,7 @@ function comboRowHtml(key, { icon, label, outcomeText, value, previewValue, cap,
       <span class="combo-outcome">${outcomeText}</span>
       <span class="activity-hours"><span id="hoursVal_${key}">${hours}</span>h</span>
     </div>
-    <div class="bar combo-bar"><div class="bar-fill ${barClass}" style="width:${barPct}%"></div>${lockedZoneHtml(cap, scaleMax)}${overlayHtml}</div>
+    <div class="bar combo-bar"><div class="bar-fill ${barClass}" style="width:${barPct}%"></div>${lockedZoneHtml(cap, scaleMax)}${overlayHtml}${bankHtml(bank, bankPreview)}</div>
     <div class="stepper">
       <button class="step-btn" data-key="${key}" data-dir="-1" ${disabled ? "disabled" : ""}>−</button>
       <div class="slider-wrap">
@@ -2443,6 +2486,14 @@ function comboRowHtml(key, { icon, label, outcomeText, value, previewValue, cap,
 
 // Net of cost of living, not gross pay — what actually lands in (or leaves)
 // cash each day. The Career modal still breaks out gross pay and expenses.
+function bankHtml(bank, bankPreview) {
+  if (bank < 0.5 && bankPreview < 0.5) return "";
+  const room = BAL.calmBankCap - 100;
+  const now = clamp((bank / room) * 100, 0, 100);
+  const next = clamp((bankPreview / room) * 100, 0, 100);
+  return `<div class="bar-bank" style="width:${now}%"></div>${next > now + 0.3 ? `<div class="bar-bank bar-bank-gain" style="left:${now}%;width:${next - now}%"></div>` : ""}`;
+}
+
 function netPerDayTag(net) {
   return `<span class="skill-shop-tag${net < 0 ? " skill-shop-tag-negative" : ""}">Net ${fmtMoney(net)}/d</span>`;
 }
@@ -2475,8 +2526,10 @@ function workRowHtml() {
   const required = isPro ? BAL.proDutyHoursRequired : BAL.workHoursRequired;
   const atRisk = hours < required;
   const livesText = `${fmt1(livesRemaining())}/${fmt1(BAL.strikesToFire)} left`;
-  const outcomeText = (atRisk ? "⚠️ " : "") + (isPro ? `${livesText} · ${techniqueStatusText()}` : livesText);
-  const statusTag = netPerDayTag((isPro ? emp.proPay : emp.workPay) - BAL.dailyExpenses);
+  const ot = overtimePay(hours);
+  const otText = ot > 0 ? ` · +$${ot} OT` : "";
+  const outcomeText = (atRisk ? "⚠️ " : "") + (isPro ? `${livesText} · ${techniqueStatusText()}` : `${livesText}${otText}`);
+  const statusTag = netPerDayTag((isPro ? emp.proPay : emp.workPay) + ot - BAL.dailyExpenses);
   return comboRowHtml("work", {
     icon: isPro ? "📱" : "💼",
     label: isPro ? "Pro Duties" : "Work",
@@ -2561,8 +2614,8 @@ function renderPlannerRows() {
       barClass: "rest",
     })
   );
-  // Composure moves from more than just Relax hours — Sleep (7h+) adds a
-  // bonus on its own, and low Rest bleeds it down. Without this, Composure
+  // Calm moves from more than just Relax hours — Sleep (7h+) adds a
+  // bonus on its own, and low Rest bleeds it down. Without this, Calm
   // can visibly rise (or fall) with hours that look "not enough" on this
   // row alone. Only room for one note before the row overflows, so show
   // whichever is the bigger factor today, and drop "match" to make space.
@@ -2572,14 +2625,20 @@ function renderPlannerRows() {
   if (sleepBonus > 0 || composureRestDrag > 0) {
     composureNote = sleepBonus >= composureRestDrag ? ` · Sleep +${sleepBonus}` : ` · Rest −${fmt1(composureRestDrag)}`;
   }
-  const matchSuffix = composureNote ? "" : " match";
+  const bank = calmBank();
+  const bankText = bank >= 0.5 ? ` · +${fmt(bank)} bank` : "";
+  // The match multiplier only shows once it actually bites.
+  const matchMult = composureMatchMultiplier(s.composure);
+  const matchText = matchMult < 1 ? ` · match ×${matchMult}` : "";
   rows.push(
     comboRowHtml("relax", {
       icon: "🎮",
       label: "Relax",
-      outcomeText: `Composure ${fmt(s.composure)}/100 · ×${composureMatchMultiplier(s.composure)}${matchSuffix}${composureNote}`,
-      value: s.composure,
-      previewValue: preview.composure,
+      outcomeText: `Calm ${fmt(Math.min(100, s.composure))}/100${bankText}${matchText}${composureNote}`,
+      value: Math.min(100, s.composure),
+      previewValue: Math.min(100, preview.composure),
+      bank,
+      bankPreview: calmBank(preview.composure),
       cap: 100,
       hours: a.relax,
       maxHours: ACT_MAX.relax,
@@ -2736,7 +2795,7 @@ function performanceTableHtml(b) {
       })
       .join("");
     if (raw.skills.length > 1) skillDetail += sub("Average", one(raw.skillAvg));
-    if (b.composureMult < 1) skillDetail += sub(`😰 Low Composure (under ${BAL.composureMatchMid})`, `×${b.composureMult.toFixed(2)}`).replace("perf-sub", "perf-sub perf-warn");
+    if (b.composureMult < 1) skillDetail += sub(`😰 Low Calm (under ${BAL.composureMatchMid})`, `×${b.composureMult.toFixed(2)}`).replace("perf-sub", "perf-sub perf-warn");
   }
   const subtotal = b.weighted.skill + b.weighted.phys + b.weighted.composure + b.weighted.rest;
   const techRow =
@@ -2750,7 +2809,7 @@ function performanceTableHtml(b) {
         ${row("🧠 Skill", raw ? one(raw.skillComponent) : "", PERF_WEIGHTS.skill, b.weighted.skill)}
         ${skillDetail}
         ${row("🏃 Health", raw ? fmt(raw.phys) : "", PERF_WEIGHTS.phys, b.weighted.phys)}
-        ${row("🎮 Composure", raw ? fmt(raw.composure) : "", PERF_WEIGHTS.composure, b.weighted.composure)}
+        ${row("🎮 Calm", raw ? fmt(raw.composure) : "", PERF_WEIGHTS.composure, b.weighted.composure)}
         ${row("🌙 Rest", raw ? fmt(raw.rest) : "", PERF_WEIGHTS.rest, b.weighted.rest)}
         ${techRow}
       </tbody>
@@ -2989,8 +3048,8 @@ function shopHtml() {
   const weeklyTotal = Object.entries(state.staff.hired).reduce((a, [k, l]) => a + UPGRADES[k].levels[l - 1].wage, 0);
   const itemCards = ENERGY_ITEMS.map((it) => {
     const used = itemUsed(it.key);
-    const now = [it.rest ? `+${it.rest} Rest` : "", it.composure ? `+${it.composure} Composure` : ""].filter(Boolean).join(", ");
-    const crash = it.crash ? [it.crash.rest ? `−${it.crash.rest} Rest` : "", it.crash.composure ? `−${it.crash.composure} Composure` : ""].filter(Boolean).join(", ") : "";
+    const now = [it.rest ? `+${it.rest} Rest` : "", it.composure ? `+${it.composure} Calm` : ""].filter(Boolean).join(", ");
+    const crash = it.crash ? [it.crash.rest ? `−${it.crash.rest} Rest` : "", it.crash.composure ? `−${it.crash.composure} Calm` : ""].filter(Boolean).join(", ") : "";
     return `
     <div class="shop-item staff-card item-card">
       <div class="shop-item-icon">${it.icon}</div>
@@ -3015,7 +3074,7 @@ function shopHtml() {
     </div>
     <div class="modal-section">
       <h3>Energy Items</h3>
-      <p class="modal-sub">An instant top-up, each once a week. Rest ${fmt(state.stats.rest)} · Composure ${fmt(state.stats.composure)} now (neither goes past 100).</p>
+      <p class="modal-sub">An instant top-up, each once a week. Rest ${fmt(state.stats.rest)} · Calm ${fmt(Math.min(100, state.stats.composure))} now (items don't go past 100).</p>
       ${itemCards}
     </div>
     <div class="modal-section">
@@ -3174,7 +3233,7 @@ function currentStatsHtml() {
   const rows = [
     { icon: "🏃", name: "Physical Health", val: s.phys, cap: pCap, cls: "phys", note: pCap < 100 ? `cap: ${physioLvl > 0 ? `Physio Lv${physioLvl}` : "no Physio"}` : "" },
     { icon: "🌙", name: "Rest", val: s.rest, cap: 100, cls: "rest", note: "" },
-    { icon: "🎮", name: "Composure", val: s.composure, cap: 100, cls: "composure", note: "" },
+    { icon: "🎮", name: "Calm", val: Math.min(100, s.composure), cap: 100, cls: "composure", note: calmBank() >= 0.5 ? `+${fmt(calmBank())} banked` : "" },
     { icon: "🥗", name: "Nutrition", val: s.nutrition, cap: 100, cls: "nutrition", note: `${dailyHoursCap(s.nutrition)}h today` },
   ];
   return rows
@@ -3746,7 +3805,7 @@ function dayEventCards(before) {
   if (!before.burnout && state.burnout.active) {
     cards.push({
       icon: "😵", tone: "bad", title: "Burnout",
-      body: `Composure hit ${BAL.burnoutComposureThreshold}. Skill training is only <b>${Math.round(BAL.burnoutEffectivenessMult * 100)}% effective</b> until Composure is back to ${BAL.burnoutRecoverThreshold}.`,
+      body: `Calm hit ${BAL.burnoutComposureThreshold}. Skill training is only <b>${Math.round(BAL.burnoutEffectivenessMult * 100)}% effective</b> until Calm is back to ${BAL.burnoutRecoverThreshold}.`,
       tip: `Schedule ${BAL.relaxComposureThreshold}h+ of Relax a day to recover — training hours are mostly wasted until then.`,
     });
   }
@@ -3848,23 +3907,23 @@ function openHowTo() {
       📈🗺️📝🎲🔢⏱️🃏 <b>Skill Training</b> — 7 case specialties (Data, Mapping, Text, Game Logic, Math, Time, Cards). During preseason and the off-season, all 7 are open for training. Once the regular season starts, only 1-3 are "active" each round, revealed at the start of that round's week — the rest can't be trained until they come up again.<br>
       🏃 <b>Gym</b> — raises Physical Health.<br>
       🌙 <b>Sleep</b> — builds Rest.<br>
-      🎮 <b>Relax</b> — builds Composure and prevents burnout.<br>
+      🎮 <b>Relax</b> — builds Calm and prevents burnout.<br>
       🥗 <b>Food</b> — builds Nutrition, which keeps tomorrow's day at full length.<br>
       💼 <b>Work</b> — pays the bills and keeps you employed.
       </p>
-      <p><b>It's all connected:</b> Rest below ${BAL.restDragThreshold} wears down Physical Health and Composure (more the lower it goes), and low Physical Health caps how much your skill training actually helps. Composure comes from Relax: ${BAL.relaxComposureThreshold}h a day holds it, each hour short costs ${BAL.relaxComposureRelief} a day, each extra hour adds ${BAL.relaxComposureRelief}; sleeping ${BAL.idealSleep}h adds +${BAL.sleepComposureBonusIdeal} on top, ${BAL.idealSleep + 1}h+ adds +${BAL.sleepComposureBonusLong}. Hit 0 Composure and you burn out, tanking your training until it recovers to ${BAL.burnoutRecoverThreshold}.</p>
-      <p><b>Decay:</b> every stat needs upkeep or it slips. Any skill that isn't active this round rusts; an active skill still rusts below ${BAL.skillDecayThresholdHours}h of training — unless that skill's Coach is hired, which stops it rusting at all. Gym below ${BAL.skillDecayThresholdHours}h detrains Physical Health. Sleep below ${BAL.idealSleep}h drains Rest. Relax below ${BAL.relaxComposureThreshold}h drains Composure. Food below ${BAL.skillDecayThresholdHours}h drains Nutrition. Each slider shows a marker at its threshold, and each bar previews tomorrow's value based on your current plan — green for a gain, red for a loss.</p>
-      <p><b>Rest</b> swings training itself (skills and Gym): a smooth slide from normal speed at ${BAL.restTrainingBoostFloor} Rest or below up to double speed at 100 — e.g. 85 Rest trains at ×1.5. ${BAL.idealSleep}h sleep holds Rest where it is. <b>Composure</b> hits match day specifically — below ${BAL.composureMatchMid} your active skills count for only 75%, below ${BAL.composureMatchLow} just 50%. <b>Nutrition</b> sets how many hours you get at all: below ${BAL.nutritionHoursCapLow} your day shrinks to just ${BAL.dailyHoursFloor}h, sliding up to the full ${BAL.dailyHoursCeiling}h at ${BAL.nutritionHoursCapHigh}+.</p>
+      <p><b>It's all connected:</b> Rest below ${BAL.restDragThreshold} wears down Physical Health and Calm (more the lower it goes), and low Physical Health caps how much your skill training actually helps. Calm comes from Relax: ${BAL.relaxComposureThreshold}h a day holds it, each hour short costs ${BAL.relaxComposureRelief} a day, each extra hour adds ${BAL.relaxComposureRelief}; sleeping ${BAL.idealSleep}h adds +${BAL.sleepComposureBonusIdeal} on top, ${BAL.idealSleep + 1}h+ adds +${BAL.sleepComposureBonusLong}. Relax beyond what keeps you at 100 isn't wasted: it <b>banks</b> a reserve above 100 (at half rate, up to ${BAL.calmBankCap}, fading ${BAL.calmBankFade} a day) that drains first on short-Relax days — match day still counts Calm as 100 at most. Hit 0 Calm and you burn out, tanking your training until it recovers to ${BAL.burnoutRecoverThreshold}.</p>
+      <p><b>Decay:</b> every stat needs upkeep or it slips. Any skill that isn't active this round rusts; an active skill still rusts below ${BAL.skillDecayThresholdHours}h of training — unless that skill's Coach is hired, which stops it rusting at all. Gym below ${BAL.skillDecayThresholdHours}h detrains Physical Health. Sleep below ${BAL.idealSleep}h drains Rest. Relax below ${BAL.relaxComposureThreshold}h drains Calm. Food below ${BAL.skillDecayThresholdHours}h drains Nutrition. Each slider shows a marker at its threshold, and each bar previews tomorrow's value based on your current plan — green for a gain, red for a loss.</p>
+      <p><b>Rest</b> swings training itself (skills and Gym): a smooth slide from normal speed at ${BAL.restTrainingBoostFloor} Rest or below up to double speed at 100 — e.g. 85 Rest trains at ×1.5. ${BAL.idealSleep}h sleep holds Rest where it is. <b>Calm</b> hits match day specifically — below ${BAL.composureMatchMid} your active skills count for only 75%, below ${BAL.composureMatchLow} just 50%. <b>Nutrition</b> sets how many hours you get at all: below ${BAL.nutritionHoursCapLow} your day shrinks to just ${BAL.dailyHoursFloor}h, sliding up to the full ${BAL.dailyHoursCeiling}h at ${BAL.nutritionHoursCapHigh}+.</p>
       <p><b>Gym injuries:</b> every Gym hour adds a ${+(BAL.injuryChancePerHour * 100).toFixed(1)}% chance of injury that day, so only a 0h day is risk-free — ${BAL.gymMaxHours}h (the most you can do) is a ${+(BAL.gymMaxHours * BAL.injuryChancePerHour * 100).toFixed(1)}% chance. The Gym row shows today's risk as <b>#% 🤕</b>. Sports Physio cuts that risk by 20%, 35% or 50%. An injury costs ${BAL.injuryPhysLoss[0]}–${BAL.injuryPhysLoss[1]} Health and locks the Gym for ${BAL.injuryDaysRange[0]}–${BAL.injuryDaysRange[1]} days (Recovery Program takes 1–3 days off, minimum 1); the row shows <b>🤕 #d</b> while it heals. Injuries never stop you playing matches — they only shut the Gym.</p>
       <p><b>Staff &amp; ceilings:</b> skills train up to ${BAL.skillShopCapBase} on your own. To go higher, hire that skill's <b>Coach</b> in 🧑‍🏫 Staff: a hired coach lifts the ceiling (Lv1 60 … Lv5 100), speeds up training and stops that skill rusting while hired (even untrained) — but never past your league cap (the highest league you've reached: 60 in League 5 up to 100 in League 1). Above the ceiling a skill isn't cut down: an hour a day holds it, less lets it slip. Physical Health caps at ${BAL.statCapBase} without a hired Sports Physio. Staff are hired <b>a week at a time</b> (a week ends after each match): you pay the weekly wage up front (pro-rated if you hire mid-week) and nothing renews by default, so each week you choose who's worth it — usually that week's focus skills. Any coach or support staff can be switched to <b>🔁 Auto-rehire</b>: when a week ends they're kept on at the same level for the next one, as long as you have the cash (if not, they're off that week, their switch turns off and you're told). Higher levels cost a one-off fee to unlock, only once your league allows it (coaches: Lv2 in League 4 … Lv5 in League 1; support team: Lv2 in League 3, Lv3 in League 1), and cost more per week. The hatched end of a bar is the part this week's ceiling locks off.</p>
-      <p><b>Energy Items</b> (in 🧑‍🏫 Staff &amp; Items) are an instant top-up, each usable once a week: ${ENERGY_ITEMS.map((it) => `${it.icon} ${it.name} $${it.price} (${[it.rest ? `+${it.rest} Rest` : "", it.composure ? `+${it.composure} Composure` : ""].filter(Boolean).join(", ")}${it.crash ? `, then ${[it.crash.rest ? `−${it.crash.rest} Rest` : "", it.crash.composure ? `−${it.crash.composure} Composure` : ""].filter(Boolean).join(", ")} the next day` : ", no crash"})`).join(" · ")}. Nothing goes past 100.</p>
+      <p><b>Energy Items</b> (in 🧑‍🏫 Staff &amp; Items) are an instant top-up, each usable once a week: ${ENERGY_ITEMS.map((it) => `${it.icon} ${it.name} $${it.price} (${[it.rest ? `+${it.rest} Rest` : "", it.composure ? `+${it.composure} Calm` : ""].filter(Boolean).join(", ")}${it.crash ? `, then ${[it.crash.rest ? `−${it.crash.rest} Rest` : "", it.crash.composure ? `−${it.crash.composure} Calm` : ""].filter(Boolean).join(", ")} the next day` : ", no crash"})`).join(" · ")}. Nothing goes past 100.</p>
       <p><b>End Day / To Match:</b> <b>End Day ▶</b> plays one day. <b>To Match ▶▶</b> repeats today's plan every day up to and including the next match, then shows the result with a summary of how your stats moved over the week (outside the season it's <b>End Week ▶▶</b>, up to 7 days, to the end of the week). It stops early so you can re-plan if you get injured, lose or find a job (or go pro), burn out, get a new technique to master, or Nutrition drops so far that your plan no longer fits in the day.</p>
       <p><b>The season:</b> a ${BAL.preseasonDays}-day preseason to train, then a ${BAL.seasonRounds}-round regular season — one match a week against a named rival, all scheduled in advance, each testing that week's active skills. Finish in the top ${BAL.playoffSize} of your ${BAL.seasonRounds + 1}-competitor league to reach the knockout playoffs. Lose a playoff match and you're out; win the Final and you're champion.</p>
       <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken. Get knocked out of the playoffs and you go to training camp too, for the rest of the playoff window (at least ${BAL.offseasonDays} days) — so an early exit gets its time back as training, just like missing the cut. Only the champion gets a plain ${BAL.offseasonDays}-day break.</p>
       <p><b>Match day:</b> both players get a <b>match-day rating</b> = rating + performance + luck. Your performance comes from your stats (each point above 70 adds 3, below 70 costs 3); every rival has a performance on the same scale. Luck is random for both sides every match — usually between about −150 and +120, occasionally +400 or more on an inspired day. The higher match-day rating wins, so the bigger your rating gap the likelier you are to win, but upsets always stay possible. The result screen shows every number side by side.</p>
       <p><b>Leagues:</b> there are ${BAL.leagueCount} leagues, League 1 at the top and League 5 at the bottom — you start in League 5. Every league has a persistent roster of named rivals whose ratings evolve from real simulated results every week, same as yours — every tier's table is live from round 1, not just visible once the season ends. Four go up from every league below League 1: the playoff champion, plus the top ${BAL.promotionTablePlaces} of the table other than the champion — so a top-${BAL.promotionTablePlaces} finish is always promoted, and anyone in the playoffs can still win their way up. Finish bottom ${BAL.relegationCount} and you're relegated. This applies to every competitor in every league, not just you — every league plays out its own knockout too — so the standings you see are a living world, not scenery. Check the Leagues screen any time (Menu, or the shortcut in Career) to see all ${BAL.leagueCount} tables. <b>Match History</b> keeps every match you play (tap one to see its full result again) and every result in all ${BAL.leagueCount} leagues for this season and last — tap a rival's name, there or in a league table, to see their season.</p>
       <p><b>Rating</b> is your skill score (the 🏆 number), the same scale every rival is measured on — it rises and falls with each result, and it's what your win chance is worked out from. Your <b>table position</b> (#1–#40) is separate: it comes from league points, 3 per win. Cash and Rating carry across seasons and leagues — spend cash on Staff each week.</p>
-      <p><b>Employment:</b> your day job funds everything else, every phase, no exceptions. Work ${BAL.workHoursRequired}h/day (every phase, preseason included), starting at $${BAL.workPayMin}/day — pay is tied to still <i>having</i> the job, not to hitting the exact hour target every day, so falling short doesn't cost you income, only a chunk of a chance scaled to the shortfall (regained ${BAL.strikeWindowDays} days later). Run out of your ${fmt1(BAL.strikesToFire)} chances and <i>that's</i> when pay actually stops — you're fired: the same slider becomes a Job Search, needing a random ${BAL.jobSearchHoursRange[0]}–${BAL.jobSearchHoursRange[1]} cumulative hours (rolled when you lose the job and shown on the slider) to get rehired — at least ${BAL.jobSearchMinHours}h of searching a day, or the day can't end. Reach League ${BAL.goProLeagueTier} or higher with $${BAL.goProCash}+ banked while employed and you go Pro automatically — Work drops to just ${BAL.proDutyHoursRequired}h/day of Pro Duties, starting at $${BAL.proPayMin}/day, with the same chances rule and the same fallback to Job Search if you're dropped.</p>
+      <p><b>Employment:</b> your day job funds everything else, every phase, no exceptions. Work ${BAL.workHoursRequired}h/day (every phase, preseason included), starting at $${BAL.workPayMin}/day; up to ${BAL.overtimeMaxHours}h of <b>overtime</b> on top pays your normal hourly rate (pay ÷ ${BAL.workHoursRequired}) for each extra hour — pay is tied to still <i>having</i> the job, not to hitting the exact hour target every day, so falling short doesn't cost you income, only a chunk of a chance scaled to the shortfall (regained ${BAL.strikeWindowDays} days later). Run out of your ${fmt1(BAL.strikesToFire)} chances and <i>that's</i> when pay actually stops — you're fired: the same slider becomes a Job Search, needing a random ${BAL.jobSearchHoursRange[0]}–${BAL.jobSearchHoursRange[1]} cumulative hours (rolled when you lose the job and shown on the slider) to get rehired — at least ${BAL.jobSearchMinHours}h of searching a day, or the day can't end. Reach League ${BAL.goProLeagueTier} or higher with $${BAL.goProCash}+ banked while employed and you go Pro automatically — Work drops to just ${BAL.proDutyHoursRequired}h/day of Pro Duties, starting at $${BAL.proPayMin}/day, with the same chances rule and the same fallback to Job Search if you're dropped.</p>
       <p><b>Pay &amp; seniority:</b> pay rises $${BAL.payRaisePerYear}/year for your first ${BAL.payRaiseMaxYears} years in a role, then holds — Work tops out at $${BAL.workPayMin + BAL.payRaisePerYear * BAL.payRaiseMaxYears}/day, Pro Duties at $${BAL.proPayMin + BAL.payRaisePerYear * BAL.payRaiseMaxYears}/day. Lose the job or get dropped from Pro and that role's pay resets to its minimum for next time — seniority isn't carried over.</p>
       <p><b>Cost of living:</b> $${BAL.dailyExpenses}/day, charged every single day no matter your employment status — stay employed and you net a profit, but lose your job and the bills don't stop, so cash actively drains while you're out of work. Each new year opens with a summary of that year's full cash flow: pay earned, match winnings, and expenses paid.</p>
       <p>Pros have one more thing to manage: staying current. Roughly every ${BAL.techniqueIntervalDays} days a new Excel technique appears that needs ${BAL.techniqueMinHours}-${BAL.techniqueMaxHours}h to master — any Pro Duties hours beyond the ${BAL.proDutyHoursRequired}h minimum go toward it. Falling behind never costs you progress (new ones just queue up), but every technique still unmastered costs ${Math.round(BAL.techniquePenaltyPerUnmastered * 100)}% match performance, stacking.</p>
@@ -4365,7 +4424,7 @@ function weekSummaryHtml({ start, daysRun, planned, stopReason }) {
           ${skillRows}
           ${row("🏃 Health", start.phys, s.phys)}
           ${row("🌙 Rest", start.rest, s.rest)}
-          ${row("🎮 Composure", start.composure, s.composure)}
+          ${row("🎮 Calm", start.composure, s.composure)}
           ${row("🥗 Nutrition", start.nutrition, s.nutrition)}
           <tr><td>💰 Cash</td><td>${fmtMoney(start.cash)}</td><td>${fmtMoney(state.cash)}</td><td class="${cls(cashDelta)}">${cashDelta < 0 ? "−" : "+"}${fmtMoney(Math.abs(cashDelta))}</td></tr>
           ${row("🏆 Rating", start.rank, state.rank)}

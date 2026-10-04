@@ -152,6 +152,10 @@ html, body {
   background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.13) 0 2px, transparent 2px 5px);
 }
 .bar-preview-gain { background: var(--skill) !important; opacity: 0.55; }
+/* Calm's reserve above 100: a bright strip along the top of the (full) bar,
+   its width the reserve's share of what it can hold. */
+.bar-bank { position: absolute; top: 0; left: 0; height: 3px; background: #ffe08a; border-radius: 999px; box-shadow: 0 0 4px rgba(255, 224, 138, 0.7); }
+.bar-bank-gain { background: #ffe08a; opacity: 0.45; box-shadow: none; }
 /* A darker, more saturated red than the Composure bar's own (lighter)
    red — same hue family would otherwise nearly vanish on that bar, so
    the loss overlay leans darker to stay legible there too. */
