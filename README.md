@@ -29,7 +29,9 @@ Relax, and Food. Everything is connected:
   threshold hours (shown as a marker on each slider) causes that stat to
   fall instead of rise.
 - **Rest** swings training itself (skills and Gym), smoothly: ×1 at 70
-  Rest or below, rising to ×2 at 100 (85 Rest trains at ×1.5). **Calm** swings match day specifically: low
+  Rest or below, rising to ×2 at 100 (85 Rest trains at ×1.5).
+  **Overcharge:** with Rest already at 100, sleeping past 7h pushes that
+  day's training higher still — ×3 at 10h, ×4 at 12h, linear between. **Calm** swings match day specifically: low
   Calm can cut your active skills' effect on a match in half.
   **Nutrition** swings how many hours you get at all: below 40 your day
   shrinks to 16h, sliding up to a full 24h at 90+.

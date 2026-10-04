@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.44.1";
+const APP_VERSION = "4.45.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -455,9 +455,16 @@ function skillCapCause(key) {
   if (league < shop) return leagueText;
   return `${coachText} + ${leagueText}`;
 }
-function restTrainingMultiplier(rest) {
+function restTrainingMultiplier(rest, sleepH = 0) {
   const floor = BAL.restTrainingBoostFloor;
-  return 1 + clamp((rest - floor) / (100 - floor), 0, 1);
+  const base = 1 + clamp((rest - floor) / (100 - floor), 0, 1);
+  // Overcharge: with Rest already full, sleeping past the ideal 7h pushes
+  // the day's training past ×2 — ×3 at 10h, ×4 at 12h, linear between.
+  if (rest >= 100 - 1e-6 && sleepH > BAL.idealSleep) {
+    const over = sleepH <= 10 ? 2 + (sleepH - BAL.idealSleep) / 3 : 3 + (Math.min(sleepH, 12) - 10) / 2;
+    return Math.max(base, over);
+  }
+  return base;
 }
 // Calm's reserve: above 100 it fades a little each day, and gains past 100
 // bank at half rate up to the cap. Losses come straight off (the reserve
@@ -1186,7 +1193,7 @@ function computeDayResult(allocation, stats, injuryActive, burnoutActive) {
 
   const focusMult = burnoutActive ? BAL.burnoutEffectivenessMult : 1;
   const physMult = physSynergy(s.phys);
-  const restMult = restTrainingMultiplier(s.rest);
+  const restMult = restTrainingMultiplier(s.rest, a.sleep);
 
   // ---- The 7 case specialties ----
   let totalSkillH = 0;
@@ -2604,7 +2611,7 @@ function renderPlannerRows() {
     comboRowHtml("sleep", {
       icon: "🌙",
       label: "Sleep",
-      outcomeText: `Rest ${fmt(s.rest)}/100 · ×${restTrainingMultiplier(s.rest).toFixed(1)} training`,
+      outcomeText: `Rest ${fmt(s.rest)}/100 · ×${restTrainingMultiplier(s.rest, a.sleep).toFixed(1)} training`,
       value: s.rest,
       previewValue: preview.rest,
       cap: 100,
@@ -3915,7 +3922,7 @@ function openHowTo() {
       </p>
       <p><b>It's all connected:</b> Rest below ${BAL.restDragThreshold} wears down Physical Health and Calm (more the lower it goes), and low Physical Health caps how much your skill training actually helps. Calm comes from Relax: ${BAL.relaxComposureThreshold}h a day holds it, each hour short costs ${BAL.relaxComposureRelief} a day, each extra hour adds ${BAL.relaxComposureRelief}; sleeping ${BAL.idealSleep}h adds +${BAL.sleepComposureBonusIdeal} on top, ${BAL.idealSleep + 1}h+ adds +${BAL.sleepComposureBonusLong}. Relax beyond what keeps you at 100 isn't wasted: Calm past 100 becomes <b>😎 Chill</b>, a reserve (at half rate, up to ${BAL.calmBankCap}, fading ${BAL.calmBankFade} a day) that drains first on short-Relax days — match day still counts Calm as 100 at most, so Chill is for later, not for matches. Hit 0 Calm and you burn out, tanking your training until it recovers to ${BAL.burnoutRecoverThreshold}.</p>
       <p><b>Decay:</b> every stat needs upkeep or it slips. Any skill that isn't active this round rusts; an active skill still rusts below ${BAL.skillDecayThresholdHours}h of training — unless that skill's Coach is hired, which stops it rusting at all. Gym below ${BAL.skillDecayThresholdHours}h detrains Physical Health. Sleep below ${BAL.idealSleep}h drains Rest. Relax below ${BAL.relaxComposureThreshold}h drains Calm. Food below ${BAL.skillDecayThresholdHours}h drains Nutrition. Each slider shows a marker at its threshold, and each bar previews tomorrow's value based on your current plan — green for a gain, red for a loss.</p>
-      <p><b>Rest</b> swings training itself (skills and Gym): a smooth slide from normal speed at ${BAL.restTrainingBoostFloor} Rest or below up to double speed at 100 — e.g. 85 Rest trains at ×1.5. ${BAL.idealSleep}h sleep holds Rest where it is. <b>Calm</b> hits match day specifically — below ${BAL.composureMatchMid} your active skills count for only 75%, below ${BAL.composureMatchLow} just 50%. <b>Nutrition</b> sets how many hours you get at all: below ${BAL.nutritionHoursCapLow} your day shrinks to just ${BAL.dailyHoursFloor}h, sliding up to the full ${BAL.dailyHoursCeiling}h at ${BAL.nutritionHoursCapHigh}+.</p>
+      <p><b>Rest</b> swings training itself (skills and Gym): a smooth slide from normal speed at ${BAL.restTrainingBoostFloor} Rest or below up to double speed at 100 — e.g. 85 Rest trains at ×1.5. ${BAL.idealSleep}h sleep holds Rest where it is. <b>Overcharge:</b> with Rest already at 100, sleeping longer pushes that day's training past ×2 — ×3 at 10h, ×4 at 12h, sliding evenly in between (8h ×2.3, 9h ×2.7, 11h ×3.5). <b>Calm</b> hits match day specifically — below ${BAL.composureMatchMid} your active skills count for only 75%, below ${BAL.composureMatchLow} just 50%. <b>Nutrition</b> sets how many hours you get at all: below ${BAL.nutritionHoursCapLow} your day shrinks to just ${BAL.dailyHoursFloor}h, sliding up to the full ${BAL.dailyHoursCeiling}h at ${BAL.nutritionHoursCapHigh}+.</p>
       <p><b>Gym injuries:</b> every Gym hour adds a ${+(BAL.injuryChancePerHour * 100).toFixed(1)}% chance of injury that day, so only a 0h day is risk-free — ${BAL.gymMaxHours}h (the most you can do) is a ${+(BAL.gymMaxHours * BAL.injuryChancePerHour * 100).toFixed(1)}% chance. The Gym row shows today's risk as <b>#% 🤕</b>. Sports Physio cuts that risk by 20%, 35% or 50%. An injury costs ${BAL.injuryPhysLoss[0]}–${BAL.injuryPhysLoss[1]} Health and locks the Gym for ${BAL.injuryDaysRange[0]}–${BAL.injuryDaysRange[1]} days (Recovery Program takes 1–3 days off, minimum 1); the row shows <b>🤕 #d</b> while it heals. Injuries never stop you playing matches — they only shut the Gym.</p>
       <p><b>Staff &amp; ceilings:</b> skills train up to ${BAL.skillShopCapBase} on your own. To go higher, hire that skill's <b>Coach</b> in 🧑‍🏫 Staff: a hired coach lifts the ceiling (Lv1 60 … Lv5 100), speeds up training and stops that skill rusting while hired (even untrained) — but never past your league cap (the highest league you've reached: 60 in League 5 up to 100 in League 1). Above the ceiling a skill isn't cut down: an hour a day holds it, less lets it slip. Physical Health caps at ${BAL.statCapBase} without a hired Sports Physio. Staff are hired <b>a week at a time</b> (a week ends after each match): you pay the weekly wage up front (pro-rated if you hire mid-week) and nothing renews by default, so each week you choose who's worth it — usually that week's focus skills. Any coach or support staff can be switched to <b>🔁 Auto-rehire</b>: when a week ends they're kept on at the same level for the next one, as long as you have the cash (if not, they're off that week, their switch turns off and you're told). Higher levels cost a one-off fee to unlock, only once your league allows it (coaches: Lv2 in League 4 … Lv5 in League 1; support team: Lv2 in League 3, Lv3 in League 1), and cost more per week. The hatched end of a bar is the part this week's ceiling locks off.</p>
       <p><b>Energy Items</b> (in 🧑‍🏫 Staff &amp; Items) are an instant top-up, each usable once a week: ${ENERGY_ITEMS.map((it) => `${it.icon} ${it.name} $${it.price} (${[it.rest ? `+${it.rest} Rest` : "", it.composure ? `+${it.composure} Calm` : ""].filter(Boolean).join(", ")}${it.crash ? `, then ${[it.crash.rest ? `−${it.crash.rest} Rest` : "", it.crash.composure ? `−${it.crash.composure} Calm` : ""].filter(Boolean).join(", ")} the next day` : ", no crash"})`).join(" · ")}. Nothing goes past 100.</p>
