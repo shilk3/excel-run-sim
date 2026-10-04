@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.46.0";
+const APP_VERSION = "4.46.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -35,7 +35,7 @@ const BAL = {
   calmBankRate: 0.5,
   calmBankFade: 1,
   // Employed: Work can run this many hours past the requirement, each paid
-  // at the job's normal hourly rate.
+  // at half the job's hourly rate.
   overtimeMaxHours: 4,
   restDragThreshold: 80,
   restDragComposure: 0.08,
@@ -115,6 +115,8 @@ const BAL = {
   prizeWinBase: 60,
   prizeRatingDiv: 20,
   prizeLoss: 0,
+  championCash: 1000,
+  championRating: 40,
   dailyExpenses: 50, // cost of living, charged every single day regardless of employment status —
   // this is what makes losing your job actually cost you money, not just stall your income
   strikeWindowDays: 21, // 3 weeks — each strike expires this many days after it's earned
@@ -588,9 +590,10 @@ function workMaxHours(st = state.employment.status) {
   if (st === "unemployed") return 16; // no requirement, just a generous daily ceiling
   return BAL.workHoursRequired + BAL.overtimeMaxHours; // Employed: overtime past the requirement
 }
-// Employed only: each hour past the requirement pays the job's hourly rate.
+// Employed only: each hour past the requirement pays half the job's hourly
+// rate — $4 at the starting $70/day, rising with raises.
 function overtimeRate(emp = state.employment) {
-  return Math.round(emp.workPay / BAL.workHoursRequired);
+  return Math.round(emp.workPay / BAL.workHoursRequired / 2);
 }
 function overtimePay(workH, emp = state.employment) {
   if (emp.status !== "employed") return 0;
@@ -2107,7 +2110,7 @@ function resolvePlayoffRound() {
     p.champion = true;
     seasonOver = true;
     champion = winners[0];
-    const bonus = { cash: 2000, rating: 40 };
+    const bonus = { cash: BAL.championCash, rating: BAL.championRating };
     summary = `👑 CHAMPION! You won the Year ${state.year} League ${p.tier} Final! +$${bonus.cash} and +${bonus.rating} rating.`;
     state.cash += bonus.cash;
     state.yearCashFlow.matchCash += bonus.cash;
@@ -3773,7 +3776,7 @@ function buildPhaseSplash(from, to, { yearSummary = null, tierBefore = state.lea
     next.push(["Your seed", `#${state.playoff.playerSeed} of ${BAL.playoffSize}`]);
     if (info.opponentName) next.push(["Round of 16", `${info.opponentName} (${info.opponentRating}) · ${info.winPct}% to win`]);
     next.push(["Format", "single elimination, one match a week: R16 → QF → SF → Final"]);
-    next.push(["Win it all", `champion: +$2,000, +40 rating${playedTier > 1 ? ", promoted" : ""}`]);
+    next.push(["Win it all", `champion: +$${BAL.championCash.toLocaleString()}, +${BAL.championRating} rating${playedTier > 1 ? ", promoted" : ""}`]);
     next.push(["Knocked out", "training camp until the Final would have finished"]);
   } else if (from === "regular" && to === "offseason") {
     icon = "📋"; title = "Regular season over"; sub = `Year ${state.year} · League ${playedTier}`;
@@ -4004,14 +4007,14 @@ function openHowTo() {
       <p><b>Staff &amp; ceilings:</b> skills train up to ${BAL.skillShopCapBase} on your own. To go higher, hire that skill's <b>Coach</b> in 🧑‍🏫 Staff: a hired coach lifts the ceiling (Lv1 60 … Lv5 100), speeds up training and stops that skill rusting while hired (even untrained) — but never past your league cap (the highest league you've reached: 60 in League 5 up to 100 in League 1). Above the ceiling a skill isn't cut down: an hour a day holds it, less lets it slip. Physical Health caps at ${BAL.statCapBase} without a hired Sports Physio. Staff are hired <b>a week at a time</b> (a week ends after each match): you pay the weekly wage up front (pro-rated if you hire mid-week) and nothing renews by default, so each week you choose who's worth it — usually that week's focus skills. Any coach or support staff can be switched to <b>🔁 Auto-rehire</b>: when a week ends they're kept on at the same level for the next one, as long as you have the cash (if not, they're off that week, their switch turns off and you're told). Higher levels cost a one-off fee to unlock, only once your league allows it (coaches: Lv2 in League 4 … Lv5 in League 1; support team: Lv2 in League 3, Lv3 in League 1), and cost more per week. The hatched end of a bar is the part this week's ceiling locks off.</p>
       <p><b>Energy Items</b> (in 🧑‍🏫 Staff &amp; Items) are an instant top-up, each usable once a week: ${ENERGY_ITEMS.map((it) => `${it.icon} ${it.name} $${it.price} (${[it.rest ? `+${it.rest} Rest` : "", it.composure ? `+${it.composure} Calm` : ""].filter(Boolean).join(", ")}${it.crash ? `, then ${[it.crash.rest ? `−${it.crash.rest} Rest` : "", it.crash.composure ? `−${it.crash.composure} Calm` : ""].filter(Boolean).join(", ")} the next day` : ", no crash"})`).join(" · ")}. Nothing goes past 100.</p>
       <p><b>Equipment</b> (also in 🧑‍🏫 Staff &amp; Items) is bought outright and works until the current year ends, then wears out — the price is never pro-rated, so buying early gets the most out of it: ${EQUIPMENT.map((e) => `${e.icon} ${e.name} $${fmt(e.price)} (${e.desc})`).join(" · ")}.</p>
-      <p><b>Prize money:</b> a win pays $${BAL.prizeWinBase} + your new rating ÷ ${BAL.prizeRatingDiv}; a loss pays nothing.</p>
+      <p><b>Prize money:</b> a win pays $${BAL.prizeWinBase} + your new rating ÷ ${BAL.prizeRatingDiv}; a loss pays nothing. Winning the playoffs adds a champion bonus of $${BAL.championCash.toLocaleString()} and +${BAL.championRating} rating.</p>
       <p><b>End Day / To Match:</b> <b>End Day ▶</b> plays one day. <b>To Match ▶▶</b> repeats today's plan every day up to and including the next match, then shows the result with a summary of how your stats moved over the week (outside the season it's <b>End Week ▶▶</b>, up to 7 days, to the end of the week). It stops early so you can re-plan if you get injured, lose or find a job (or go pro), burn out, get a new technique to master, or Nutrition drops so far that your plan no longer fits in the day.</p>
       <p><b>The season:</b> a ${BAL.preseasonDays}-day preseason to train, then a ${BAL.seasonRounds}-round regular season — one match a week against a named rival, all scheduled in advance, each testing that week's active skills. Finish in the top ${BAL.playoffSize} of your ${BAL.seasonRounds + 1}-competitor league to reach the knockout playoffs. Lose a playoff match and you're out; win the Final and you're champion.</p>
       <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken. Get knocked out of the playoffs and you go to training camp too, for the rest of the playoff window (at least ${BAL.offseasonDays} days) — so an early exit gets its time back as training, just like missing the cut. Only the champion gets a plain ${BAL.offseasonDays}-day break.</p>
       <p><b>Match day:</b> both players get a <b>match-day rating</b> = rating + performance + luck. Your performance comes from your stats (each point above 70 adds 3, below 70 costs 3); every rival has a performance on the same scale. Luck is random for both sides every match — usually between about −150 and +120, occasionally +400 or more on an inspired day. The higher match-day rating wins, so the bigger your rating gap the likelier you are to win, but upsets always stay possible. The result screen shows every number side by side.</p>
       <p><b>Leagues:</b> there are ${BAL.leagueCount} leagues, League 1 at the top and League 5 at the bottom — you start in League 5. Every league has a persistent roster of named rivals whose ratings evolve from real simulated results every week, same as yours — every tier's table is live from round 1, not just visible once the season ends. Four go up from every league below League 1: the playoff champion, plus the top ${BAL.promotionTablePlaces} of the table other than the champion — so a top-${BAL.promotionTablePlaces} finish is always promoted, and anyone in the playoffs can still win their way up. Finish bottom ${BAL.relegationCount} and you're relegated. This applies to every competitor in every league, not just you — every league plays out its own knockout too — so the standings you see are a living world, not scenery. Check the Leagues screen any time (Menu, or the shortcut in Career) to see all ${BAL.leagueCount} tables. <b>Match History</b> keeps every match you play (tap one to see its full result again) and every result in all ${BAL.leagueCount} leagues for this season and last — tap a rival's name, there or in a league table, to see their season.</p>
       <p><b>Rating</b> is your skill score (the 🏆 number), the same scale every rival is measured on — it rises and falls with each result, and it's what your win chance is worked out from. Your <b>table position</b> (#1–#40) is separate: it comes from league points, 3 per win. Cash and Rating carry across seasons and leagues — spend cash on Staff each week.</p>
-      <p><b>Employment:</b> your day job funds everything else, every phase, no exceptions. Work ${BAL.workHoursRequired}h/day (every phase, preseason included), starting at $${BAL.workPayMin}/day; up to ${BAL.overtimeMaxHours}h of <b>overtime</b> on top pays your normal hourly rate (pay ÷ ${BAL.workHoursRequired}) for each extra hour — pay is tied to still <i>having</i> the job, not to hitting the exact hour target every day, so falling short doesn't cost you income, only a chunk of a chance scaled to the shortfall (regained ${BAL.strikeWindowDays} days later). Run out of your ${fmt1(BAL.strikesToFire)} chances and <i>that's</i> when pay actually stops — you're fired: the same slider becomes a Job Search, needing a random ${BAL.jobSearchHoursRange[0]}–${BAL.jobSearchHoursRange[1]} cumulative hours (rolled when you lose the job and shown on the slider) to get rehired — at least ${BAL.jobSearchMinHours}h of searching a day, or the day can't end. Reach League ${BAL.goProLeagueTier} or higher with $${BAL.goProCash}+ banked while employed and you go Pro automatically — Work drops to just ${BAL.proDutyHoursRequired}h/day of Pro Duties, starting at $${BAL.proPayMin}/day, with the same chances rule and the same fallback to Job Search if you're dropped.</p>
+      <p><b>Employment:</b> your day job funds everything else, every phase, no exceptions. Work ${BAL.workHoursRequired}h/day (every phase, preseason included), starting at $${BAL.workPayMin}/day; up to ${BAL.overtimeMaxHours}h of <b>overtime</b> on top pays half your hourly rate (pay ÷ ${BAL.workHoursRequired} ÷ 2, so $${Math.round(BAL.workPayMin / BAL.workHoursRequired / 2)} at the starting $${BAL.workPayMin}/day) for each extra hour — pay is tied to still <i>having</i> the job, not to hitting the exact hour target every day, so falling short doesn't cost you income, only a chunk of a chance scaled to the shortfall (regained ${BAL.strikeWindowDays} days later). Run out of your ${fmt1(BAL.strikesToFire)} chances and <i>that's</i> when pay actually stops — you're fired: the same slider becomes a Job Search, needing a random ${BAL.jobSearchHoursRange[0]}–${BAL.jobSearchHoursRange[1]} cumulative hours (rolled when you lose the job and shown on the slider) to get rehired — at least ${BAL.jobSearchMinHours}h of searching a day, or the day can't end. Reach League ${BAL.goProLeagueTier} or higher with $${BAL.goProCash}+ banked while employed and you go Pro automatically — Work drops to just ${BAL.proDutyHoursRequired}h/day of Pro Duties, starting at $${BAL.proPayMin}/day, with the same chances rule and the same fallback to Job Search if you're dropped.</p>
       <p><b>Pay &amp; seniority:</b> pay rises $${BAL.payRaisePerYear}/year for your first ${BAL.payRaiseMaxYears} years in a role, then holds — Work tops out at $${BAL.workPayMin + BAL.payRaisePerYear * BAL.payRaiseMaxYears}/day, Pro Duties at $${BAL.proPayMin + BAL.payRaisePerYear * BAL.payRaiseMaxYears}/day. Lose the job or get dropped from Pro and that role's pay resets to its minimum for next time — seniority isn't carried over.</p>
       <p><b>Cost of living:</b> $${BAL.dailyExpenses}/day, charged every single day no matter your employment status — stay employed and you net a profit, but lose your job and the bills don't stop, so cash actively drains while you're out of work. Each new year opens with a summary of that year's full cash flow: pay earned, match winnings, and expenses paid.</p>
       <p>Pros have one more thing to manage: staying current. Roughly every ${BAL.techniqueIntervalDays} days a new Excel technique appears that needs ${BAL.techniqueMinHours}-${BAL.techniqueMaxHours}h to master — any Pro Duties hours beyond the ${BAL.proDutyHoursRequired}h minimum go toward it. Falling behind never costs you progress (new ones just queue up), but every technique still unmastered costs ${Math.round(BAL.techniquePenaltyPerUnmastered * 100)}% match performance, stacking.</p>

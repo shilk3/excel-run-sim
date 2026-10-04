@@ -49,7 +49,8 @@ Relax, and Food. Everything is connected:
   Noise-cancelling Headphones $1,000 (+1 Calm a day), 🛏️ Memory-foam
   Mattress $1,000 (−25% Rest lost from short sleep).
 - **Prize money**: a win pays $60 + your new rating ÷ 20 (about $85 at
-  rating 500); a loss pays nothing.
+  rating 500); a loss pays nothing. Winning the playoffs adds a $1,000
+  champion bonus (+40 rating).
 - Skills train up to 50 on your own. **Staff** are hired a week at a time
   (a week ends after each match), paid up front, pro-rated if hired
   mid-week. Every coach and support-team member has an optional
@@ -66,7 +67,8 @@ Relax, and Food. Everything is connected:
   you can afford roughly 90% of what you'd want in a 1-skill week and 40% in
   a 3-skill week.
 - **Work** funds everything else. 9h/day, every phase, no exceptions (up
-  to 4h of overtime on top pays your normal hourly rate, pay ÷ 9) — you
+  to 4h of overtime on top pays half your hourly rate — $4/h at the
+  starting $70/day, rising with raises) — you
   start with 3.0 chances, and the bar shows exactly what today's shortfall
   will cost before you end the day. Pay is tied to still *having* the job,
   not to hitting the exact hour target every day: come up short and you
