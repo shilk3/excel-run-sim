@@ -13,23 +13,30 @@ Relax, and Food. Everything is connected:
   camp) have no matches, so all 7 are open.
 - **Gym** raises Physical Health — but low Physical Health caps how much
   your skill training actually helps.
-- **Sleep** builds Rest. Skimp on sleep and Rest drains, which quietly wears
-  down your Physical Health even if you train hard.
-- **Relax** builds Composure. Train hard with no downtime and Composure
-  drains until you burn out, tanking your effectiveness until you recover.
+- **Sleep** builds Rest: 7h holds it, each hour short costs 1.3 a day,
+  each hour over adds 1.4. Rest below 80 wears down Physical Health and
+  Composure, more the lower it goes. Sleep also adds +1.5 Composure a day
+  at 7h, +3 at 8h or more.
+- **Relax** builds Composure on its own (training doesn't drain it): 3h
+  holds it, each hour short costs 2.4 a day, each hour over adds 2.4.
+  Let it hit 0 and you burn out, tanking your training until you recover.
 - **Food** builds Nutrition, which keeps tomorrow's day at full length — see below.
 - **Decay is universal**: every stat needs upkeep or it slips — an
   inactive skill, Gym, Sleep, Relax, or Food below its
   threshold hours (shown as a marker on each slider) causes that stat to
   fall instead of rise.
-- **Rest** swings training itself: well-rested days train up to 200%
-  as effectively. **Composure** swings match day specifically: low
+- **Rest** swings training itself (skills and Gym), smoothly: ×1 at 70
+  Rest or below, rising to ×2 at 100 (85 Rest trains at ×1.5). **Composure** swings match day specifically: low
   Composure can cut your active skills' effect on a match in half.
   **Nutrition** swings how many hours you get at all: below 40 your day
   shrinks to 16h, sliding up to a full 24h at 90+.
 - Every Gym hour carries a 2.5% injury chance that day (8h, the max, is
   20%; Sports Physio cuts it). An injury costs 5–10 Health and locks the
   Gym for 3–5 days, but never stops you playing matches.
+- **Energy Items** (in Staff & Items) are instant top-ups, each usable
+  once a week: ☕ Coffee $40 (+10 Rest, −4 Rest the next day), 🧃 Energy
+  Drink $90 (+15 Rest, +10 Composure, then −5 Rest, −3 Composure), 💆 Spa
+  Day $250 (+10 Rest, +30 Composure, no crash). Nothing goes past 100.
 - Skills train up to 50 on your own. **Staff** are hired a week at a time
   (a week ends after each match), paid up front, pro-rated if hired
   mid-week. Every coach and support-team member has an optional
