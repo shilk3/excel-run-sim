@@ -843,3 +843,13 @@ details.match-more[open] { padding-bottom: 8px; }
 .tutorial-nav .ghost-btn, .tutorial-nav .primary-btn { flex: 1; margin-top: 0; }
 .tutorial-nav .ghost-btn:disabled { opacity: 0.35; }
 .tutorial-skip { display: block; margin: 12px auto 0; color: var(--text-dim); }
+
+/* Event screens (injury, job, burnout…) */
+.event-card { text-align: left; border: 1px solid var(--border); border-left: 4px solid var(--border); border-radius: 12px; padding: 10px 14px; margin-top: 14px; }
+.event-card p { margin: 6px 0; font-size: 14.5px; line-height: 1.45; }
+.event-card.event-bad { border-left-color: var(--danger); background: rgba(255, 93, 93, 0.06); }
+.event-card.event-good { border-left-color: var(--accent); background: rgba(52, 208, 160, 0.07); }
+.event-card.event-neutral { border-left-color: var(--warn); background: rgba(255, 176, 32, 0.06); }
+.event-card-title { font-weight: 800; font-size: 15px; margin-top: 2px; }
+.event-card .event-tip { color: var(--text-dim); font-size: 13.5px; }
+.splash > .primary-btn { margin-top: 16px; }

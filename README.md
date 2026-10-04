@@ -71,7 +71,8 @@ season, up to 7 days) repeats today's plan up to and including the next match,
 then shows the result plus a week summary of how every stat moved. It stops
 early so you can re-plan on an injury, losing/finding a job or going pro,
 burnout, a new technique to master, or Nutrition shrinking the day below what
-your plan needs.
+your plan needs. Each of those events also gets its own screen whenever it happens —
+after End Day too — saying what changed and what to do about it.
 
 **Match day**: both sides get a match-day rating = rating + performance +
 luck, and the higher one wins. Your performance comes from your stats (each

@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.37.1";
+const APP_VERSION = "4.38.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1211,7 +1211,7 @@ function resolveDay() {
       const daysReduce = recoveryEff ? recoveryEff.injuryDaysReduce : 0;
       const days = Math.max(1, randInt(BAL.injuryDaysRange[0], BAL.injuryDaysRange[1]) - daysReduce);
       s.phys = clamp(s.phys - loss, 0, result.pCap);
-      state.injury = { active: true, daysLeft: days };
+      state.injury = { active: true, daysLeft: days, loss };
       // The Gym slider locks while injured — free its hours rather than
       // leaving them stuck in the day's budget doing nothing.
       state.allocation.exercise = 0;
@@ -2763,7 +2763,9 @@ function luckExplainerHtml(result) {
     </table>`;
 }
 
-function showMatchModal(result, extraHtml = "", { onContinue = null, continueLabel = "Continue", continueAlsoOnClose = false } = {}) {
+// onContinue replaces what the Continue button does (✕ still just closes);
+// onDone runs however the result is closed — used to chain the next screen.
+function showMatchModal(result, extraHtml = "", { onContinue = null, continueLabel = "Continue", onDone = null } = {}) {
   const context = result.roundLabel ? `${result.roundLabel}${result.opponentName ? " vs " + result.opponentName : ""}` : "";
   const title = `<span class="match-head ${result.win ? "win" : "loss"}">${result.win ? "VICTORY" : "DEFEAT"}</span>${
     context ? `<span class="match-head-sub">${context}</span>` : ""
@@ -2790,7 +2792,7 @@ function showMatchModal(result, extraHtml = "", { onContinue = null, continueLab
         ${extraHtml}
         <button class="primary-btn" id="matchOk">${continueLabel}</button>
       </div>`;
-  openModal(html, { ownClose: true, onDismiss: onContinue && continueAlsoOnClose ? onContinue : null });
+  openModal(html, { ownClose: true, onDismiss: onDone });
   $("matchOk").addEventListener("click", onContinue || closeModal);
 }
 
@@ -3508,7 +3510,7 @@ function buildPhaseSplash(from, to, { yearSummary = null, tierBefore = state.lea
   return { icon, title, sub, fromName: PHASE_NAMES[from] || from, how, money, moneyTitle, next, notes };
 }
 
-function showPhaseSplash(sp, extraHtml = "") {
+function showPhaseSplash(sp, extraHtml = "", onDone = null) {
   const rows = (list) => list.map(([k, v]) => `<div class="kv-row"><span>${k}</span><span>${v}</span></div>`).join("");
   const html = `
     <div class="splash">
@@ -3527,9 +3529,105 @@ function showPhaseSplash(sp, extraHtml = "") {
     onDismiss: () => {
       state.pendingSplash = null;
       saveState();
+      if (onDone) onDone();
     },
   });
   $("splashGo").addEventListener("click", closeModal);
+}
+
+// Shows pop-ups one after another: each step is (next) => opens a pop-up
+// that calls next once it's closed. Falsy steps are skipped.
+function showSequence(steps) {
+  const list = steps.filter(Boolean);
+  const run = (i) => {
+    if (i < list.length) list[i](() => run(i + 1));
+  };
+  run(0);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Event screens — the things that also stop End Week, shown after any day */
+/* ---------------------------------------------------------------------- */
+// What changed today that needs a re-plan, compared with a weekSnapshot()
+// taken before the day. Each card: { icon, title, body, tip, tone }.
+function dayEventCards(before) {
+  const emp = state.employment;
+  const cards = [];
+  if (!before.injured && state.injury.active) {
+    const d = state.injury.daysLeft;
+    cards.push({
+      icon: "🤕", tone: "bad", title: "Injured in the Gym",
+      body: `${state.injury.loss ? `−${fmt(state.injury.loss)} Health. ` : ""}The Gym is locked for <b>${d} day${d === 1 ? "" : "s"}</b>, and today's Gym hours have been freed up. Injuries never stop you playing matches.`,
+      tip: "Put the spare hours into training or Sleep. A Sports Physio cuts injury risk; a Recovery Program shortens the lay-off.",
+    });
+  }
+  if (before.employment !== emp.status) {
+    if (emp.status === "unemployed") {
+      const wasPro = before.employment === "pro";
+      cards.push({
+        icon: "🔥", tone: "bad", title: wasPro ? "Dropped by your sponsor" : "You lost your job",
+        body: `Out of chances after too many missed ${wasPro ? "Pro Duties" : "Work"} hours. Pay has stopped, but the $${BAL.dailyExpenses}/day living costs haven't. The Work slider is now a <b>Job Search</b>: ${jobSearchTarget()}h in total gets you hired again.`,
+        tip: `You need at least ${BAL.jobSearchMinHours}h of Job Search a day to end it — the more hours, the sooner you're back on a wage.`,
+      });
+    } else if (emp.status === "pro") {
+      cards.push({
+        icon: "🏆", tone: "good", title: "You've gone pro!",
+        body: `Sponsorship replaces the day job: <b>${BAL.proDutyHoursRequired}h/day of Pro Duties</b> at $${fmt(emp.proPay)}/day, with the same chances rule. About every ${BAL.techniqueIntervalDays} days a new technique appears; Pro Duties hours beyond ${BAL.proDutyHoursRequired}h go towards mastering it.`,
+        tip: `Each unmastered technique costs ${Math.round(BAL.techniquePenaltyPerUnmastered * 100)}% match performance, so keep a little extra Pro time in the plan.`,
+      });
+    } else {
+      cards.push({
+        icon: "💼", tone: "good", title: "Hired!",
+        body: `The job search paid off. Work is back to <b>${BAL.workHoursRequired}h/day</b> at $${fmt(emp.workPay)}/day, with a full set of ${fmt1(BAL.strikesToFire)} chances.`,
+        tip: "Missing Work hours costs chances again from tomorrow — check the Work slider fits today's plan.",
+      });
+    }
+  }
+  if (!before.burnout && state.burnout.active) {
+    cards.push({
+      icon: "😵", tone: "bad", title: "Burnout",
+      body: `Composure hit ${BAL.burnoutComposureThreshold}. Skill training is only <b>${Math.round(BAL.burnoutEffectivenessMult * 100)}% effective</b> until Composure is back to ${BAL.burnoutRecoverThreshold}.`,
+      tip: `Schedule ${BAL.relaxComposureThreshold}h+ of Relax a day to recover — training hours are mostly wasted until then.`,
+    });
+  }
+  if (emp.techniqueQueue.length > before.techniques) {
+    const t = emp.techniqueQueue[emp.techniqueQueue.length - 1];
+    const n = emp.techniqueQueue.length;
+    cards.push({
+      icon: "📘", tone: "neutral", title: "A new technique to master",
+      body: `<b>${t.name}</b> needs ${fmt(t.hoursNeeded)}h. Pro Duties hours beyond ${BAL.proDutyHoursRequired}h go towards it. You have ${n} unmastered — costing ${Math.round(Math.min(1, n * BAL.techniquePenaltyPerUnmastered) * 100)}% match performance until they're done.`,
+      tip: "Add an hour or two to Pro Duties to work through it.",
+    });
+  }
+  if (isOverAllocated()) {
+    cards.push({
+      icon: "🥗", tone: "bad", title: "A shorter day",
+      body: `Nutrition is down to ${fmt(state.stats.nutrition)}, so today only has <b>${dailyHoursCap(state.stats.nutrition)}h</b> — but your plan uses ${totalAssigned()}h.`,
+      tip: "Trim the plan to carry on, and give Food more time so tomorrow's day grows back.",
+    });
+  }
+  return cards;
+}
+
+function showEventSplash(cards, extraHtml = "", onDone = null) {
+  const one = cards.length === 1;
+  const card = (c) => `
+    <div class="event-card event-${c.tone}">
+      ${one ? "" : `<div class="event-card-title">${c.icon} ${c.title}</div>`}
+      <p>${c.body}</p>
+      ${c.tip ? `<p class="event-tip">👉 ${c.tip}</p>` : ""}
+    </div>`;
+  const html = `
+    <div class="splash">
+      <div class="splash-icon">${one ? cards[0].icon : "📣"}</div>
+      <div class="splash-title">${one ? cards[0].title : `${cards.length} things happened`}</div>
+      <div class="splash-sub">Day ${state.day - 1}</div>
+      ${cards.map(card).join("")}
+      ${extraHtml}
+      <button class="primary-btn" id="eventOk">Got it ▶</button>
+    </div>`;
+  openModal(html, { onDismiss: onDone });
+  $("eventOk").addEventListener("click", closeModal);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -3982,14 +4080,17 @@ function endDay() {
   // Defensive: the button is disabled whenever this is true, but guard the
   // action itself too in case it's ever reachable another way.
   if (endDayBlocker()) return;
+  const before = weekSnapshot();
   const { matchResult, splash } = runDay();
   finishTurn();
-  // The match result comes first; its Continue (or ✕) leads to the splash.
-  if (matchResult) {
-    showMatchModal(matchResult, "", splash ? { onContinue: () => showPhaseSplash(splash), continueAlsoOnClose: true } : {});
-  } else if (splash) {
-    showPhaseSplash(splash);
-  }
+  const cards = dayEventCards(before);
+  // The match result comes first, then the phase change, then anything
+  // else that happened — each opens once the one before is closed.
+  showSequence([
+    matchResult && ((next) => showMatchModal(matchResult, "", { onDone: next })),
+    splash && ((next) => showPhaseSplash(splash, "", next)),
+    cards.length && ((next) => showEventSplash(cards, "", next)),
+  ]);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -4025,24 +4126,6 @@ function weekSnapshot() {
 // Anything that changes what today's plan means stops End Week so the
 // player can re-plan before the next day runs. Several can land on the same
 // day (an injury and a shrinking day, say) — report them all.
-function weekStopReason(before) {
-  const emp = state.employment;
-  const reasons = [];
-  if (!before.injured && state.injury.active) {
-    reasons.push(`🤕 Injured in the Gym — it's locked for ${state.injury.daysLeft} day${state.injury.daysLeft === 1 ? "" : "s"} and its hours are free to reassign.`);
-  }
-  if (before.employment !== emp.status) {
-    if (emp.status === "unemployed") reasons.push(`🔥 Out of chances — you lost your job. The Work slider is now a Job Search (${jobSearchTarget()}h needed).`);
-    else if (emp.status === "pro") reasons.push(`🏆 You went pro — Work is now just ${BAL.proDutyHoursRequired}h/day of Pro Duties.`);
-    else reasons.push(`💼 Found a new job — Work is back to ${BAL.workHoursRequired}h/day.`);
-  }
-  if (!before.burnout && state.burnout.active) reasons.push("😵 Burnout — training is far less effective until Composure recovers. Schedule more Relax.");
-  if (emp.techniqueQueue.length > before.techniques) reasons.push(`📘 A new technique to master: ${emp.techniqueQueue[emp.techniqueQueue.length - 1].name}.`);
-  if (isOverAllocated()) {
-    reasons.push(`🥗 Nutrition dropped — today only has ${dailyHoursCap(state.stats.nutrition)}h, but your plan uses ${totalAssigned()}h. Trim it to carry on.`);
-  }
-  return reasons.length ? reasons.join(" ") : null;
-}
 
 function endWeek() {
   if (endDayBlocker()) return;
@@ -4057,6 +4140,7 @@ function endWeek() {
   let matchResult = null;
   let yearSummary = null;
   let splash = null;
+  let cards = [];
   while (daysRun < planned) {
     const before = weekSnapshot();
     const result = runDay();
@@ -4064,7 +4148,8 @@ function endWeek() {
     matchResult = result.matchResult;
     yearSummary = result.yearSummary;
     splash = result.splash || splash;
-    stopReason = weekStopReason(before);
+    cards = dayEventCards(before);
+    stopReason = cards.length ? cards.map((c) => `${c.icon} ${c.title}`).join(" · ") : null;
     if (stopReason || matchResult || yearSummary || state.seasonPhase !== startPhase) break;
   }
   if (stopReason) {
@@ -4074,9 +4159,13 @@ function endWeek() {
   }
   finishTurn();
   const summaryHtml = weekSummaryHtml({ start, shownSkills, daysRun, planned, stopReason });
-  if (matchResult) showMatchModal(matchResult, summaryHtml, splash ? { onContinue: () => showPhaseSplash(splash), continueAlsoOnClose: true } : {});
-  else if (splash) showPhaseSplash(splash, summaryHtml);
-  else showWeekSummaryModal(summaryHtml, daysRun);
+  // The week summary rides on the first screen shown.
+  if (!matchResult && !splash && !cards.length) return showWeekSummaryModal(summaryHtml, daysRun);
+  showSequence([
+    matchResult && ((next) => showMatchModal(matchResult, summaryHtml, { onDone: next })),
+    splash && ((next) => showPhaseSplash(splash, matchResult ? "" : summaryHtml, next)),
+    cards.length && ((next) => showEventSplash(cards, matchResult || splash ? "" : summaryHtml, next)),
+  ]);
 }
 
 function weekSummaryHtml({ start, shownSkills, daysRun, planned, stopReason }) {
