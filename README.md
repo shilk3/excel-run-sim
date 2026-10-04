@@ -19,7 +19,7 @@ Relax, and Food. Everything is connected:
   at 7h, +3 at 8h or more.
 - **Relax** builds Calm on its own (training doesn't drain it): 3h
   holds it, each hour short costs 2.4 a day, each hour over adds 2.4.
-  Relax past 100 isn't wasted: it banks a reserve above 100 (half rate,
+  Relax past 100 isn't wasted: Calm past 100 becomes 😎 Chill, a reserve (half rate,
   up to 130, fading 1 a day) that drains first on short-Relax days — match
   day still counts Calm as 100 at most. Let it hit 0 and you burn out,
   tanking your training until you recover.

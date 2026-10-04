@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.44.0";
+const APP_VERSION = "4.44.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1385,7 +1385,7 @@ function resolveDay() {
   const calmBefore = s.composure;
   s.composure = result.composure;
   const calmChange = s.composure - calmBefore;
-  const bankNote = calmBank() >= 0.5 ? ` (${fmt(calmBank())} banked)` : "";
+  const bankNote = calmBank() >= 0.5 ? ` (${fmt(calmBank())} 😎 Chill)` : "";
   if (result.relaxH < BAL.relaxComposureThreshold) {
     events.push({ type: "bad", text: `🔥 Under ${BAL.relaxComposureThreshold}h Relax: Calm ${fmtSigned(calmChange)} (now ${fmt(s.composure)})` });
   } else {
@@ -2626,7 +2626,9 @@ function renderPlannerRows() {
     composureNote = sleepBonus >= composureRestDrag ? ` · Sleep +${sleepBonus}` : ` · Rest −${fmt1(composureRestDrag)}`;
   }
   const bank = calmBank();
-  const bankText = bank >= 0.5 ? ` · +${fmt(bank)} bank` : "";
+  // Past 100, Calm "becomes" Chill — the row shows the reserve instead of
+  // a full 100/100.
+  const calmText = bank >= 0.5 ? `😎 Chill +${fmt(bank)}` : `Calm ${fmt(Math.min(100, s.composure))}/100`;
   // The match multiplier only shows once it actually bites.
   const matchMult = composureMatchMultiplier(s.composure);
   const matchText = matchMult < 1 ? ` · match ×${matchMult}` : "";
@@ -2634,7 +2636,7 @@ function renderPlannerRows() {
     comboRowHtml("relax", {
       icon: "🎮",
       label: "Relax",
-      outcomeText: `Calm ${fmt(Math.min(100, s.composure))}/100${bankText}${matchText}${composureNote}`,
+      outcomeText: `${calmText}${matchText}${composureNote}`,
       value: Math.min(100, s.composure),
       previewValue: Math.min(100, preview.composure),
       bank,
@@ -3233,7 +3235,7 @@ function currentStatsHtml() {
   const rows = [
     { icon: "🏃", name: "Physical Health", val: s.phys, cap: pCap, cls: "phys", note: pCap < 100 ? `cap: ${physioLvl > 0 ? `Physio Lv${physioLvl}` : "no Physio"}` : "" },
     { icon: "🌙", name: "Rest", val: s.rest, cap: 100, cls: "rest", note: "" },
-    { icon: "🎮", name: "Calm", val: Math.min(100, s.composure), cap: 100, cls: "composure", note: calmBank() >= 0.5 ? `+${fmt(calmBank())} banked` : "" },
+    { icon: "🎮", name: "Calm", val: Math.min(100, s.composure), cap: 100, cls: "composure", note: calmBank() >= 0.5 ? `+${fmt(calmBank())} 😎 Chill` : "" },
     { icon: "🥗", name: "Nutrition", val: s.nutrition, cap: 100, cls: "nutrition", note: `${dailyHoursCap(s.nutrition)}h today` },
   ];
   return rows
@@ -3911,7 +3913,7 @@ function openHowTo() {
       🥗 <b>Food</b> — builds Nutrition, which keeps tomorrow's day at full length.<br>
       💼 <b>Work</b> — pays the bills and keeps you employed.
       </p>
-      <p><b>It's all connected:</b> Rest below ${BAL.restDragThreshold} wears down Physical Health and Calm (more the lower it goes), and low Physical Health caps how much your skill training actually helps. Calm comes from Relax: ${BAL.relaxComposureThreshold}h a day holds it, each hour short costs ${BAL.relaxComposureRelief} a day, each extra hour adds ${BAL.relaxComposureRelief}; sleeping ${BAL.idealSleep}h adds +${BAL.sleepComposureBonusIdeal} on top, ${BAL.idealSleep + 1}h+ adds +${BAL.sleepComposureBonusLong}. Relax beyond what keeps you at 100 isn't wasted: it <b>banks</b> a reserve above 100 (at half rate, up to ${BAL.calmBankCap}, fading ${BAL.calmBankFade} a day) that drains first on short-Relax days — match day still counts Calm as 100 at most. Hit 0 Calm and you burn out, tanking your training until it recovers to ${BAL.burnoutRecoverThreshold}.</p>
+      <p><b>It's all connected:</b> Rest below ${BAL.restDragThreshold} wears down Physical Health and Calm (more the lower it goes), and low Physical Health caps how much your skill training actually helps. Calm comes from Relax: ${BAL.relaxComposureThreshold}h a day holds it, each hour short costs ${BAL.relaxComposureRelief} a day, each extra hour adds ${BAL.relaxComposureRelief}; sleeping ${BAL.idealSleep}h adds +${BAL.sleepComposureBonusIdeal} on top, ${BAL.idealSleep + 1}h+ adds +${BAL.sleepComposureBonusLong}. Relax beyond what keeps you at 100 isn't wasted: Calm past 100 becomes <b>😎 Chill</b>, a reserve (at half rate, up to ${BAL.calmBankCap}, fading ${BAL.calmBankFade} a day) that drains first on short-Relax days — match day still counts Calm as 100 at most, so Chill is for later, not for matches. Hit 0 Calm and you burn out, tanking your training until it recovers to ${BAL.burnoutRecoverThreshold}.</p>
       <p><b>Decay:</b> every stat needs upkeep or it slips. Any skill that isn't active this round rusts; an active skill still rusts below ${BAL.skillDecayThresholdHours}h of training — unless that skill's Coach is hired, which stops it rusting at all. Gym below ${BAL.skillDecayThresholdHours}h detrains Physical Health. Sleep below ${BAL.idealSleep}h drains Rest. Relax below ${BAL.relaxComposureThreshold}h drains Calm. Food below ${BAL.skillDecayThresholdHours}h drains Nutrition. Each slider shows a marker at its threshold, and each bar previews tomorrow's value based on your current plan — green for a gain, red for a loss.</p>
       <p><b>Rest</b> swings training itself (skills and Gym): a smooth slide from normal speed at ${BAL.restTrainingBoostFloor} Rest or below up to double speed at 100 — e.g. 85 Rest trains at ×1.5. ${BAL.idealSleep}h sleep holds Rest where it is. <b>Calm</b> hits match day specifically — below ${BAL.composureMatchMid} your active skills count for only 75%, below ${BAL.composureMatchLow} just 50%. <b>Nutrition</b> sets how many hours you get at all: below ${BAL.nutritionHoursCapLow} your day shrinks to just ${BAL.dailyHoursFloor}h, sliding up to the full ${BAL.dailyHoursCeiling}h at ${BAL.nutritionHoursCapHigh}+.</p>
       <p><b>Gym injuries:</b> every Gym hour adds a ${+(BAL.injuryChancePerHour * 100).toFixed(1)}% chance of injury that day, so only a 0h day is risk-free — ${BAL.gymMaxHours}h (the most you can do) is a ${+(BAL.gymMaxHours * BAL.injuryChancePerHour * 100).toFixed(1)}% chance. The Gym row shows today's risk as <b>#% 🤕</b>. Sports Physio cuts that risk by 20%, 35% or 50%. An injury costs ${BAL.injuryPhysLoss[0]}–${BAL.injuryPhysLoss[1]} Health and locks the Gym for ${BAL.injuryDaysRange[0]}–${BAL.injuryDaysRange[1]} days (Recovery Program takes 1–3 days off, minimum 1); the row shows <b>🤕 #d</b> while it heals. Injuries never stop you playing matches — they only shut the Gym.</p>
