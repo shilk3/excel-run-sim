@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.46.1";
+const APP_VERSION = "4.46.2";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -3988,38 +3988,144 @@ function openTutorial(i) {
 }
 
 function openHowTo() {
-  const html = `
-    ${stickyHeadHtml("How to Play")}
-    <div class="modal-section">
-      <p>You manage a rising Excel esports competitor. Every day has up to 24 hours — split them across:</p>
-      <p>
-      📈🗺️📝🎲🔢⏱️🃏 <b>Skill Training</b> — 7 case specialties (Data, Mapping, Text, Game Logic, Math, Time, Cards). During preseason and the off-season, all 7 are open for training. Once the regular season starts, only 1-3 are "active" each round, revealed at the start of that round's week — the rest can't be trained until they come up again.<br>
-      🏃 <b>Gym</b> — raises Physical Health.<br>
-      🌙 <b>Sleep</b> — builds Rest.<br>
-      🎮 <b>Relax</b> — builds Calm and prevents burnout.<br>
-      🥗 <b>Food</b> — builds Nutrition, which keeps tomorrow's day at full length.<br>
-      💼 <b>Work</b> — pays the bills and keeps you employed.
-      </p>
-      <p><b>It's all connected:</b> Rest below ${BAL.restDragThreshold} wears down Physical Health and Calm (more the lower it goes), and low Physical Health caps how much your skill training actually helps. Calm comes from Relax: ${BAL.relaxComposureThreshold}h a day holds it, each hour short costs ${BAL.relaxComposureRelief} a day, each extra hour adds ${BAL.relaxComposureRelief}; sleeping ${BAL.idealSleep}h adds +${BAL.sleepComposureBonusIdeal} on top, ${BAL.idealSleep + 1}h+ adds +${BAL.sleepComposureBonusLong}. Relax beyond what keeps you at 100 isn't wasted: Calm past 100 becomes <b>😎 Chill</b>, a reserve (at half rate, up to ${BAL.calmBankCap}, fading ${BAL.calmBankFade} a day) that drains first on short-Relax days — match day still counts Calm as 100 at most, so Chill is for later, not for matches. Hit 0 Calm and you burn out, tanking your training until it recovers to ${BAL.burnoutRecoverThreshold}.</p>
-      <p><b>Decay:</b> every stat needs upkeep or it slips. Any skill that isn't active this round rusts; an active skill still rusts below ${BAL.skillDecayThresholdHours}h of training — unless that skill's Coach is hired, which stops it rusting at all. Gym below ${BAL.skillDecayThresholdHours}h detrains Physical Health. Sleep below ${BAL.idealSleep}h drains Rest. Relax below ${BAL.relaxComposureThreshold}h drains Calm. Food below ${BAL.skillDecayThresholdHours}h drains Nutrition. Each slider shows a marker at its threshold, and each bar previews tomorrow's value based on your current plan — green for a gain, red for a loss.</p>
-      <p><b>Rest</b> swings training itself (skills and Gym): a smooth slide from normal speed at ${BAL.restTrainingBoostFloor} Rest or below up to double speed at 100 — e.g. 85 Rest trains at ×1.5. ${BAL.idealSleep}h sleep holds Rest where it is. <b>Overcharge:</b> with Rest already at 100, sleeping longer pushes that day's training past ×2 — ×3 at 10h, ×4 at 12h, sliding evenly in between (8h ×2.3, 9h ×2.7, 11h ×3.5). <b>Calm</b> hits match day specifically — below ${BAL.composureMatchMid} your active skills count for only 75%, below ${BAL.composureMatchLow} just 50%. <b>Nutrition</b> sets how many hours you get at all: below ${BAL.nutritionHoursCapLow} your day shrinks to just ${BAL.dailyHoursFloor}h, sliding up to the full ${BAL.dailyHoursCeiling}h at ${BAL.nutritionHoursCapHigh}+.</p>
-      <p><b>Gym injuries:</b> every Gym hour adds a ${+(BAL.injuryChancePerHour * 100).toFixed(1)}% chance of injury that day, so only a 0h day is risk-free — ${BAL.gymMaxHours}h (the most you can do) is a ${+(BAL.gymMaxHours * BAL.injuryChancePerHour * 100).toFixed(1)}% chance. The Gym row shows today's risk as <b>#% 🤕</b>. Sports Physio cuts that risk by 20%, 35% or 50%. An injury costs ${BAL.injuryPhysLoss[0]}–${BAL.injuryPhysLoss[1]} Health and locks the Gym for ${BAL.injuryDaysRange[0]}–${BAL.injuryDaysRange[1]} days (Recovery Program takes 1–3 days off, minimum 1); the row shows <b>🤕 #d</b> while it heals. Injuries never stop you playing matches — they only shut the Gym.</p>
-      <p><b>Staff &amp; ceilings:</b> skills train up to ${BAL.skillShopCapBase} on your own. To go higher, hire that skill's <b>Coach</b> in 🧑‍🏫 Staff: a hired coach lifts the ceiling (Lv1 60 … Lv5 100), speeds up training and stops that skill rusting while hired (even untrained) — but never past your league cap (the highest league you've reached: 60 in League 5 up to 100 in League 1). Above the ceiling a skill isn't cut down: an hour a day holds it, less lets it slip. Physical Health caps at ${BAL.statCapBase} without a hired Sports Physio. Staff are hired <b>a week at a time</b> (a week ends after each match): you pay the weekly wage up front (pro-rated if you hire mid-week) and nothing renews by default, so each week you choose who's worth it — usually that week's focus skills. Any coach or support staff can be switched to <b>🔁 Auto-rehire</b>: when a week ends they're kept on at the same level for the next one, as long as you have the cash (if not, they're off that week, their switch turns off and you're told). Higher levels cost a one-off fee to unlock, only once your league allows it (coaches: Lv2 in League 4 … Lv5 in League 1; support team: Lv2 in League 3, Lv3 in League 1), and cost more per week. The hatched end of a bar is the part this week's ceiling locks off.</p>
-      <p><b>Energy Items</b> (in 🧑‍🏫 Staff &amp; Items) are an instant top-up, each usable once a week: ${ENERGY_ITEMS.map((it) => `${it.icon} ${it.name} $${it.price} (${[it.rest ? `+${it.rest} Rest` : "", it.composure ? `+${it.composure} Calm` : ""].filter(Boolean).join(", ")}${it.crash ? `, then ${[it.crash.rest ? `−${it.crash.rest} Rest` : "", it.crash.composure ? `−${it.crash.composure} Calm` : ""].filter(Boolean).join(", ")} the next day` : ", no crash"})`).join(" · ")}. Nothing goes past 100.</p>
-      <p><b>Equipment</b> (also in 🧑‍🏫 Staff &amp; Items) is bought outright and works until the current year ends, then wears out — the price is never pro-rated, so buying early gets the most out of it: ${EQUIPMENT.map((e) => `${e.icon} ${e.name} $${fmt(e.price)} (${e.desc})`).join(" · ")}.</p>
-      <p><b>Prize money:</b> a win pays $${BAL.prizeWinBase} + your new rating ÷ ${BAL.prizeRatingDiv}; a loss pays nothing. Winning the playoffs adds a champion bonus of $${BAL.championCash.toLocaleString()} and +${BAL.championRating} rating.</p>
-      <p><b>End Day / To Match:</b> <b>End Day ▶</b> plays one day. <b>To Match ▶▶</b> repeats today's plan every day up to and including the next match, then shows the result with a summary of how your stats moved over the week (outside the season it's <b>End Week ▶▶</b>, up to 7 days, to the end of the week). It stops early so you can re-plan if you get injured, lose or find a job (or go pro), burn out, get a new technique to master, or Nutrition drops so far that your plan no longer fits in the day.</p>
-      <p><b>The season:</b> a ${BAL.preseasonDays}-day preseason to train, then a ${BAL.seasonRounds}-round regular season — one match a week against a named rival, all scheduled in advance, each testing that week's active skills. Finish in the top ${BAL.playoffSize} of your ${BAL.seasonRounds + 1}-competitor league to reach the knockout playoffs. Lose a playoff match and you're out; win the Final and you're champion.</p>
-      <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken. Get knocked out of the playoffs and you go to training camp too, for the rest of the playoff window (at least ${BAL.offseasonDays} days) — so an early exit gets its time back as training, just like missing the cut. Only the champion gets a plain ${BAL.offseasonDays}-day break.</p>
-      <p><b>Match day:</b> both players get a <b>match-day rating</b> = rating + performance + luck. Your performance comes from your stats (each point above 70 adds 3, below 70 costs 3); every rival has a performance on the same scale. Luck is random for both sides every match — usually between about −150 and +120, occasionally +400 or more on an inspired day. The higher match-day rating wins, so the bigger your rating gap the likelier you are to win, but upsets always stay possible. The result screen shows every number side by side.</p>
-      <p><b>Leagues:</b> there are ${BAL.leagueCount} leagues, League 1 at the top and League 5 at the bottom — you start in League 5. Every league has a persistent roster of named rivals whose ratings evolve from real simulated results every week, same as yours — every tier's table is live from round 1, not just visible once the season ends. Four go up from every league below League 1: the playoff champion, plus the top ${BAL.promotionTablePlaces} of the table other than the champion — so a top-${BAL.promotionTablePlaces} finish is always promoted, and anyone in the playoffs can still win their way up. Finish bottom ${BAL.relegationCount} and you're relegated. This applies to every competitor in every league, not just you — every league plays out its own knockout too — so the standings you see are a living world, not scenery. Check the Leagues screen any time (Menu, or the shortcut in Career) to see all ${BAL.leagueCount} tables. <b>Match History</b> keeps every match you play (tap one to see its full result again) and every result in all ${BAL.leagueCount} leagues for this season and last — tap a rival's name, there or in a league table, to see their season.</p>
-      <p><b>Rating</b> is your skill score (the 🏆 number), the same scale every rival is measured on — it rises and falls with each result, and it's what your win chance is worked out from. Your <b>table position</b> (#1–#40) is separate: it comes from league points, 3 per win. Cash and Rating carry across seasons and leagues — spend cash on Staff each week.</p>
-      <p><b>Employment:</b> your day job funds everything else, every phase, no exceptions. Work ${BAL.workHoursRequired}h/day (every phase, preseason included), starting at $${BAL.workPayMin}/day; up to ${BAL.overtimeMaxHours}h of <b>overtime</b> on top pays half your hourly rate (pay ÷ ${BAL.workHoursRequired} ÷ 2, so $${Math.round(BAL.workPayMin / BAL.workHoursRequired / 2)} at the starting $${BAL.workPayMin}/day) for each extra hour — pay is tied to still <i>having</i> the job, not to hitting the exact hour target every day, so falling short doesn't cost you income, only a chunk of a chance scaled to the shortfall (regained ${BAL.strikeWindowDays} days later). Run out of your ${fmt1(BAL.strikesToFire)} chances and <i>that's</i> when pay actually stops — you're fired: the same slider becomes a Job Search, needing a random ${BAL.jobSearchHoursRange[0]}–${BAL.jobSearchHoursRange[1]} cumulative hours (rolled when you lose the job and shown on the slider) to get rehired — at least ${BAL.jobSearchMinHours}h of searching a day, or the day can't end. Reach League ${BAL.goProLeagueTier} or higher with $${BAL.goProCash}+ banked while employed and you go Pro automatically — Work drops to just ${BAL.proDutyHoursRequired}h/day of Pro Duties, starting at $${BAL.proPayMin}/day, with the same chances rule and the same fallback to Job Search if you're dropped.</p>
-      <p><b>Pay &amp; seniority:</b> pay rises $${BAL.payRaisePerYear}/year for your first ${BAL.payRaiseMaxYears} years in a role, then holds — Work tops out at $${BAL.workPayMin + BAL.payRaisePerYear * BAL.payRaiseMaxYears}/day, Pro Duties at $${BAL.proPayMin + BAL.payRaisePerYear * BAL.payRaiseMaxYears}/day. Lose the job or get dropped from Pro and that role's pay resets to its minimum for next time — seniority isn't carried over.</p>
-      <p><b>Cost of living:</b> $${BAL.dailyExpenses}/day, charged every single day no matter your employment status — stay employed and you net a profit, but lose your job and the bills don't stop, so cash actively drains while you're out of work. Each new year opens with a summary of that year's full cash flow: pay earned, match winnings, and expenses paid.</p>
-      <p>Pros have one more thing to manage: staying current. Roughly every ${BAL.techniqueIntervalDays} days a new Excel technique appears that needs ${BAL.techniqueMinHours}-${BAL.techniqueMaxHours}h to master — any Pro Duties hours beyond the ${BAL.proDutyHoursRequired}h minimum go toward it. Falling behind never costs you progress (new ones just queue up), but every technique still unmastered costs ${Math.round(BAL.techniquePenaltyPerUnmastered * 100)}% match performance, stacking.</p>
-    </div>`;
-  openModal(html, { ownClose: true });
+  const B = BAL;
+  const ul = (items) => `<ul class="howto-list">${items.filter(Boolean).map((i) => `<li>${i}</li>`).join("")}</ul>`;
+  const tbl = (head, rows) =>
+    `<table class="perf-table howto-table"><thead><tr>${head.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows
+      .map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`)
+      .join("")}</tbody></table>`;
+  const sections = [];
+  const sec = (id, icon, title, body) => sections.push({ id, icon, title, body });
+  const pct = (x) => `${+(x * 100).toFixed(1)}%`;
+  const itemNow = (it) => [it.rest ? `+${it.rest} Rest` : "", it.composure ? `+${it.composure} Calm` : ""].filter(Boolean).join(", ");
+  const itemCrash = (it) => (it.crash ? [it.crash.rest ? `−${it.crash.rest} Rest` : "", it.crash.composure ? `−${it.crash.composure} Calm` : ""].filter(Boolean).join(", ") : "none");
+
+  sec("day", "🗓️", "Your day", `
+    <p class="howto-lead">You're an Excel esports rookie. Each day you share out up to 24 hours with the sliders, then press <b>End Day</b>.</p>
+    ${tbl(["Slider", "Builds", "Minimum"], [
+      ["📈 Skills (7)", "that skill", `${B.skillDecayThresholdHours}h each`],
+      ["🏃 Gym", "Physical Health", `${B.skillDecayThresholdHours}h`],
+      ["🌙 Sleep", "Rest", `${B.idealSleep}h`],
+      ["🎮 Relax", "Calm", `${B.relaxComposureThreshold}h`],
+      ["🥗 Food", "Nutrition", `${B.skillDecayThresholdHours}h`],
+      ["💼 Work", "pay, keeps the job", `${B.workHoursRequired}h`],
+    ])}
+    ${ul([
+      "Below its <b>minimum</b> (the tick on each slider) a stat slips instead of growing. The slider track turns green when you've met it, red when you haven't.",
+      "Each bar previews <b>tomorrow</b>: green for a gain, red for a loss.",
+      "Preseason and the off-season: all 7 skills can be trained. In the season only that week's <b>1–3 focus skills</b> can — and they're exactly what the week's match tests.",
+    ])}`);
+
+  sec("buttons", "▶️", "End Day & End Week", ul([
+    "<b>End Day ▶</b> plays one day.",
+    "<b>To Match ▶▶</b> repeats today's plan up to and including the next match, then shows the result plus a week summary. Outside the season it's <b>End Week ▶▶</b> (up to 7 days).",
+    "It stops early so you can re-plan on an injury, losing or finding a job, going pro, burnout, a new technique, or Nutrition shrinking the day below your plan. Each of those also gets its own screen.",
+  ]));
+
+  sec("rest", "🌙", "Rest & training speed", `
+    ${ul([
+      `${B.idealSleep}h sleep holds Rest. Each hour short costs 1.3 a day; each hour over adds 1.4 (up to 3 extra hours).`,
+      "Rest sets how fast <b>skills and Gym</b> train:",
+    ])}
+    ${tbl(["Rest", "Training"], [[`${B.restTrainingBoostFloor} or less`, "×1"], ["85", "×1.5"], ["100", "×2"]])}
+    ${ul([`<b>⚡ Overcharge:</b> with Rest already at 100, sleeping past ${B.idealSleep}h pushes that day's training higher:`])}
+    ${tbl(["Sleep at Rest 100", "Training"], [7, 8, 9, 10, 11, 12].map((h) => [`${h}h`, `×${+restTrainingMultiplier(100, h).toFixed(2)}`]))}
+    ${ul([`Rest below <b>${B.restDragThreshold}</b> wears down Physical Health and Calm — more the lower it goes.`])}`);
+
+  sec("calm", "🎮", "Calm & Chill", `
+    ${ul([
+      `${B.relaxComposureThreshold}h Relax holds Calm. Each hour short costs ${B.relaxComposureRelief} a day; each extra hour adds ${B.relaxComposureRelief}. Training doesn't touch it.`,
+      `Sleep adds a bonus: <b>+${B.sleepComposureBonusIdeal}</b> at ${B.idealSleep}h, <b>+${B.sleepComposureBonusLong}</b> at ${B.idealSleep + 1}h or more.`,
+      `<b>😎 Chill:</b> Calm past 100 becomes a reserve — it builds at half rate up to +${B.calmBankCap - 100}, fades ${B.calmBankFade} a day, and is used up first on short-Relax days. Matches count Calm as 100 at most.`,
+      `<b>Burnout:</b> hit 0 Calm and skill training drops to ${Math.round(B.burnoutEffectivenessMult * 100)}% until Calm is back to ${B.burnoutRecoverThreshold}.`,
+    ])}
+    ${tbl(["Calm on match day", "Your skills count"], [[`${B.composureMatchMid}+`, "100%"], [`${B.composureMatchLow}–${B.composureMatchMid - 1}`, "75%"], [`under ${B.composureMatchLow}`, "50%"]])}`);
+
+  sec("nutrition", "🥗", "Nutrition & day length", ul([
+    `Nutrition sets how many hours tomorrow has: <b>${B.dailyHoursFloor}h</b> at ${B.nutritionHoursCapLow} or below, rising to the full <b>${B.dailyHoursCeiling}h</b> at ${B.nutritionHoursCapHigh}+.`,
+    `Under ${B.skillDecayThresholdHours}h of Food a day, Nutrition drops.`,
+  ]));
+
+  sec("health", "🏃", "Health & injuries", ul([
+    "Low Physical Health caps how much your skill training helps (the <b>×0.86 skill</b> on the Gym row).",
+    `Health caps at <b>${B.statCapBase}</b> unless a Sports Physio is hired. Under ${B.skillDecayThresholdHours}h of Gym it slowly detrains.`,
+    `Every Gym hour adds <b>${pct(B.injuryChancePerHour)}</b> injury chance that day (${B.gymMaxHours}h = ${pct(B.gymMaxHours * B.injuryChancePerHour)}); the Gym row shows it as <b>#% 🤕</b>.`,
+    `An injury costs ${B.injuryPhysLoss[0]}–${B.injuryPhysLoss[1]} Health and locks the Gym for ${B.injuryDaysRange[0]}–${B.injuryDaysRange[1]} days. It never stops you playing matches.`,
+  ]));
+
+  sec("rust", "📉", "Skill rust", ul([
+    `A skill trained under ${B.skillDecayThresholdHours}h a day — or locked because it's not in focus — slowly rusts (about 1 point a week).`,
+    "A hired <b>Coach</b> stops their skill rusting at all, trained or not. Coached rows show blue-grey instead of red under 1h, and <b>held</b>.",
+    "Above its ceiling a skill is never cut down: 1h a day holds it.",
+  ]));
+
+  sec("match", "⚔️", "Match day", ul([
+    "Each side's <b>match-day rating</b> = rating + performance + luck. Higher wins.",
+    `Performance comes from your stats (skills ${Math.round(PERF_WEIGHTS.skill * 100)}%, Health ${Math.round(PERF_WEIGHTS.phys * 100)}%, Calm ${Math.round(PERF_WEIGHTS.composure * 100)}%, Rest ${Math.round(PERF_WEIGHTS.rest * 100)}%). Each point above 70 adds 3; below 70 costs 3.`,
+    "Luck is random for both sides — usually −150 to +120, occasionally +400. Upsets always stay possible.",
+    "The result screen explains every number.",
+  ]));
+
+  sec("season", "📅", "Season & leagues", `
+    ${ul([
+      `<b>Preseason:</b> ${B.preseasonDays} days of training. <b>Regular season:</b> ${B.seasonRounds} rounds, one match a week, all scheduled in advance.`,
+      `Top <b>${B.playoffSize}</b> of ${B.seasonRounds + 1} reach the knockout playoffs (R16 → QF → SF → Final).`,
+      `Miss the playoffs: a ${B.trainingCampDays}-day <b>training camp</b>. Knocked out: camp for the rest of the playoff window. Champion: a ${B.offseasonDays}-day offseason.`,
+      `${B.leagueCount} leagues — you start in League ${B.leagueCount}. <b>Four go up</b> from each: the playoff champion plus the next ${B.promotionTablePlaces} highest in the table. Bottom ${B.relegationCount} go down.`,
+      "Every rival plays real simulated matches — all tables are live. Tap a name to see their season.",
+      "<b>Rating</b> (🏆) is your strength and sets your win chance. <b>Table position</b> comes from league points (3 per win).",
+      "<b>Match History</b> keeps your matches and every league result for this season and last.",
+    ])}`);
+
+  sec("money", "💼", "Work & money", `
+    ${ul([
+      `Work <b>${B.workHoursRequired}h/day</b>, every phase. Pay starts at $${B.workPayMin}/day, +$${B.payRaisePerYear} each year for ${B.payRaiseMaxYears} years. Living costs are <b>$${B.dailyExpenses}/day</b>, always.`,
+      `<b>Overtime:</b> up to ${B.overtimeMaxHours}h extra at half your hourly rate ($${Math.round(B.workPayMin / B.workHoursRequired / 2)}/h at $${B.workPayMin}/day).`,
+      `Short on Work hours? You keep your pay but lose part of a <b>chance</b> (back after ${B.strikeWindowDays} days). Lose all ${fmt1(B.strikesToFire)} and you're fired.`,
+      `Fired: the Work slider becomes <b>Job Search</b> — ${B.jobSearchHoursRange[0]}–${B.jobSearchHoursRange[1]}h in total gets you hired, at least ${B.jobSearchMinHours}h a day. Pay resets to the minimum.`,
+      `<b>Go pro</b> automatically in League ${B.goProLeagueTier} or higher with $${fmt(B.goProCash)}+: ${B.proDutyHoursRequired}h/day of Pro Duties from $${B.proPayMin}/day.`,
+    ])}
+    ${tbl(["Prize money", ""], [
+      ["Win", `$${B.prizeWinBase} + rating ÷ ${B.prizeRatingDiv}`],
+      ["Loss", B.prizeLoss ? `$${B.prizeLoss}` : "nothing"],
+      ["Playoff champion", `+$${B.championCash.toLocaleString()}, +${B.championRating} rating`],
+    ])}
+    ${ul(["The new-year screen sums up the year's money: pay, prizes and spending."])}`);
+
+  sec("staff", "🧑‍🏫", "Staff", `
+    ${ul([
+      `Skills train to <b>${B.skillShopCapBase}</b> on your own. A hired <b>Coach</b> raises that skill's ceiling (Lv1 60 … Lv5 100), trains it faster and stops it rusting — never past your <b>league cap</b> (60 in League 5 … 100 in League 1).`,
+      "<b>Support staff</b> (Physio, Nutritionist, Manager, Sleep App, Meditation, Recovery) help only while hired.",
+      "Staff are hired <b>a week at a time</b>, paid up front (pro-rated mid-week). A week ends after each match.",
+      "<b>🔁 Auto-rehire</b> keeps someone on at the same level each new week — it switches itself off if you can't pay.",
+      "Higher levels cost a <b>one-off fee</b> to unlock, once your league allows it, and pay more per week.",
+    ])}
+    ${tbl(["Unlocks", "Coaches", "Support"], [["League 5", "Lv1", "Lv1"], ["League 4", "Lv2", "—"], ["League 3", "Lv3", "Lv2"], ["League 2", "Lv4", "—"], ["League 1", "Lv5", "Lv3"]])}`);
+
+  sec("items", "⚡", "Items & equipment", `
+    ${ul(["<b>Energy items</b> — an instant top-up, each once a week, never past 100:"])}
+    ${tbl(["Item", "Now", "Next day"], ENERGY_ITEMS.map((it) => [`${it.icon} ${it.name} $${it.price}`, itemNow(it), itemCrash(it)]))}
+    ${ul(["<b>Equipment</b> — works until the current year ends, full price whenever you buy:"])}
+    ${tbl(["Item", "Effect"], EQUIPMENT.map((e) => [`${e.icon} ${e.name} $${fmt(e.price)}`, e.desc]))}`);
+
+  sec("pro", "📘", "Pro techniques", ul([
+    `About every ${B.techniqueIntervalDays} days a new technique appears, needing ${B.techniqueMinHours}–${B.techniqueMaxHours}h. Pro Duties hours beyond ${B.proDutyHoursRequired}h go towards it.`,
+    `Each one still unmastered costs <b>${Math.round(B.techniquePenaltyPerUnmastered * 100)}%</b> match performance, stacking.`,
+  ]));
+
+  const nav = `<div class="howto-nav">${sections.map((s) => `<button class="howto-chip" data-jump="${s.id}">${s.icon} ${s.title}</button>`).join("")}</div>`;
+  const body = sections
+    .map((s) => `<div class="modal-section howto-section" id="howto-${s.id}"><h3>${s.icon} ${s.title}</h3>${s.body}</div>`)
+    .join("");
+  openModal(`${stickyHeadHtml("How to Play")}${nav}${body}`, { ownClose: true });
+  document.querySelectorAll("[data-jump]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      const target = $(`howto-${btn.dataset.jump}`);
+      const head = document.querySelector(".modal-sticky-head");
+      const modal = $("modal");
+      modal.scrollTop = target.offsetTop - (head ? head.offsetHeight : 0) - 8;
+    })
+  );
 }
 
 function openInstall() {
