@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.42.0";
+const APP_VERSION = "4.42.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -4206,9 +4206,6 @@ function endWeek() {
   if (endDayBlocker()) return;
   const planned = daysLeftInWeek();
   const start = weekSnapshot();
-  // This week's match skills always; otherwise only skills you trained
-  // (plus, at the end, any that moved — e.g. rust).
-  const shownSkills = SKILL_KEYS.filter((k) => (inSeason() && state.activeSkills.includes(k)) || (state.allocation.skills[k] || 0) > 0);
   const startPhase = state.seasonPhase;
   let daysRun = 0;
   let stopReason = null;
@@ -4233,7 +4230,7 @@ function endWeek() {
     appendLog(e.html, e.cls);
   }
   finishTurn();
-  const summaryHtml = weekSummaryHtml({ start, shownSkills, daysRun, planned, stopReason });
+  const summaryHtml = weekSummaryHtml({ start, daysRun, planned, stopReason });
   // The week summary rides on the first screen shown.
   if (!matchResult && !splash && !cards.length) return showWeekSummaryModal(summaryHtml, daysRun);
   showSequence([
@@ -4243,12 +4240,17 @@ function endWeek() {
   ]);
 }
 
-function weekSummaryHtml({ start, shownSkills, daysRun, planned, stopReason }) {
+function weekSummaryHtml({ start, daysRun, planned, stopReason }) {
   const s = state.stats;
-  const signed = (d) => (Math.abs(d) < 0.5 ? "±0" : d > 0 ? `+${fmt(d)}` : `−${fmt(-d)}`);
-  const cls = (d) => (Math.abs(d) < 0.5 ? "" : d > 0 ? "wk-up" : "wk-down");
-  const row = (label, a, b) => `<tr><td>${label}</td><td>${fmt(a)}</td><td>${fmt(b)}</td><td class="${cls(b - a)}">${signed(b - a)}</td></tr>`;
-  const skillRows = SKILL_KEYS.filter((k) => shownSkills.includes(k) || Math.abs(s.skills[k] - start.skills[k]) >= 0.5)
+  // Small moves (a couple of days' rust is ~0.3) get one decimal, on the
+  // values too, so they never read as "45 → 45 ±0".
+  const small = (d) => Math.abs(d) >= 0.05 && Math.abs(d) < 1;
+  const num = (v, d) => (small(d) ? fmt1(v) : fmt(v));
+  const signed = (d) => (Math.abs(d) < 0.05 ? "±0" : `${d > 0 ? "+" : "−"}${num(Math.abs(d), d)}`);
+  const cls = (d) => (Math.abs(d) < 0.05 ? "" : d > 0 ? "wk-up" : "wk-down");
+  const row = (label, a, b) => `<tr><td>${label}</td><td>${num(a, b - a)}</td><td>${num(b, b - a)}</td><td class="${cls(b - a)}">${signed(b - a)}</td></tr>`;
+  // Every skill, every time — rust on the ones you didn't train counts too.
+  const skillRows = SKILL_KEYS
     .map((k) => {
       const m = skillMeta(k);
       return row(`${m.icon} ${m.name}`, start.skills[k], s.skills[k]);
