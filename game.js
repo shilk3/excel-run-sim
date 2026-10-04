@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.40.0";
+const APP_VERSION = "4.41.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1126,6 +1126,10 @@ function computeDayResult(allocation, stats, injuryActive, burnoutActive) {
       const eff = effectiveHours(hours);
       const gain = eff * BAL.skillGainBase * focusMult * physMult * restMult * skillDiminish(s.skills[key]) * coachMult;
       skills[key] = s.skills[key] >= cap ? s.skills[key] : Math.min(s.skills[key] + gain, cap);
+    } else if (coachEff) {
+      // A hired coach keeps the skill from rusting while they're on the
+      // books — even in a week it isn't trained (or can't be).
+      skills[key] = s.skills[key];
     } else {
       const rust = Math.min(0.15, s.skills[key] * 0.003);
       skills[key] = Math.max(0, s.skills[key] - rust);
@@ -1234,6 +1238,8 @@ function resolveDay() {
       events.push({ type: delta > 0.5 ? "good" : "neutral", text: `${meta.icon} ${meta.name} (${hours}h): ${fmtSigned(delta)} skill${note}` });
     } else if (delta < 0 && isActive) {
       events.push({ type: "bad", text: `${meta.icon} No ${meta.name} training: skill rusted slightly (${fmtSigned(delta)})` });
+    } else if (isActive && hiredLevel(coachKey(key))) {
+      events.push({ type: "neutral", text: `${meta.icon} No ${meta.name} training: your coach kept it steady` });
     }
   });
 
@@ -2446,7 +2452,8 @@ function renderPlannerRows() {
         scaleMax: 100,
         hours: a.skills[key] || 0,
         maxHours: SKILL_MAX_HOURS,
-        markerHours: BAL.skillDecayThresholdHours,
+        // A hired coach stops rust, so there's no minimum to hit.
+        markerHours: lvl > 0 ? 0 : BAL.skillDecayThresholdHours,
         shopTag,
         barClass: "skill",
       })
@@ -2927,7 +2934,7 @@ function shopHtml() {
     </div>
     <div class="modal-section">
       <h3>Skill Coaches</h3>
-      <p class="modal-sub">A hired coach lifts that skill's ceiling (never past your league cap of ${leagueSkillCap()}) and speeds up its training. With no coach a skill trains up to ${BAL.skillShopCapBase}; above that, an hour a day holds it and less lets it slip. 🔁 Auto-rehire keeps a coach on each new week — even when their skill isn't in focus.</p>
+      <p class="modal-sub">A hired coach lifts that skill's ceiling (never past your league cap of ${leagueSkillCap()}), speeds up its training, and stops it rusting — even in a week you don't train it. With no coach a skill trains up to ${BAL.skillShopCapBase}; above that, an hour a day holds it and less lets it slip. 🔁 Auto-rehire keeps a coach on each new week — even when their skill isn't in focus.</p>
       ${skillCards}
     </div>
     <div class="modal-section">
@@ -3756,10 +3763,10 @@ function openHowTo() {
       💼 <b>Work</b> — pays the bills and keeps you employed.
       </p>
       <p><b>It's all connected:</b> low Rest wears down Physical Health even if you train well, and low Physical Health caps how much your skill training actually helps. Training hard without Relax drains Composure — hit 0 and you burn out, tanking your effectiveness until it recovers.</p>
-      <p><b>Decay:</b> every stat needs upkeep or it slips. Any skill that isn't active this round rusts; an active skill still rusts below ${BAL.skillDecayThresholdHours}h of training. Gym below ${BAL.skillDecayThresholdHours}h detrains Physical Health. Sleep below ${BAL.idealSleep}h drains Rest. Relax below ${BAL.relaxComposureThreshold}h drains Composure. Food below ${BAL.skillDecayThresholdHours}h drains Nutrition. Each slider shows a marker at its threshold, and each bar previews tomorrow's value based on your current plan — green for a gain, red for a loss.</p>
+      <p><b>Decay:</b> every stat needs upkeep or it slips. Any skill that isn't active this round rusts; an active skill still rusts below ${BAL.skillDecayThresholdHours}h of training — unless that skill's Coach is hired, which stops it rusting at all. Gym below ${BAL.skillDecayThresholdHours}h detrains Physical Health. Sleep below ${BAL.idealSleep}h drains Rest. Relax below ${BAL.relaxComposureThreshold}h drains Composure. Food below ${BAL.skillDecayThresholdHours}h drains Nutrition. Each slider shows a marker at its threshold, and each bar previews tomorrow's value based on your current plan — green for a gain, red for a loss.</p>
       <p><b>Rest</b> swings training itself: above ${BAL.restTrainingBoostThreshold} it's 150% effective, above ${BAL.restTrainingBoostHigh} it's 200% effective. <b>Composure</b> hits match day specifically — below ${BAL.composureMatchMid} your active skills count for only 75%, below ${BAL.composureMatchLow} just 50%. <b>Nutrition</b> sets how many hours you get at all: below ${BAL.nutritionHoursCapLow} your day shrinks to just ${BAL.dailyHoursFloor}h, sliding up to the full ${BAL.dailyHoursCeiling}h at ${BAL.nutritionHoursCapHigh}+.</p>
       <p><b>Gym injuries:</b> every Gym hour adds a ${+(BAL.injuryChancePerHour * 100).toFixed(1)}% chance of injury that day, so only a 0h day is risk-free — ${BAL.gymMaxHours}h (the most you can do) is a ${+(BAL.gymMaxHours * BAL.injuryChancePerHour * 100).toFixed(1)}% chance. The Gym row shows today's risk as <b>#% 🤕</b>. Sports Physio cuts that risk by 20%, 35% or 50%. An injury costs ${BAL.injuryPhysLoss[0]}–${BAL.injuryPhysLoss[1]} Health and locks the Gym for ${BAL.injuryDaysRange[0]}–${BAL.injuryDaysRange[1]} days (Recovery Program takes 1–3 days off, minimum 1); the row shows <b>🤕 #d</b> while it heals. Injuries never stop you playing matches — they only shut the Gym.</p>
-      <p><b>Staff &amp; ceilings:</b> skills train up to ${BAL.skillShopCapBase} on your own. To go higher, hire that skill's <b>Coach</b> in 🧑‍🏫 Staff: a hired coach lifts the ceiling (Lv1 60 … Lv5 100) and speeds up training — but never past your league cap (the highest league you've reached: 60 in League 5 up to 100 in League 1). Above the ceiling a skill isn't cut down: an hour a day holds it, less lets it slip. Physical Health caps at ${BAL.statCapBase} without a hired Sports Physio. Staff are hired <b>a week at a time</b> (a week ends after each match): you pay the weekly wage up front (pro-rated if you hire mid-week) and nothing renews by default, so each week you choose who's worth it — usually that week's focus skills. Any coach or support staff can be switched to <b>🔁 Auto-rehire</b>: when a week ends they're kept on at the same level for the next one, as long as you have the cash (if not, they're off that week, their switch turns off and you're told). Higher levels cost a one-off fee to unlock, only once your league allows it (coaches: Lv2 in League 4 … Lv5 in League 1; support team: Lv2 in League 3, Lv3 in League 1), and cost more per week. The hatched end of a bar is the part this week's ceiling locks off.</p>
+      <p><b>Staff &amp; ceilings:</b> skills train up to ${BAL.skillShopCapBase} on your own. To go higher, hire that skill's <b>Coach</b> in 🧑‍🏫 Staff: a hired coach lifts the ceiling (Lv1 60 … Lv5 100), speeds up training and stops that skill rusting while hired (even untrained) — but never past your league cap (the highest league you've reached: 60 in League 5 up to 100 in League 1). Above the ceiling a skill isn't cut down: an hour a day holds it, less lets it slip. Physical Health caps at ${BAL.statCapBase} without a hired Sports Physio. Staff are hired <b>a week at a time</b> (a week ends after each match): you pay the weekly wage up front (pro-rated if you hire mid-week) and nothing renews by default, so each week you choose who's worth it — usually that week's focus skills. Any coach or support staff can be switched to <b>🔁 Auto-rehire</b>: when a week ends they're kept on at the same level for the next one, as long as you have the cash (if not, they're off that week, their switch turns off and you're told). Higher levels cost a one-off fee to unlock, only once your league allows it (coaches: Lv2 in League 4 … Lv5 in League 1; support team: Lv2 in League 3, Lv3 in League 1), and cost more per week. The hatched end of a bar is the part this week's ceiling locks off.</p>
       <p><b>End Day / To Match:</b> <b>End Day ▶</b> plays one day. <b>To Match ▶▶</b> repeats today's plan every day up to and including the next match, then shows the result with a summary of how your stats moved over the week (outside the season it's <b>End Week ▶▶</b>, up to 7 days, to the end of the week). It stops early so you can re-plan if you get injured, lose or find a job (or go pro), burn out, get a new technique to master, or Nutrition drops so far that your plan no longer fits in the day.</p>
       <p><b>The season:</b> a ${BAL.preseasonDays}-day preseason to train, then a ${BAL.seasonRounds}-round regular season — one match a week against a named rival, all scheduled in advance, each testing that week's active skills. Finish in the top ${BAL.playoffSize} of your ${BAL.seasonRounds + 1}-competitor league to reach the knockout playoffs. Lose a playoff match and you're out; win the Final and you're champion.</p>
       <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken. Get knocked out of the playoffs and you go to training camp too, for the rest of the playoff window (at least ${BAL.offseasonDays} days) — so an early exit gets its time back as training, just like missing the cut. Only the champion gets a plain ${BAL.offseasonDays}-day break.</p>

@@ -37,7 +37,8 @@ Relax, and Food. Everything is connected:
   (a coach even when their skill isn't in that week's focus)
   while you can afford it (if you can't, they're off that week, the switch
   turns itself off and you're told). A hired Coach lifts that
-  skill's ceiling (Lv1 60 … Lv5 100) and speeds training, but never past
+  skill's ceiling (Lv1 60 … Lv5 100), speeds training and stops that skill
+  rusting while hired (even in a week you don't train it), but never past
   your league cap (60 in League 5 up to 100 in League 1). Above the ceiling
   a skill holds with an hour a day and slips with less. Physical Health caps
   at 70 without a hired Sports Physio. Higher staff levels need a one-off
