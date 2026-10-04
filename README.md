@@ -34,8 +34,8 @@ Relax, and Food. Everything is connected:
   (a week ends after each match), paid up front, pro-rated if hired
   mid-week. Coaches never renew; each support-team member has an optional
   🔁 Auto-rehire switch that keeps them on at the same level each new week
-  while you can afford it (if you can't, they're off that week and you're
-  told). A hired Coach lifts that
+  while you can afford it (if you can't, they're off that week, the switch
+  turns itself off and you're told). A hired Coach lifts that
   skill's ceiling (Lv1 60 … Lv5 100) and speeds training, but never past
   your league cap (60 in League 5 up to 100 in League 1). Above the ceiling
   a skill holds with an hour a day and slips with less. Physical Health caps
