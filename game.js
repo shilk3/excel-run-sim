@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.45.0";
+const APP_VERSION = "4.46.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -111,6 +111,10 @@ const BAL = {
   proPayMin: 100, // Pro: starting (and reset) daily pay
   payRaisePerYear: 10,
   payRaiseMaxYears: 5, // raises stop after this many years of unbroken tenure in the same role
+  // Match prize: a win pays base + rating ÷ div; a loss pays nothing.
+  prizeWinBase: 60,
+  prizeRatingDiv: 20,
+  prizeLoss: 0,
   dailyExpenses: 50, // cost of living, charged every single day regardless of employment status —
   // this is what makes losing your job actually cost you money, not just stall your income
   strikeWindowDays: 21, // 3 weeks — each strike expires this many days after it's earned
@@ -349,6 +353,43 @@ const ENERGY_ITEMS = [
   { key: "energy", icon: "🧃", name: "Energy Drink", price: 90, rest: 15, composure: 10, crash: { rest: 5, composure: 3 } },
   { key: "spa", icon: "💆", name: "Spa Day", price: 250, rest: 10, composure: 30, crash: null },
 ];
+// Equipment: bought outright (never pro-rated), works until the current
+// year ends, then it's gone.
+const EQUIPMENT = [
+  { key: "monitor", icon: "🖥️", name: "Second Monitor", price: 1500, desc: "+5% skill training", training: 0.05 },
+  { key: "pc", icon: "💻", name: "Gaming PC", price: 4000, desc: "+10% skill training", training: 0.1 },
+  { key: "chair", icon: "🪑", name: "Ergonomic Chair", price: 1200, desc: "−20% Gym injury risk", injuryMult: 0.8 },
+  { key: "headphones", icon: "🎧", name: "Noise-cancelling Headphones", price: 1000, desc: "+1 Calm a day", calmPerDay: 1 },
+  { key: "mattress", icon: "🛏️", name: "Memory-foam Mattress", price: 1000, desc: "−25% Rest lost from short sleep", sleepDebtMult: 0.75 },
+];
+function ownsEquipment(key) {
+  return !!(state.equipment && state.equipment.owned[key]);
+}
+function ownedEquipment() {
+  return EQUIPMENT.filter((e) => ownsEquipment(e.key));
+}
+// Combined effect of everything owned (bonuses add, multipliers multiply).
+function equipmentEffects() {
+  const eff = { training: 0, injuryMult: 1, calmPerDay: 0, sleepDebtMult: 1 };
+  for (const e of ownedEquipment()) {
+    eff.training += e.training || 0;
+    eff.injuryMult *= e.injuryMult || 1;
+    eff.calmPerDay += e.calmPerDay || 0;
+    eff.sleepDebtMult *= e.sleepDebtMult || 1;
+  }
+  return eff;
+}
+function buyEquipment(key) {
+  const e = EQUIPMENT.find((x) => x.key === key);
+  if (!e || ownsEquipment(key) || state.cash < e.price) return false;
+  state.cash -= e.price;
+  state.yearCashFlow.expenses += e.price;
+  state.equipment.owned[key] = true;
+  const log = { html: `${e.icon} Bought ${e.name} (−$${fmt(e.price)}): ${e.desc} until Year ${state.year} ends.`, cls: "event-good" };
+  state.logEntries.push(log);
+  appendLog(log.html, log.cls);
+  return true;
+}
 function itemUsed(key) {
   return !!(state.items && state.items.used[key]);
 }
@@ -425,7 +466,7 @@ function unlockStaffLevel(key) {
 // and the "#% 🤕" readout on the Gym row so the two always agree.
 function injuryChance(gymHours) {
   const physioEff = upgradeEffect("physio");
-  const mult = physioEff ? physioEff.injuryReduceMult : 1.0;
+  const mult = (physioEff ? physioEff.injuryReduceMult : 1.0) * equipmentEffects().injuryMult;
   return clamp(gymHours * BAL.injuryChancePerHour * mult, 0, 1);
 }
 function physCap() {
@@ -765,6 +806,7 @@ function freshState() {
     // Energy items: used[key] = true once bought this week; crash is what
     // lands on the next day resolved.
     items: { used: {}, crash: { rest: 0, composure: 0 } },
+    equipment: { owned: {} }, // lasts until the year it was bought ends
     phaseStart: null, // snapshot taken when each phase begins (phaseSnapshot) — for the phase splash
     pendingSplash: null, // a phase splash not yet dismissed
     tutorialSeen: false,
@@ -1051,6 +1093,8 @@ function migrateSave(parsed) {
   if (!parsed.staff.missed) parsed.staff.missed = [];
   // v4.43.0: energy items.
   if (!parsed.items) parsed.items = { used: {}, crash: { rest: 0, composure: 0 } };
+  // v4.46.0: equipment.
+  if (!parsed.equipment) parsed.equipment = { owned: {} };
 
   // v4.35.0: match history. Earlier matches this season only kept opponent
   // and result, so they come in as simple rows; league-wide results start now.
@@ -1192,6 +1236,7 @@ function computeDayResult(allocation, stats, injuryActive, burnoutActive) {
   const relaxH = a.relax;
 
   const focusMult = burnoutActive ? BAL.burnoutEffectivenessMult : 1;
+  const gear = equipmentEffects();
   const physMult = physSynergy(s.phys);
   const restMult = restTrainingMultiplier(s.rest, a.sleep);
 
@@ -1214,7 +1259,7 @@ function computeDayResult(allocation, stats, injuryActive, burnoutActive) {
     // to the ceiling just because the coach isn't on hand this week.
     if (hours >= BAL.skillDecayThresholdHours) {
       const eff = effectiveHours(hours);
-      const gain = eff * BAL.skillGainBase * focusMult * physMult * restMult * skillDiminish(s.skills[key]) * coachMult;
+      const gain = eff * BAL.skillGainBase * focusMult * physMult * restMult * skillDiminish(s.skills[key]) * coachMult * (1 + gear.training);
       skills[key] = s.skills[key] >= cap ? s.skills[key] : Math.min(s.skills[key] + gain, cap);
     } else if (coachEff) {
       // A hired coach keeps the skill from rusting while they're on the
@@ -1257,7 +1302,7 @@ function computeDayResult(allocation, stats, injuryActive, burnoutActive) {
   // ---- Rest (renamed/inverted Sleep Debt: higher = better) ----
   const sleepAppMult = sleepAppEff ? sleepAppEff.sleepDebtMult : 1.0;
   const restDelta =
-    sleepH < BAL.idealSleep ? -((BAL.idealSleep - sleepH) * 1.3 * sleepAppMult) : Math.min(sleepH - BAL.idealSleep, 3) * 1.4;
+    sleepH < BAL.idealSleep ? -((BAL.idealSleep - sleepH) * 1.3 * sleepAppMult * gear.sleepDebtMult) : Math.min(sleepH - BAL.idealSleep, 3) * 1.4;
   // An energy item's crash lands on the day after it's used.
   const crash = (state.items && state.items.crash) || { rest: 0, composure: 0 };
   const rest = clamp(s.rest + restDelta - crash.rest, 0, 100);
@@ -1270,7 +1315,7 @@ function computeDayResult(allocation, stats, injuryActive, burnoutActive) {
   const relaxDelta = relaxGap >= 0 ? Math.min(relaxGap, 3) * BAL.relaxComposureRelief * meditationMult : (relaxGap * BAL.relaxComposureRelief) / meditationMult;
   const sleepBonus = sleepComposureBonus(sleepH);
   const composurePenaltyFromRest = restShortfall * BAL.restDragComposure;
-  const composureDelta = relaxDelta + sleepBonus - composurePenaltyFromRest;
+  const composureDelta = relaxDelta + sleepBonus + gear.calmPerDay - composurePenaltyFromRest;
   const composure = clamp(applyCalmChange(s.composure, composureDelta) - crash.composure, 0, BAL.calmBankCap);
 
   return {
@@ -1671,7 +1716,8 @@ function resolveMatch(opponentRating) {
 
   const cashBefore = state.cash;
   const recordBefore = { wins: state.wins, losses: state.losses };
-  const cashReward = Math.round((win ? 150 + state.rank / 10 : 40) * cashBonusMult);
+  const prizeFormula = { base: BAL.prizeWinBase, div: BAL.prizeRatingDiv, loss: BAL.prizeLoss };
+  const cashReward = Math.round((win ? prizeFormula.base + state.rank / prizeFormula.div : prizeFormula.loss) * cashBonusMult);
   state.cash += cashReward;
   state.yearCashFlow.matchCash += cashReward;
   if (win) state.wins += 1;
@@ -1700,6 +1746,7 @@ function resolveMatch(opponentRating) {
     cashBonusMult,
     rankBefore,
     rankAfterMatch: state.rank,
+    prizeFormula,
     cashReward,
     cashBefore,
     recordBefore,
@@ -2225,6 +2272,9 @@ function processDayEnd() {
       }
 
       state.phaseDay = 0;
+      const worn = ownedEquipment();
+      state.equipment.owned = {};
+      if (worn.length) yearSummary.equipmentExpired = worn.map((e) => `${e.icon} ${e.name}`);
       state.year += 1;
       state.seasonPhase = "preseason";
       state.roundIndex = 0;
@@ -2235,6 +2285,7 @@ function processDayEnd() {
       state.leaguePoints = newLeagueData.points;
       state.playoff = null;
       phaseEvent = `🎉 Year ${state.year} begins! A fresh ${BAL.seasonRounds}-round season has been scheduled — good luck.`;
+      if (worn.length) phaseEvent += ` Last year's equipment has worn out (${worn.map((e) => e.name).join(", ")}).`;
     }
     return { matchResult, phaseEvent, yearSummary };
   }
@@ -2881,11 +2932,13 @@ function ratingCashExplainerHtml(result) {
   if (bonus.rating) ratingRows.push(row("👑 Champion bonus", signedNum(bonus.rating), "perf-sub"));
   const ratingTotal = (result.ratingAfter != null ? result.ratingAfter : state.rank) - result.rankBefore;
 
-  const basePrize = result.win ? 150 + result.rankAfterMatch / 10 : 40;
+  // Results saved before v4.46.0 were paid on the old formula.
+  const pf = result.prizeFormula || { base: 150, div: 10, loss: 40 };
+  const basePrize = result.win ? pf.base + result.rankAfterMatch / pf.div : pf.loss;
   const cashRows = [
     result.win
-      ? row(`Win: $150 + your new rating (${fmt(result.rankAfterMatch)}) ÷ 10`, `+${fmtMoney(Math.round(basePrize))}`)
-      : row("Loss: flat prize", `+${fmtMoney(40)}`),
+      ? row(`Win: $${pf.base} + your new rating (${fmt(result.rankAfterMatch)}) ÷ ${pf.div}`, `+${fmtMoney(Math.round(basePrize))}`)
+      : row(pf.loss ? "Loss: flat prize" : "Loss: no prize money", `+${fmtMoney(pf.loss)}`),
   ];
   if (result.cashBonusMult > 1) {
     cashRows.push(row(`🧑‍💼 Team Manager (+${Math.round((result.cashBonusMult - 1) * 100)}% prize money)`, `+${fmtMoney(result.cashReward - Math.round(basePrize))}`, "perf-sub"));
@@ -3074,6 +3127,19 @@ function shopHtml() {
       </div>
     </div>`;
   }).join("");
+  const gearCards = EQUIPMENT.map((e) => `
+    <div class="shop-item staff-card item-card${ownsEquipment(e.key) ? " staff-card-hired" : ""}">
+      <div class="shop-item-icon">${e.icon}</div>
+      <div class="shop-item-info">
+        <div class="shop-item-name">${e.name}</div>
+        <div class="staff-line staff-stat">${e.desc}</div>
+        <div class="staff-actions">${
+          ownsEquipment(e.key)
+            ? `<span class="staff-hired">✓ Owned until Year ${state.year} ends</span>`
+            : `<button class="staff-chip" data-gear="${e.key}" ${state.cash < e.price ? "disabled" : ""}>Buy · $${fmt(e.price)}</button>`
+        }</div>
+      </div>
+    </div>`).join("");
   return `
     ${stickyHeadHtml("Staff & Items", `<span class="sticky-cash">💰 ${fmtMoney(state.cash)}</span>`)}
     <div class="callout staff-week">
@@ -3085,6 +3151,11 @@ function shopHtml() {
       <h3>Energy Items</h3>
       <p class="modal-sub">An instant top-up, each once a week. Rest ${fmt(state.stats.rest)} · Calm ${fmt(Math.min(100, state.stats.composure))} now (items don't go past 100).</p>
       ${itemCards}
+    </div>
+    <div class="modal-section">
+      <h3>Equipment</h3>
+      <p class="modal-sub">Works until Year ${state.year} ends (${PHASE_NAMES[state.seasonPhase] || state.seasonPhase} now), then it's worn out. The full price is paid whenever you buy, so it's best value early in the year.</p>
+      ${gearCards}
     </div>
     <div class="modal-section">
       <h3>Skill Coaches</h3>
@@ -3120,6 +3191,11 @@ function openShop(opts) {
     box.addEventListener("change", () => {
       state.staff.auto[box.dataset.auto] = box.checked;
       refresh();
+    })
+  );
+  document.querySelectorAll("[data-gear]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      if (buyEquipment(btn.dataset.gear)) refresh();
     })
   );
   document.querySelectorAll("[data-item]").forEach((btn) =>
@@ -3731,6 +3807,7 @@ function buildPhaseSplash(from, to, { yearSummary = null, tierBefore = state.lea
     const supIdx = SUPPORT_LEVEL_UNLOCK.indexOf(state.peakLeagueTier);
     if (supIdx > 0) unlockable.push(`support staff Lv${supIdx + 1}`);
     if (unlockable.length) notes.push(`New in 🧑‍🏫 Staff: ${unlockable.join(" and ")} can now be unlocked.`);
+    if (yearSummary && yearSummary.equipmentExpired) notes.push(`Last year's equipment has worn out: ${yearSummary.equipmentExpired.join(", ")}. Buy again in 🧑‍🏫 Staff &amp; Items if it's worth it.`);
   } else {
     title = `${PHASE_NAMES[to] || to}`;
   }
@@ -3926,6 +4003,8 @@ function openHowTo() {
       <p><b>Gym injuries:</b> every Gym hour adds a ${+(BAL.injuryChancePerHour * 100).toFixed(1)}% chance of injury that day, so only a 0h day is risk-free — ${BAL.gymMaxHours}h (the most you can do) is a ${+(BAL.gymMaxHours * BAL.injuryChancePerHour * 100).toFixed(1)}% chance. The Gym row shows today's risk as <b>#% 🤕</b>. Sports Physio cuts that risk by 20%, 35% or 50%. An injury costs ${BAL.injuryPhysLoss[0]}–${BAL.injuryPhysLoss[1]} Health and locks the Gym for ${BAL.injuryDaysRange[0]}–${BAL.injuryDaysRange[1]} days (Recovery Program takes 1–3 days off, minimum 1); the row shows <b>🤕 #d</b> while it heals. Injuries never stop you playing matches — they only shut the Gym.</p>
       <p><b>Staff &amp; ceilings:</b> skills train up to ${BAL.skillShopCapBase} on your own. To go higher, hire that skill's <b>Coach</b> in 🧑‍🏫 Staff: a hired coach lifts the ceiling (Lv1 60 … Lv5 100), speeds up training and stops that skill rusting while hired (even untrained) — but never past your league cap (the highest league you've reached: 60 in League 5 up to 100 in League 1). Above the ceiling a skill isn't cut down: an hour a day holds it, less lets it slip. Physical Health caps at ${BAL.statCapBase} without a hired Sports Physio. Staff are hired <b>a week at a time</b> (a week ends after each match): you pay the weekly wage up front (pro-rated if you hire mid-week) and nothing renews by default, so each week you choose who's worth it — usually that week's focus skills. Any coach or support staff can be switched to <b>🔁 Auto-rehire</b>: when a week ends they're kept on at the same level for the next one, as long as you have the cash (if not, they're off that week, their switch turns off and you're told). Higher levels cost a one-off fee to unlock, only once your league allows it (coaches: Lv2 in League 4 … Lv5 in League 1; support team: Lv2 in League 3, Lv3 in League 1), and cost more per week. The hatched end of a bar is the part this week's ceiling locks off.</p>
       <p><b>Energy Items</b> (in 🧑‍🏫 Staff &amp; Items) are an instant top-up, each usable once a week: ${ENERGY_ITEMS.map((it) => `${it.icon} ${it.name} $${it.price} (${[it.rest ? `+${it.rest} Rest` : "", it.composure ? `+${it.composure} Calm` : ""].filter(Boolean).join(", ")}${it.crash ? `, then ${[it.crash.rest ? `−${it.crash.rest} Rest` : "", it.crash.composure ? `−${it.crash.composure} Calm` : ""].filter(Boolean).join(", ")} the next day` : ", no crash"})`).join(" · ")}. Nothing goes past 100.</p>
+      <p><b>Equipment</b> (also in 🧑‍🏫 Staff &amp; Items) is bought outright and works until the current year ends, then wears out — the price is never pro-rated, so buying early gets the most out of it: ${EQUIPMENT.map((e) => `${e.icon} ${e.name} $${fmt(e.price)} (${e.desc})`).join(" · ")}.</p>
+      <p><b>Prize money:</b> a win pays $${BAL.prizeWinBase} + your new rating ÷ ${BAL.prizeRatingDiv}; a loss pays nothing.</p>
       <p><b>End Day / To Match:</b> <b>End Day ▶</b> plays one day. <b>To Match ▶▶</b> repeats today's plan every day up to and including the next match, then shows the result with a summary of how your stats moved over the week (outside the season it's <b>End Week ▶▶</b>, up to 7 days, to the end of the week). It stops early so you can re-plan if you get injured, lose or find a job (or go pro), burn out, get a new technique to master, or Nutrition drops so far that your plan no longer fits in the day.</p>
       <p><b>The season:</b> a ${BAL.preseasonDays}-day preseason to train, then a ${BAL.seasonRounds}-round regular season — one match a week against a named rival, all scheduled in advance, each testing that week's active skills. Finish in the top ${BAL.playoffSize} of your ${BAL.seasonRounds + 1}-competitor league to reach the knockout playoffs. Lose a playoff match and you're out; win the Final and you're champion.</p>
       <p>Miss the playoffs and your season ends early — but training never stops. You get a ${BAL.trainingCampDays}-day training camp to prepare for next year, the same amount of time a full playoff run would have taken. Get knocked out of the playoffs and you go to training camp too, for the rest of the playoff window (at least ${BAL.offseasonDays} days) — so an early exit gets its time back as training, just like missing the cut. Only the champion gets a plain ${BAL.offseasonDays}-day break.</p>
