@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.39.1";
+const APP_VERSION = "4.39.2";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1255,7 +1255,9 @@ function resolveDay() {
       const loss = randInt(BAL.injuryPhysLoss[0], BAL.injuryPhysLoss[1]);
       const daysReduce = recoveryEff ? recoveryEff.injuryDaysReduce : 0;
       const days = Math.max(1, randInt(BAL.injuryDaysRange[0], BAL.injuryDaysRange[1]) - daysReduce);
-      s.phys = clamp(s.phys - loss, 0, result.pCap);
+      // Just the loss — never also pulled down to the ceiling. Health held
+      // above it (a physio's gone) drops by the loss and decays from there.
+      s.phys = Math.max(0, s.phys - loss);
       state.injury = { active: true, daysLeft: days, loss };
       // The Gym slider locks while injured — free its hours rather than
       // leaving them stuck in the day's budget doing nothing.
