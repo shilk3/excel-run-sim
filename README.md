@@ -131,7 +131,9 @@ head-to-head between tied players, then rating; they show W and L too.
 
 **Game length**: chosen when a game starts, and each length keeps its own
 save — so up to three games on one device (☰ → 🎮 Games to switch, start or
-restart one). All three have the same 5 leagues, and a year ends on the day
+restart one). ☰ → 💾 Export / Import Save has a tab per length, so each game
+is exported or imported on its own: a code only goes into its own length's
+slot, and importing a game you're not playing leaves you in the one you are. All three have the same 5 leagues, and a year ends on the day
 of the Final.
 
 | Length | Preseason | League size (rounds) | Playoffs | Up / down | Year |

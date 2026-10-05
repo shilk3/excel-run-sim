@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.60.0";
+const APP_VERSION = "4.60.1";
 // One save slot per game length. The Full game keeps the original key, so
 // a career from before game lengths carries on as the Full game.
 const SAVE_KEY = "cellgrind_save_v1";
@@ -3348,7 +3348,6 @@ function openShop(opts) {
 function openMenu() {
   const html = `
     <h2>Menu</h2>
-    <div class="menu-row" id="menuGames"><span>🎮 Games <span class="menu-note">${gameLengthInfo(state.gameLength).icon} ${gameLengthInfo(state.gameLength).name} game</span></span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuShop"><span>🧑‍🏫 Staff &amp; Items</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuCareer"><span>📈 Career &amp; Season</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuLeagues"><span>🏅 Leagues</span><span class="arrow">›</span></div>
@@ -3356,8 +3355,9 @@ function openMenu() {
     <div class="menu-row" id="menuRename"><span>✏️ Rename Player</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuHow"><span>❓ How to Play</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuTutorial"><span>📖 Quick Tutorial</span><span class="arrow">›</span></div>
-    <div class="menu-row" id="menuInstall"><span>📲 Add to Home Screen</span><span class="arrow">›</span></div>
+    <div class="menu-row" id="menuGames"><span>🎮 Games <span class="menu-note">${gameLengthInfo(state.gameLength).icon} ${gameLengthInfo(state.gameLength).name} game</span></span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuSaveTransfer"><span>💾 Export / Import Save</span><span class="arrow">›</span></div>
+    <div class="menu-row" id="menuInstall"><span>📲 Add to Home Screen</span><span class="arrow">›</span></div>
     <button class="ghost-btn" id="menuReset">Restart this ${gameLengthInfo(state.gameLength).name} game</button>
     <div class="version-tag">Cell Grind v${APP_VERSION}</div>
   `;
@@ -3371,7 +3371,7 @@ function openMenu() {
   $("menuHow").addEventListener("click", openHowTo);
   $("menuTutorial").addEventListener("click", () => openTutorial(0));
   $("menuInstall").addEventListener("click", openInstall);
-  $("menuSaveTransfer").addEventListener("click", openSaveTransfer);
+  $("menuSaveTransfer").addEventListener("click", () => openSaveTransfer(state.gameLength));
   $("menuReset").addEventListener("click", () => {
     if (confirm(`Restart your ${gameLengthInfo(state.gameLength).name} game? This wipes its progress (your other games are kept).`)) startNewGame(state.gameLength);
   });
@@ -3464,10 +3464,12 @@ function openGames({ first = false } = {}) {
   const html = `
     ${first ? `<h2>Choose your game</h2>` : stickyHeadHtml("🎮 Games")}
     ${intro}
-    ${GAME_LENGTH_KEYS.map((len) => gameCardHtml(len, { first })).join("")}`;
+    ${GAME_LENGTH_KEYS.map((len) => gameCardHtml(len, { first })).join("")}
+    ${first ? "" : `<div class="menu-row" id="gamesXfer"><span>💾 Export / Import a game</span><span class="arrow">›</span></div>`}`;
   // A first game must be picked: closing the picker just brings it back.
   openModal(html, first ? { onDismiss: () => needsGamePick && openGames({ first: true }) } : { ownClose: true, page: { key: "games", reopen: () => openGames() } });
   const body = $("modalBody");
+  if (!first) $("gamesXfer").addEventListener("click", () => openSaveTransfer(state.gameLength));
   body.querySelectorAll("[data-game-new]").forEach((b) => b.addEventListener("click", () => startNewGame(b.dataset.gameNew)));
   body.querySelectorAll("[data-game-play]").forEach((b) => b.addEventListener("click", () => switchToGame(b.dataset.gamePlay)));
   body.querySelectorAll("[data-game-restart]").forEach((b) =>
@@ -4750,9 +4752,12 @@ function base64ToBytes(b64) {
   return bytes;
 }
 
-async function encodeSaveCode() {
-  if (state.logEntries.length > LOG_KEEP) state.logEntries = state.logEntries.slice(-LOG_KEEP);
-  const json = JSON.stringify(state);
+// A save code for a game's JSON (default: the game being played).
+async function encodeSaveCode(json = null) {
+  if (json == null) {
+    if (state.logEntries.length > LOG_KEEP) state.logEntries = state.logEntries.slice(-LOG_KEEP);
+    json = JSON.stringify(state);
+  }
   if (typeof CompressionStream === "function") {
     try {
       const stream = new Blob([json]).stream().pipeThrough(new CompressionStream("gzip"));
@@ -4838,99 +4843,122 @@ async function decodeSaveCode(text) {
   return parsed;
 }
 
-function saveFileName() {
-  const who = (state.playerName || "career").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "") || "career";
-  return `cellgrind-${state.gameLength}-${who}-day${state.day}.txt`;
+function saveFileName(g = state) {
+  const who = (g.playerName || "career").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "") || "career";
+  return `cellgrind-${g.gameLength || "full"}-${who}-day${g.day}.txt`;
 }
 
-function openSaveTransfer() {
+// One tab per game length: export that game, or import a code into it.
+let saveTransferTab = null;
+function openSaveTransfer(tab = saveTransferTab || state.gameLength) {
+  saveTransferTab = tab;
+  const g = gameLengthInfo(tab);
+  const current = tab === state.gameLength;
+  if (current) saveState();
+  let raw = null;
+  try {
+    raw = localStorage.getItem(slotKey(tab));
+  } catch (e) {
+    raw = null;
+  }
+  const saved = current ? state : raw ? JSON.parse(raw) : null;
   const canShare = typeof navigator.share === "function";
-  const html = `
-    <h2>Export / Import Save</h2>
-    <div class="modal-section">
-      <p class="save-transfer-note">Your career is stored on this device only, and Safari and the Home Screen app each keep their own save. To move a career, export it in one place and import it in the other.</p>
-    </div>
-    <div class="modal-section">
-      <h3>Export</h3>
-      <p class="save-transfer-note">${state.playerName ? escapeHtml(state.playerName) + " · " : ""}Day ${state.day} · ${fmtMoney(state.cash)} · Rating ${state.rank}</p>
-      <button class="primary-btn" id="saveExportCopy">📋 Copy save code</button>
+  const tabs = `<div class="league-tabs">${GAME_LENGTH_KEYS.map((k) => `<button class="league-tab ${k === tab ? "active" : ""}" data-xfer-tab="${k}">${gameLengthInfo(k).icon} ${gameLengthInfo(k).name}${k === state.gameLength ? " (playing)" : ""}</button>`).join("")}</div>`;
+  const exportHtml = saved
+    ? `<p class="save-transfer-note">${saved.playerName ? escapeHtml(saved.playerName) + " · " : ""}Year ${saved.year} · League ${saved.leagueTier} · Day ${saved.day} · ${fmtMoney(saved.cash)} · Rating ${saved.rank}</p>
+      <button class="primary-btn" id="saveExportCopy">📋 Copy ${g.name} save code</button>
       ${canShare ? `<button class="ghost-btn" id="saveExportShare">📤 Share / Save to Files</button>` : `<button class="ghost-btn" id="saveExportDownload">⬇️ Download save file</button>`}
-      <div class="save-transfer-status" id="saveExportStatus"></div>
+      <div class="save-transfer-status" id="saveExportStatus"></div>`
+    : `<p class="save-transfer-note">No ${g.name} game on this device yet.</p>`;
+  const html = `
+    ${stickyHeadHtml("💾 Export / Import Save")}
+    <div class="modal-section">
+      <p class="save-transfer-note">Each game length has its own save, stored on this device only — and Safari and the Home Screen app each keep their own. To move a game, export it in one place and import it in the other.</p>
+      ${tabs}
     </div>
     <div class="modal-section">
-      <h3>Import</h3>
-      <textarea id="saveImportText" class="name-input save-code-input" rows="4" placeholder="Paste a save code here" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+      <h3>Export ${g.icon} ${g.name} game</h3>
+      ${exportHtml}
+    </div>
+    <div class="modal-section">
+      <h3>Import ${g.icon} ${g.name} game</h3>
+      <textarea id="saveImportText" class="name-input save-code-input" rows="4" placeholder="Paste a ${g.name} save code here" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
       <button class="primary-btn" id="saveImportBtn">Load pasted code</button>
       <label class="ghost-btn save-file-btn">📂 Load from file<input type="file" id="saveImportFile" accept=".txt,.json,text/plain,application/json" hidden /></label>
       <div class="save-transfer-status" id="saveImportStatus"></div>
-      <p class="save-transfer-note">Importing replaces your game of the same length (Short, Half or Full) on this device — the others are kept.</p>
+      <p class="save-transfer-note">Importing replaces your ${g.name} game on this device${current ? "" : " — you keep playing your " + gameLengthInfo(state.gameLength).name + " game"}. Your other games are kept.</p>
     </div>`;
-  openModal(html, { page: { key: "save", reopen: openSaveTransfer } });
+  openModal(html, { ownClose: true, page: { key: "save", reopen: () => openSaveTransfer(tab) } });
+  document.querySelectorAll("[data-xfer-tab]").forEach((btn) =>
+    btn.addEventListener("click", () => btn.dataset.xferTab !== tab && openSaveTransfer(btn.dataset.xferTab))
+  );
 
   const exportStatus = (msg, bad) => {
     const el = $("saveExportStatus");
     el.textContent = msg;
     el.classList.toggle("bad", !!bad);
   };
-  const importStatus = (msg) => {
+  const importStatus = (msg, good = false) => {
     const el = $("saveImportStatus");
     el.textContent = msg;
-    el.classList.add("bad");
+    el.classList.toggle("bad", !good);
   };
 
-  // Encode up front so the copy/share happens inside the tap itself —
-  // iOS refuses clipboard writes and share sheets that come after an await.
-  let code = null;
-  encodeSaveCode().then((c) => {
-    code = c;
-  });
-  const ready = () => {
-    if (code) return true;
-    exportStatus("Still preparing the save code — tap again in a moment.", true);
-    return false;
-  };
-
-  $("saveExportCopy").addEventListener("click", () => {
-    if (!ready()) return;
-    const fallback = () => {
-      // Clipboard API blocked: drop the code into the box so it can be
-      // selected and copied by hand.
-      const box = $("saveImportText");
-      box.value = code;
-      box.focus();
-      box.select();
-      box.setSelectionRange(0, code.length); // iOS ignores select() alone
-      exportStatus("Couldn't copy automatically — the code is selected in the box below; copy it from there.", true);
+  if (saved) {
+    // Encode up front so the copy/share happens inside the tap itself —
+    // iOS refuses clipboard writes and share sheets that come after an await.
+    let code = null;
+    encodeSaveCode(current ? null : raw).then((c) => {
+      code = c;
+    });
+    const ready = () => {
+      if (code) return true;
+      exportStatus("Still preparing the save code — tap again in a moment.", true);
+      return false;
     };
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(code).then(() => exportStatus(`✓ Copied (${Math.ceil(code.length / 1024)} KB). Paste it into Notes or straight into Import on your other device.`), fallback);
-    } else {
-      fallback();
-    }
-  });
 
-  if (canShare) {
-    $("saveExportShare").addEventListener("click", () => {
+    $("saveExportCopy").addEventListener("click", () => {
       if (!ready()) return;
-      const file = new File([code], saveFileName(), { type: "text/plain" });
-      const data = navigator.canShare && navigator.canShare({ files: [file] }) ? { files: [file], title: "Cell Grind save" } : { text: code, title: "Cell Grind save" };
-      navigator.share(data).catch((e) => {
-        if (e && e.name !== "AbortError") exportStatus("Sharing didn't work here — use Copy save code instead.", true);
+      const fallback = () => {
+        // Clipboard API blocked: drop the code into the box so it can be
+        // selected and copied by hand.
+        const box = $("saveImportText");
+        box.value = code;
+        box.focus();
+        box.select();
+        box.setSelectionRange(0, code.length); // iOS ignores select() alone
+        exportStatus("Couldn't copy automatically — the code is selected in the box below; copy it from there.", true);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(code).then(() => exportStatus(`✓ Copied (${Math.ceil(code.length / 1024)} KB). Paste it into Notes or straight into Import on your other device.`), fallback);
+      } else {
+        fallback();
+      }
+    });
+
+    if (canShare) {
+      $("saveExportShare").addEventListener("click", () => {
+        if (!ready()) return;
+        const file = new File([code], saveFileName(saved), { type: "text/plain" });
+        const data = navigator.canShare && navigator.canShare({ files: [file] }) ? { files: [file], title: `Cell Grind ${g.name} save` } : { text: code, title: `Cell Grind ${g.name} save` };
+        navigator.share(data).catch((e) => {
+          if (e && e.name !== "AbortError") exportStatus("Sharing didn't work here — use Copy save code instead.", true);
+        });
       });
-    });
-  } else {
-    $("saveExportDownload").addEventListener("click", () => {
-      if (!ready()) return;
-      const url = URL.createObjectURL(new Blob([code], { type: "text/plain" }));
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = saveFileName();
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      exportStatus("✓ Save file downloaded.");
-    });
+    } else {
+      $("saveExportDownload").addEventListener("click", () => {
+        if (!ready()) return;
+        const url = URL.createObjectURL(new Blob([code], { type: "text/plain" }));
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = saveFileName(saved);
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        exportStatus("✓ Save file downloaded.");
+      });
+    }
   }
 
   const importFrom = async (text) => {
@@ -4941,25 +4969,40 @@ function openSaveTransfer() {
       importStatus(e instanceof SaveCodeError ? e.message : "That save code is damaged or cut off — make sure you copied all of it, from the very first character to the last.");
       return;
     }
+    const codeLen = gameLengthInfo(parsed.gameLength);
+    if (codeLen.key !== tab) {
+      importStatus(`That's a ${codeLen.name} game's save code — open the ${codeLen.icon} ${codeLen.name} tab above to import it.`);
+      return;
+    }
     const who = parsed.playerName ? `${parsed.playerName}, ` : "";
-    const g = gameLengthInfo(parsed.gameLength);
-    if (!confirm(`Load ${who}Day ${parsed.day} (${g.name} game)? This replaces your ${g.name} game on this device; your other games are kept.`)) return;
-    saveState();
+    if (!confirm(`Load ${who}Day ${parsed.day} as your ${g.name} game? This replaces the ${g.name} game on this device; your other games are kept.`)) return;
+    let loaded;
     try {
-      state = migrateSave(parsed);
+      loaded = migrateSave(parsed);
     } catch (e) {
       applyGameLength(state.gameLength); // migrateSave may have switched it
       importStatus("That save couldn't be loaded — it's from an older version of the game.");
       return;
     }
+    loaded.logEntries.push({ html: `💾 Save imported — resumed from Day ${loaded.day}.`, cls: "event-good" });
+    if (!current) {
+      // Another length: store it in its slot and carry on with this game.
+      applyGameLength(state.gameLength);
+      try {
+        localStorage.setItem(slotKey(tab), JSON.stringify(loaded));
+      } catch (e) {
+        importStatus("Couldn't save it on this device — storage may be full.");
+        return;
+      }
+      openSaveTransfer(tab);
+      importStatus(`✓ ${g.name} game imported. Play it from ☰ → 🎮 Games.`, true);
+      return;
+    }
+    state = loaded;
     lastLoadedFromSave = false;
     const ok = saveState();
     closeModal();
     renderAll();
-    const entry = { html: `💾 Save imported — resumed from Day ${state.day}.`, cls: "event-good" };
-    state.logEntries.push(entry);
-    appendLog(entry.html, entry.cls);
-    saveState();
     showSaveToast(ok);
     if (!state.playerName) openNameModal(true);
     else if (state.pendingSplash) showPendingSplashes();
