@@ -56,7 +56,8 @@ Relax, and Food. Everything is connected:
   champion bonus (+40 rating).
 - Skills train up to 50 on your own. **Staff** are hired a week at a time
   (a week ends after each match), paid up front, pro-rated if hired
-  mid-week. Every coach and support-team member has an optional
+  mid-week; someone already hired can be moved up to a newly unlocked
+  level for just the extra wages. Every coach and support-team member has an optional
   🔁 Auto-rehire switch that keeps them on at the same level each new week
   (a coach even when their skill isn't in that week's focus)
   while you can afford it (if you can't, they're off that week, the switch

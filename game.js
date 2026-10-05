@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.56.1";
+const APP_VERSION = "4.56.2";
 const SAVE_KEY = "cellgrind_save_v1";
 const SAVE_BACKUP_KEY = "cellgrind_save_unreadable";
 // Bumped when a save's shape changes. Older saves aren't converted (there's
@@ -355,9 +355,15 @@ function canUnlockLevel(key, level) {
   const lvl = UPGRADES[key].levels[level - 1];
   return !!lvl && state.peakLeagueTier <= lvl.unlock;
 }
+// Hiring someone already on this week moves them up a level: you pay only
+// the difference in wages for the days left.
+function staffUpgradeCost(key, level) {
+  const now = hiredLevel(key);
+  return Math.max(0, staffCost(key, level) - (now ? staffCost(key, now) : 0));
+}
 function hireStaff(key, level) {
-  if (hiredLevel(key) || level < 1 || level > upgradeLevel(key)) return false;
-  const cost = staffCost(key, level);
+  if (level <= hiredLevel(key) || level < 1 || level > upgradeLevel(key)) return false;
+  const cost = staffUpgradeCost(key, level);
   if (state.cash < cost) return false;
   state.cash -= cost;
   state.yearCashFlow.expenses += cost;
@@ -2463,9 +2469,9 @@ function workRowHtml() {
     return comboRowHtml("work", {
       icon: "🏖️",
       label: "Annual leave",
-      // Chances left (used ones keep coming back while on leave) and days
-      // of leave left — kept short to fit beside the label.
-      outcomeText: `${fmt1(livesRemaining())}/${fmt1(BAL.strikesToFire)} left · ${back}d`,
+      // Days of leave left — kept short: iPhone's font leaves little room
+      // beside the label and the Net tag.
+      outcomeText: `${back} day${back === 1 ? "" : "s"} left`,
       shopTag: netPerDayTag((isPro ? emp.proPay : emp.workPay) - BAL.dailyExpenses),
       value: jobSecurityPct(),
       previewValue: jobSecurityPreviewPct(0, isPro),
@@ -3030,15 +3036,16 @@ function staffCardHtml(key, { focus = false, statNote = "" } = {}) {
   const max = u.levels.length;
   const isCoach = key.startsWith("coach_");
   const days = daysLeftInWeek();
-  const hireChips = hired
-    ? `<span class="staff-hired">✓ Hired Lv${hired} this week</span>`
-    : Array.from({ length: owned }, (_, i) => i + 1)
-        .reverse()
-        .map((lvl) => {
-          const cost = staffCost(key, lvl);
-          return `<button class="staff-chip" data-hire="${key}" data-level="${lvl}" ${state.cash < cost ? "disabled" : ""}>Hire Lv${lvl} · $${fmt(cost)}</button>`;
-        })
-        .join("");
+  // Not hired: a chip per unlocked level. Hired: the level they're on,
+  // plus a chip to move them up to any higher level you've unlocked.
+  const levelChips = Array.from({ length: owned - hired }, (_, i) => hired + i + 1)
+    .reverse()
+    .map((lvl) => {
+      const cost = staffUpgradeCost(key, lvl);
+      return `<button class="staff-chip" data-hire="${key}" data-level="${lvl}" ${state.cash < cost ? "disabled" : ""}>${hired ? "Upgrade to" : "Hire"} Lv${lvl} · $${fmt(cost)}</button>`;
+    })
+    .join("");
+  const hireChips = (hired ? `<span class="staff-hired">✓ Hired Lv${hired} this week</span>` : "") + levelChips;
   let unlockHtml = "";
   if (owned < max) {
     const next = u.levels[owned];
@@ -3068,6 +3075,7 @@ function staffCardHtml(key, { focus = false, statNote = "" } = {}) {
       ${showLevels.map((lvl) => `<div class="staff-line ${lvl > owned ? "staff-line-locked" : ""}">${lvlInfo(lvl)}</div>`).join("")}
       <div class="staff-actions">${hireChips}${unlockHtml}</div>
       ${!hired && days < 7 ? `<div class="staff-line staff-prorate">Pro-rated: ${days}/7 of the weekly wage</div>` : ""}
+      ${hired && levelChips ? `<div class="staff-line staff-prorate">Upgrading costs just the extra wages for the ${days} day${days === 1 ? "" : "s"} left.</div>` : ""}
       ${autoHtml}
     </div>
   </div>`;
@@ -4426,7 +4434,7 @@ function openHowTo() {
     ${ul([
       `Skills train to <b>${B.skillShopCapBase}</b> on your own. A hired <b>Coach</b> raises that skill's ceiling (Lv1 60 … Lv5 100), trains it faster and stops it rusting — never past your <b>league cap</b> (60 in League 5 … 100 in League 1).`,
       "<b>Support staff</b> (Physio, Nutritionist, Manager, Sleep App, Meditation, Recovery) help only while hired.",
-      "Staff are hired <b>a week at a time</b>, paid up front (pro-rated mid-week). A week ends after each match.",
+      "Staff are hired <b>a week at a time</b>, paid up front (pro-rated mid-week). A week ends after each match. Unlock a higher level mid-week and you can upgrade whoever's hired for just the extra wages.",
       "<b>🔁 Auto-rehire</b> keeps someone on at the same level each new week — it switches itself off if you can't pay.",
       "Higher levels cost a <b>one-off fee</b> to unlock, once your league allows it, and pay more per week.",
     ])}
