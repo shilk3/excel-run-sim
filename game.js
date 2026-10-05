@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.48.1";
+const APP_VERSION = "4.48.2";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -1722,7 +1722,7 @@ function resolveMatch(opponentRating) {
   state.peakRank = Math.max(state.peakRank, state.rank);
 
   const cashBefore = state.cash;
-  const recordBefore = { wins: state.wins, losses: state.losses };
+  const recordBefore = seasonRecord();
   const prizeFormula = { base: BAL.prizeWinBase, div: BAL.prizeRatingDiv, loss: BAL.prizeLoss };
   const cashReward = Math.round((win ? prizeFormula.base + state.rank / prizeFormula.div : prizeFormula.loss) * cashBonusMult);
   state.cash += cashReward;
@@ -1767,6 +1767,7 @@ function resolveMatch(opponentRating) {
     cashReward,
     cashBefore,
     recordBefore,
+    recordScope: "season",
     sides: {
       you: { rating: yourRatingShown, perfScore: perf, perfAdj: yourPerfShown, luck: yourFinalShown - yourRatingShown - yourPerfShown, final: yourFinalShown },
       opp: { rating: oppRatingShown, perfScore: oppPerf, perfAdj: oppPerfShown, luck: oppFinalShown - oppRatingShown - oppPerfShown, final: oppFinalShown },
@@ -1829,6 +1830,15 @@ function recordLeagueResult(tier, roundKey, winnerId, loserId, winnerRating, los
   const byTier = (h.league[year] = h.league[year] || {});
   const rounds = (byTier[tier] = byTier[tier] || {});
   (rounds[roundKey] = rounds[roundKey] || []).push([winnerId, loserId, Math.round(winnerRating), Math.round(loserRating)]);
+}
+
+// This year's record — regular season and playoffs — from your match
+// history (every match you play is recorded, with its year).
+function seasonRecord() {
+  const mine = (state.matchHistory && state.matchHistory.mine) || [];
+  const thisYear = mine.filter((m) => m.year === state.year);
+  const wins = thisYear.filter((m) => m.win).length;
+  return { wins, losses: thisYear.length - wins };
 }
 
 function recordMyMatch(result) {
@@ -2948,7 +2958,8 @@ function matchResultTableHtml(result) {
   }
   const cashDelta = cashAfter - result.cashBefore;
   rows.push(row("💰 Cash", fmtMoney(result.cashBefore), fmtMoney(cashAfter), `+${fmtMoney(cashDelta)}`, "wk-up"));
-  rows.push(row("📋 Record", `${rec.wins}–${rec.losses}`, `${recAfter.wins}–${recAfter.losses}`, result.win ? "W" : "L", result.win ? "wk-up" : "wk-down"));
+  // Results saved before v4.48.2 carried the all-time record.
+  rows.push(row(result.recordScope === "season" ? "📋 Season record" : "📋 Record", `${rec.wins}–${rec.losses}`, `${recAfter.wins}–${recAfter.losses}`, result.win ? "W" : "L", result.win ? "wk-up" : "wk-down"));
 
   return `
     <table class="perf-table result-table">
