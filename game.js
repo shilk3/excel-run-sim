@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.47.3";
+const APP_VERSION = "4.48.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -89,7 +89,7 @@ const BAL = {
   // the champion — always 4, matching relegationCount so every tier stays at
   // exactly leagueSize. The top 3 are therefore always promoted.
   promotionTablePlaces: 3,
-  oppPerfRange: [55, 85], // rivals' cosmetic match-day performance (see resolveMatch)
+  oppPerfRange: [50, 92], // rivals' cosmetic match-day performance (see resolveMatch)
   relegationCount: 4,
   // Rating bounds — the same for the player and every rival. The floor only
   // stops a long losing run going negative; the ceiling is well above any
@@ -1710,10 +1710,10 @@ function resolveMatch(opponentRating) {
   const yourFinal = matchRating + yourLuck;
   const oppFinal = opponentRating + oppLuck;
   const win = yourFinal > oppFinal || (yourFinal === oppFinal && matchRating >= opponentRating);
-  // Rivals have no stats, so their "performance" is cosmetic: a random
-  // 55-85 on the same ×3 scale as yours, taken back out of their luck so
-  // their match-day rating (and the result) is untouched.
-  const oppPerf = randInt(BAL.oppPerfRange[0], BAL.oppPerfRange[1]);
+  // Rivals have no stats, so their "performance" is cosmetic: around 70,
+  // nudged by their rating (a weak rival rarely plays a blinder) plus a
+  // little day-to-day wobble, on the same ×3 scale as yours.
+  const oppPerf = clamp(Math.round(70 + (opponentRating - 500) / 25) + randInt(-5, 5), BAL.oppPerfRange[0], BAL.oppPerfRange[1]);
   const K = 24;
   const actual = win ? 1 : 0;
   let ratingChange = Math.round(K * (actual - winProb));
@@ -1730,15 +1730,25 @@ function resolveMatch(opponentRating) {
   if (win) state.wins += 1;
   else state.losses += 1;
 
-  // Display figures for the result screen. Each column's rows are rounded
-  // so they add up exactly: luck absorbs the rounding, and the opponent's
-  // luck also absorbs their cosmetic performance.
+  // Display figures for the result screen — cosmetic only; the result was
+  // settled above by the real luck draws. The real margin is squeezed so
+  // most games read as close (100 × (1 − e^(−margin/700)): a real 100 shows
+  // as 13, 500 as 51), then the shown luck makes up whatever the ratings and
+  // performances leave, split between the two sides in random shares.
+  // Columns add up exactly and the winner always has the higher total.
   const yourRatingShown = Math.round(rankBefore);
   const yourPerfShown = Math.round(matchRating) - yourRatingShown;
-  const yourFinalShown = Math.round(yourFinal);
   const oppRatingShown = Math.round(opponentRating);
   const oppPerfShown = Math.round((oppPerf - 70) * 3);
-  const oppFinalShown = Math.round(oppFinal);
+  const shownMargin = Math.max(1, Math.round(100 * (1 - Math.exp(-Math.abs(yourFinal - oppFinal) / 700))));
+  const baseGap = yourRatingShown + yourPerfShown - (oppRatingShown + oppPerfShown);
+  const luckGap = (win ? shownMargin : -shownMargin) - baseGap; // your luck − theirs
+  // A random share of the gap goes to each side, so it isn't always the
+  // favourite having an off day and the underdog a good one in equal parts.
+  const yourLuckShown = Math.round(luckGap * (0.25 + Math.random() * 0.5)) + randInt(-15, 15);
+  const oppLuckShown = yourLuckShown - luckGap;
+  const yourFinalShown = yourRatingShown + yourPerfShown + yourLuckShown;
+  const oppFinalShown = oppRatingShown + oppPerfShown + oppLuckShown;
 
   return {
     win,
@@ -1875,7 +1885,32 @@ function buildStandingsFromPoints(tier) {
   if (tier === state.leagueTier) {
     standings.push({ name: escapeHtml(state.playerName || "You"), rating: state.rank, points: points.player || 0, isPlayer: true, rivalId: null });
   }
-  return standings.sort((a, b) => b.points - a.points || b.rating - a.rating);
+  return sortStandingsWithHeadToHead(standings, tier);
+}
+
+// Points first. Players level on points are ranked by a mini-table of
+// their games against each other this season (head-to-head wins), and only
+// then by current rating — so beating someone you're tied with always puts
+// you above them, and a tied rival's rating swing can't drop you after a win.
+function sortStandingsWithHeadToHead(standings, tier) {
+  const h = state.matchHistory && state.matchHistory.league && state.matchHistory.league[state.year];
+  const rounds = (h && h[tier]) || {};
+  const beat = new Set(); // "winnerId>loserId" for regular-season games
+  Object.keys(rounds).forEach((key) => {
+    if (!/^\d+$/.test(key)) return; // playoff stages don't count
+    rounds[key].forEach(([w, l]) => beat.add(`${w}>${l}`));
+  });
+  const idOf = (e) => (e.isPlayer ? HISTORY_PLAYER_ID : e.rivalId);
+  const byPoints = {};
+  standings.forEach((e) => (byPoints[e.points] = byPoints[e.points] || []).push(e));
+  const h2h = new Map();
+  Object.values(byPoints).forEach((group) => {
+    group.forEach((e) => {
+      const me = idOf(e);
+      h2h.set(e, group.filter((o) => o !== e && beat.has(`${me}>${idOf(o)}`)).length);
+    });
+  });
+  return standings.sort((a, b) => b.points - a.points || h2h.get(b) - h2h.get(a) || b.rating - a.rating);
 }
 
 // The player's table position for the topbar's Leagues button: live during
@@ -2999,7 +3034,7 @@ function luckExplainerHtml(result) {
     .map((r) => `<tr class="${r.you ? "ladder-you" : "perf-sub"}"><td>${r.you ? `👉 You: ${gapLabel(r.gap)}` : gapLabel(r.gap)}</td><td>${r.chance}%</td></tr>`)
     .join("");
   return `
-    <div class="match-sub perf-note">Both sides get random luck every match — usually somewhere between about −150 and +120, with the occasional inspired day of +400 or more. The highest match-day rating wins.</div>
+    <div class="match-sub perf-note">Both sides get random luck every match, and the highest match-day rating wins. Most games end up close; now and then the underdog has an inspired day and sneaks it.</div>
     <div class="match-sub perf-note">So your win chance comes down to the gap before luck: your rating + performance (${result.matchRating}) against their rating (${result.opponentRating}) — <b>${gapLabel(gap)}</b> this time. The bigger the gap, the more luck the underdog needs, but upsets always stay possible:</div>
     <table class="perf-table win-ladder">
       <thead><tr><th>Rating gap</th><th>Win chance</th></tr></thead>
@@ -4088,7 +4123,8 @@ function openHowTo() {
   sec("match", "⚔️", "Match day", ul([
     "Each side's <b>match-day rating</b> = rating + performance + luck. Higher wins.",
     `Performance comes from your stats (skills ${Math.round(PERF_WEIGHTS.skill * 100)}%, Health ${Math.round(PERF_WEIGHTS.phys * 100)}%, Calm ${Math.round(PERF_WEIGHTS.composure * 100)}%, Rest ${Math.round(PERF_WEIGHTS.rest * 100)}%). Each point above 70 adds 3; below 70 costs 3.`,
-    "Luck is random for both sides — usually −150 to +120, occasionally +400. Upsets always stay possible.",
+    "Luck is random for both sides and is drawn so you win exactly as often as the win chance says. Most games end up close; upsets always stay possible.",
+    "Rivals' performance tracks their rating — a weak rival rarely has a great day, but luck can still carry them.",
     "The result screen explains every number.",
   ]));
 
@@ -4099,7 +4135,7 @@ function openHowTo() {
       `Miss the playoffs: a ${B.trainingCampDays}-day <b>training camp</b>. Knocked out: camp for the rest of the playoff window. Champion: a ${B.offseasonDays}-day offseason.`,
       `${B.leagueCount} leagues — you start in League ${B.leagueCount}. <b>Four go up</b> from each: the playoff champion plus the next ${B.promotionTablePlaces} highest in the table. Bottom ${B.relegationCount} go down.`,
       "Every rival plays real simulated matches — all tables are live. Tap a name to see their season.",
-      "<b>Rating</b> (🏆) is your strength and sets your win chance. <b>Table position</b> comes from league points (3 per win).",
+      "<b>Rating</b> (🏆) is your strength and sets your win chance. <b>Table position</b> comes from league points (3 per win); players level on points are split by their games against each other, then by rating.",
       "<b>Match History</b> keeps your matches and every league result for this season and last.",
     ])}`);
 

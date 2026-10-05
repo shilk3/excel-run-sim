@@ -105,11 +105,13 @@ after End Day too — saying what changed and what to do about it.
 **Match day**: both sides get a match-day rating = rating + performance +
 luck, and the higher one wins. Your performance comes from your stats (each
 point above 70 adds 3, below 70 costs 3); rivals get a performance on the same
-scale. Luck is random for both sides every match (usually about −150 to +120,
-occasionally +400 or more), drawn so the odds of winning match the classic
-Elo win chance for the rating gap — upsets always stay possible. The result
+scale, tracking their rating. Luck is random for both sides every match,
+drawn so the odds of winning match the classic Elo win chance for the rating
+gap — upsets always stay possible — and the scores shown are scaled so most
+games read as close. The result
 screen shows what changed (rating, table position, cash, record), both sides'
-numbers side by side, and collapsible explanations.
+numbers side by side, and collapsible explanations. League tables rank by points, then
+head-to-head between tied players, then rating; they show W and L too.
 
 **The season**: a 14-day preseason to train, then a 39-round regular season —
 one match a week against a named rival, the full schedule known in advance.
