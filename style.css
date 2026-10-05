@@ -606,8 +606,8 @@ input[type="range"]::-webkit-slider-thumb {
 .league-table-header,
 .league-row {
   display: grid;
-  grid-template-columns: 28px 1fr 56px 40px;
-  gap: 8px;
+  grid-template-columns: 26px 1fr 46px 24px 24px 30px;
+  gap: 6px;
   align-items: center;
   padding: 7px 8px;
   font-size: 13px;
@@ -628,7 +628,7 @@ input[type="range"]::-webkit-slider-thumb {
 .league-row:last-child { border-bottom: none; }
 .league-pos { color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .league-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.league-rating, .league-points { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-dim); }
+.league-rating, .league-points, .league-wl { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-dim); }
 .league-row.zone-promo { background: rgba(52, 208, 160, 0.07); }
 .league-row.zone-releg { background: rgba(255, 93, 93, 0.07); }
 .league-row.league-row-you { background: rgba(255, 176, 32, 0.12); }

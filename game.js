@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.47.2";
+const APP_VERSION = "4.47.3";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -3490,6 +3490,9 @@ function leagueTableHtml(tier) {
   const showPromo = tier > 1;
   const showReleg = tier < BAL.leagueCount;
   const champ = isSnapshot && state.playoffChampions ? state.playoffChampions[tier] : null;
+  // Everyone plays every round (40 players, no byes) and a win is the only
+  // way to score, so W = points ÷ 3 and L = rounds played − W.
+  const played = isSnapshot ? BAL.seasonRounds : state.roundIndex;
   const rows = standings
     .map((t, i) => {
       const pos = i + 1;
@@ -3508,6 +3511,8 @@ function leagueTableHtml(tier) {
         <span class="league-pos">${pos}</span>
         <span class="league-name">${isChamp ? "🏆 " : ""}${t.name}${t.isPlayer ? " (You)" : ""}</span>
         <span class="league-rating">${fmt(t.rating)}</span>
+        <span class="league-wl">${t.points / 3}</span>
+        <span class="league-wl">${played - t.points / 3}</span>
         <span class="league-points">${t.points}</span>
       </div>${cutLine}`;
     })
@@ -3522,6 +3527,8 @@ function leagueTableHtml(tier) {
       <span class="league-pos">#</span>
       <span class="league-name">Name</span>
       <span class="league-rating">Rating</span>
+      <span class="league-wl">W</span>
+      <span class="league-wl">L</span>
       <span class="league-points">Pts</span>
     </div>
     <div class="league-table">${rows}</div>
