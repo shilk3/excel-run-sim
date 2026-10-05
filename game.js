@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.50.0";
+const APP_VERSION = "4.50.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -2145,6 +2145,7 @@ function resolvePlayoffRound() {
       const opp = teamA.isPlayer ? teamB : teamA;
       matchResult = resolveMatch(liveOpponentRating(opp));
       matchResult.opponentName = opp.name;
+      matchResult.opponentRivalId = opp.rivalId;
       matchResult.roundLabel = roundName;
       // Playoffs have no live table: show where each finished the regular season.
       const finalTable = state.lastStandings || [];
@@ -2235,6 +2236,7 @@ function processDayEnd() {
       const positionBefore = standingsBefore.findIndex((r) => r.isPlayer) + 1;
       matchResult = resolveMatch(liveOpponentRating(fixture));
       matchResult.opponentName = fixture.name;
+      matchResult.opponentRivalId = fixture.rivalId;
       matchResult.roundLabel = `Round ${state.roundIndex + 1}/${BAL.seasonRounds}`;
       matchResult.tier = state.leagueTier;
       recordLeagueResult(state.leagueTier, String(state.roundIndex + 1), matchResult.win ? HISTORY_PLAYER_ID : fixture.rivalId, matchResult.win ? fixture.rivalId : HISTORY_PLAYER_ID, matchResult.win ? matchResult.rankBefore : matchResult.opponentRating, matchResult.win ? matchResult.opponentRating : matchResult.rankBefore);
@@ -3671,6 +3673,15 @@ function myMatchesHtml() {
   const mine = ensureHistory().mine;
   if (!mine.length) return `<p class="modal-sub">No matches played yet. Every match you play from now on is kept here — tap one to see its full result again.</p>`;
   const years = [...new Set(mine.map((m) => m.year))].sort((a, b) => b - a);
+  const positions = currentTablePositions(state.leagueTier);
+  const myPos = positions.get(HISTORY_PLAYER_ID);
+  // Older results didn't store the rival's id — names are unique, so fall
+  // back to looking it up.
+  const oppId = (m) => {
+    if (m.opponentRivalId != null) return m.opponentRivalId;
+    const r = state.rivals.find((x) => x.name === m.opponentName);
+    return r ? r.id : null;
+  };
   return years
     .map((y) => {
       const list = mine.map((m, i) => ({ m, i })).filter((x) => x.m.year === y).reverse();
@@ -3684,7 +3695,7 @@ function myMatchesHtml() {
           return `<div class="hist-row ${m.legacy ? "hist-legacy" : ""}" ${m.legacy ? "" : `data-mi="${i}"`}>
             <span class="hist-round">${roundShort(m.roundLabel)}</span>
             <span class="hist-wl ${m.win ? "win" : "loss"}">${m.win ? "W" : "L"}</span>
-            <span class="hist-opp">${m.opponentName || "?"}</span>
+            <span class="hist-opp">${m.opponentName || "?"}${y === state.year && positions.has(oppId(m)) ? ` <span class="hist-pos">#${positions.get(oppId(m))}</span>` : ""}</span>
             <span class="hist-score">${score}</span>
             <span class="hist-delta ${deltaClass(m.ratingAfter != null ? m.ratingAfter - m.rankBefore : 0)}">${delta}</span>
           </div>`;
@@ -3692,7 +3703,7 @@ function myMatchesHtml() {
         .join("");
       const legacyNote = list.some((x) => x.m.legacy) ? `<p class="modal-sub">Matches without a score were played before full results were saved.</p>` : "";
       return `<div class="modal-section">
-        <h3>Year ${y}${tiers.length ? ` · League ${tiers.join(" → ")}` : ""} · ${w}–${list.length - w}</h3>
+        <h3>Year ${y}${tiers.length ? ` · League ${tiers.join(" → ")}` : ""} · ${w}–${list.length - w}${y === state.year && myPos ? ` · you're #${myPos}` : ""}</h3>
         <div class="hist-list">${rows}</div>${legacyNote}
       </div>`;
     })
@@ -3716,6 +3727,18 @@ function defaultLeagueView(view = {}) {
   return { year, tier, round, years, keys };
 }
 
+// Table positions right now for a tier: live during the regular season,
+// otherwise the last final table (which also covers the playoffs and the
+// offseason). Keyed by rival id, with the player as HISTORY_PLAYER_ID.
+function currentTablePositions(tier) {
+  let standings = null;
+  if (state.seasonPhase === "regular" && state.roundIndex > 0) standings = buildStandingsFromPoints(tier);
+  else if (state.seasonPhase !== "preseason" && state.leagueStandings && state.leagueStandings[tier]) standings = state.leagueStandings[tier];
+  const pos = new Map();
+  if (standings) standings.forEach((e, i) => pos.set(e.isPlayer ? HISTORY_PLAYER_ID : e.rivalId, i + 1));
+  return pos;
+}
+
 function leagueResultsHtml(view) {
   const v = defaultLeagueView(view);
   if (!v) return `<p class="modal-sub">No results yet. Every match in all 5 leagues is recorded from now on — this season and last are kept.</p>`;
@@ -3733,16 +3756,19 @@ function leagueResultsHtml(view) {
       <span>${roundKeyLabel(v.round)}</span>
       <button class="icon-btn" data-hround="${idx < v.keys.length - 1 ? v.keys[idx + 1] : ""}" ${idx < v.keys.length - 1 ? "" : "disabled"} aria-label="Next round">▶</button>
     </div>`;
+  // This season's table position now, in front of each name.
+  const positions = v.year === state.year ? currentTablePositions(v.tier) : new Map();
+  const posTag = (id) => (positions.has(id) ? `<span class="res-pos">#${positions.get(id)}</span> ` : "");
   const rows = results
     .map(([w, l, wr, lr]) => `<div class="res-row ${w === HISTORY_PLAYER_ID || l === HISTORY_PLAYER_ID ? "res-you" : ""}">
-        <span class="res-side">${historyNameLink(w)} <span class="res-rt">${wr}</span></span>
+        <span class="res-side">${posTag(w)}${historyNameLink(w)} <span class="res-rt">${wr}</span></span>
         <span class="res-beat">beat</span>
-        <span class="res-side">${historyNameLink(l)} <span class="res-rt">${lr}</span></span>
+        <span class="res-side">${posTag(l)}${historyNameLink(l)} <span class="res-rt">${lr}</span></span>
       </div>`)
     .join("");
   return `${yearPills}${tierTabs}${stepper}
     <div class="res-list">${rows}</div>
-    <p class="modal-sub">Ratings are as they stood going into the match. Tap a name to see that rival's season.</p>`;
+    <p class="modal-sub">${positions.size ? "#N is each player's table position now; ratings" : "Ratings"} are as they stood going into the match. Tap a name to see that rival's season.</p>`;
 }
 
 // Upcoming matches: the rest of the regular season (or the whole schedule in
