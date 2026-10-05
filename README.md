@@ -154,7 +154,8 @@ player; replay it any time from the menu (📖 Quick Tutorial).
 **Match History** (menu, the Log header, Leagues and Career) has an
 **Upcoming** tab — the rest of the regular season with each opponent's rating,
 table position and your win chance, then your path through the playoff
-bracket once it starts — and keeps every match
+bracket once it starts, plus the whole playoff bracket (seeds, results, the
+champion) during the playoffs and offseason — and keeps every match
 you play — tap one to reopen its full result screen — plus every result in
 all 5 leagues, round by round, for this season and last. Tap any rival's
 name (there or in a league table) to see their season so far.

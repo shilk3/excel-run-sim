@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.50.2";
+const APP_VERSION = "4.51.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -3809,6 +3809,8 @@ function upcomingHtml() {
     const teams = p.currentRound;
     const idx = teams.findIndex((t) => t.isPlayer);
     const days = BAL.roundIntervalDays - s.phaseDay;
+    const finalPos = currentTablePositions(p.tier);
+    const posOf = (t) => finalPos.get(t.isPlayer ? HISTORY_PLAYER_ID : t.rivalId);
     const rows = [];
     for (let j = 0; at + j < stages.length && idx >= 0; j++) {
       // Round j ahead: your opponent comes from the other half of your block
@@ -3821,10 +3823,10 @@ function upcomingHtml() {
       const short = roundShort(label);
       if (pool.length === 1) {
         const o = pool[0];
-        rows.push(row(short, o.name, o.rivalId, liveOpponentRating(o), null, j === 0));
+        rows.push(row(short, o.name, o.rivalId, liveOpponentRating(o), posOf(o), j === 0));
       } else if (pool.length) {
         const fav = pool.slice().sort((a, b) => liveOpponentRating(b) - liveOpponentRating(a))[0];
-        const who = pool.length === 2 ? `${pool[0].name} or ${pool[1].name}` : `one of ${pool.length} — favourite ${fav.name}`;
+        const who = pool.length === 2 ? `${pool[0].name} (#${posOf(pool[0])}) or ${pool[1].name} (#${posOf(pool[1])})` : `one of ${pool.length} — favourite ${fav.name} (#${posOf(fav)})`;
         rows.push(row(short, `<span class="up-tbd">${who}</span>`, null, null, null, false));
       }
     }
@@ -3832,15 +3834,82 @@ function upcomingHtml() {
       <h3>Year ${s.year} · League ${p.tier} playoffs · seed #${p.playerSeed}</h3>
       <p class="modal-sub">${PLAYOFF_ROUND_NAMES[p.stage]} ${days <= 0 ? "today" : daysUntilPhrase(days)}. Single elimination — lose and you're out.</p>
       <div class="hist-list">${head}${rows.join("")}</div>
-      <p class="modal-sub">Later rounds depend on who wins in the rest of the bracket.</p>
-    </div>`;
+      <p class="modal-sub">Table = where each finished the regular season. Later rounds depend on who wins in the rest of the bracket.</p>
+    </div>
+    ${playoffBracketHtml(p.tier, s.year)}`;
   }
 
+  // Once your playoffs are over (or you missed them), the bracket still
+  // shows how your league's knockout played out.
+  const bracket = s.seasonPhase === "playoffs" || s.seasonPhase === "offseason" ? playoffBracketHtml(s.lastStandingsTier, s.year) : "";
   const why =
     s.seasonPhase === "playoffs"
       ? s.playoff && s.playoff.champion ? "You're the champion — no more matches this season." : "You're out of the playoffs — no more matches this season."
       : "No matches until next season.";
-  return `<p class="modal-sub">${why} The new schedule appears here once Year ${s.seasonPhase === "offseason" ? s.year + 1 : s.year} starts.</p>`;
+  return `<p class="modal-sub">${why} The new schedule appears here once Year ${s.seasonPhase === "offseason" ? s.year + 1 : s.year} starts.</p>${bracket}`;
+}
+
+// The whole knockout for a league, rebuilt from its final table (the seeds)
+// and the recorded playoff results — nothing extra is saved for it.
+function playoffBracket(tier, year) {
+  const standings = state.leagueStandings && state.leagueStandings[tier];
+  if (!standings || standings.length < BAL.playoffSize) return null;
+  const results = ((ensureHistory().league[year] || {})[tier]) || {};
+  const idOf = (t) => (t.isPlayer ? HISTORY_PLAYER_ID : t.rivalId);
+  const seeded = (t) => t && { ...t, seed: standings.indexOf(t) + 1 };
+  let teams = seedBracket(standings).map(seeded);
+  const rounds = [];
+  let prev = null;
+  PLAYOFF_STAGES.forEach((stage) => {
+    const played = results[stage] || [];
+    const matches = [];
+    for (let i = 0; i < teams.length; i += 2) {
+      const a = teams[i], b = teams[i + 1];
+      let winner = null;
+      if (a && b) {
+        const r = played.find(([w, l]) => (w === idOf(a) && l === idOf(b)) || (w === idOf(b) && l === idOf(a)));
+        if (r) winner = r[0] === idOf(a) ? a : b;
+      }
+      // Where an empty slot's team will come from (the previous round's match).
+      const from = (k) => (prev ? prev[k] : null);
+      matches.push({ a, b, winner, fromA: from(i), fromB: from(i + 1) });
+    }
+    rounds.push({ stage, matches });
+    prev = matches;
+    teams = matches.map((m) => m.winner);
+  });
+  return rounds;
+}
+
+function playoffBracketHtml(tier, year) {
+  const rounds = playoffBracket(tier, year);
+  if (!rounds) return "";
+  const slot = (t, from, m) => {
+    if (!t) {
+      const src = from && from.a && from.b ? `#${from.a.seed} / #${from.b.seed}` : "TBD";
+      return `<div class="br-team br-tbd">${src === "TBD" ? "TBD" : `Winner ${src}`}</div>`;
+    }
+    const cls = [m.winner ? (m.winner === t ? "br-win" : "br-out") : "", t.isPlayer ? "br-you" : ""].join(" ");
+    const name = t.isPlayer ? `${escapeHtml(state.playerName || "You")} (You)` : t.name;
+    return `<div class="br-team ${cls}" ${!t.isPlayer && t.rivalId != null ? `data-rival="${t.rivalId}"` : ""}><span class="br-seed">#${t.seed}</span><span class="br-name">${name}</span>${m.winner === t ? `<span class="br-tick">✓</span>` : ""}</div>`;
+  };
+  const champ = rounds[rounds.length - 1].matches[0].winner;
+  const roundsHtml = rounds
+    .map(
+      (r) => `<div class="br-round">
+        <div class="br-round-name">${PLAYOFF_ROUND_NAMES[r.stage]}</div>
+        <div class="br-grid ${r.matches.length === 1 ? "br-grid-one" : ""}">${r.matches
+          .map((m, i) => `<div class="br-match">${slot(m.a, m.fromA, m)}${slot(m.b, m.fromB, m)}</div>`)
+          .join("")}</div>
+      </div>`
+    )
+    .join("");
+  return `<div class="modal-section">
+    <h3>Year ${year} · League ${tier} playoff bracket</h3>
+    ${champ ? `<p class="modal-sub">🏆 Champion: <b>${champ.isPlayer ? "You!" : champ.name}</b></p>` : ""}
+    ${roundsHtml}
+    <p class="modal-sub"># = seed (final table position). Tap a name for their season.</p>
+  </div>`;
 }
 
 function openHistory(opts = {}) {
