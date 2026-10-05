@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.57.0";
+const APP_VERSION = "4.58.0";
 const SAVE_KEY = "cellgrind_save_v1";
 const SAVE_BACKUP_KEY = "cellgrind_save_unreadable";
 // Bumped when a save's shape changes. Older saves aren't converted (there's
@@ -144,8 +144,10 @@ const BAL = {
   strikesToFire: 3,
   jobSearchHoursRange: [10, 40], // Unemployed: cumulative hours to get re-hired — rolled fresh each time you lose a job
   jobSearchMinHours: 1, // Unemployed: at least this much Job Search a day, or the day can't end (no idling into endless debt)
-  goProLeagueTier: 2, // Employed + leagueTier <= this + cash >= goProCash -> Pro, automatically
-  goProCash: 5000,
+  // Employed + reached this league (ever) + every skill at goProSkill or
+  // more right now -> Pro, automatically.
+  goProLeagueTier: 2,
+  goProSkill: 85,
   // Pros must stay current: a new technique queues up periodically: only
   // the front of the queue is "in progress" at once, taking hours above
   // the Pro Duties minimum. Falling behind never loses progress, but every
@@ -604,8 +606,12 @@ function dailyHoursCap(nutrition) {
 /* ---------------------------------------------------------------------- */
 /* Employment: Work -> Pro, with Unemployed as the failure/recovery state  */
 /* ---------------------------------------------------------------------- */
+// Skills still short of the go-pro bar (judged as shown, i.e. rounded).
+function skillsBelowPro() {
+  return SKILL_KEYS.filter((k) => Math.round(state.stats.skills[k]) < BAL.goProSkill);
+}
 function checkGoProEligible() {
-  return state.leagueTier <= BAL.goProLeagueTier && state.cash >= BAL.goProCash;
+  return state.peakLeagueTier <= BAL.goProLeagueTier && skillsBelowPro().length === 0;
 }
 // Fractional strikes for falling short of the daily requirement — indexed by
 // hours actually worked. Hand-tuned, not a formula: a near-miss costs far
@@ -3338,7 +3344,7 @@ function employmentSectionHtml() {
 
   const goProHint = checkGoProEligible()
     ? "Thresholds met — going pro next time a day resolves."
-    : `Go pro at League ${BAL.goProLeagueTier} or higher with $${BAL.goProCash}+ banked (currently League ${state.leagueTier}, ${fmtMoney(state.cash)}).`;
+    : `Go pro once you've reached League ${BAL.goProLeagueTier} and every skill is ${BAL.goProSkill}+ (${state.peakLeagueTier <= BAL.goProLeagueTier ? `League ${BAL.goProLeagueTier} ✓` : `best so far League ${state.peakLeagueTier}`}; ${skillsBelowPro().length ? `under ${BAL.goProSkill}: ${skillsBelowPro().map((k) => `${skillMeta(k).icon} ${fmt(state.stats.skills[k])}`).join(", ")}` : "skills ✓"}).`;
   return `${expensesLine}${leaveLine}<p>💼 <b>Employed</b> · Work ${BAL.workHoursRequired}h/day required ($${fmt(emp.workPay)}/day) · ${fmt1(lives)}/${fmt1(BAL.strikesToFire)} chances</p>${strikeLines}
     <p class="modal-sub">${goProHint}</p>`;
 }
@@ -4455,7 +4461,7 @@ function openHowTo() {
       `<b>Overtime:</b> up to ${B.overtimeMaxHours}h extra at half your hourly rate ($${Math.round(B.workPayMin / B.workHoursRequired / 2)}/h at $${B.workPayMin}/day).`,
       `Short on Work hours? You keep your pay but lose part of a <b>chance</b> (back after ${B.strikeWindowDays} days). Lose all ${fmt1(B.strikesToFire)} and you're fired.`,
       `Fired: the Work slider becomes <b>Job Search</b> — ${B.jobSearchHoursRange[0]}–${B.jobSearchHoursRange[1]}h in total gets you hired, at least ${B.jobSearchMinHours}h a day. Pay resets to the minimum.`,
-      `<b>Go pro</b> automatically in League ${B.goProLeagueTier} or higher with $${fmt(B.goProCash)}+: ${B.proDutyHoursRequired}h/day of Pro Duties from $${B.proPayMin}/day.`,
+      `<b>Go pro</b> automatically once you've reached League ${B.goProLeagueTier} (ever) and all 7 skills are ${B.goProSkill}+ at once: ${B.proDutyHoursRequired}h/day of Pro Duties from $${B.proPayMin}/day.`,
     ])}
     ${tbl(["Prize money", ""], [
       ["Win", `$${B.prizeWinBase} + rating ÷ ${B.prizeRatingDiv}`],

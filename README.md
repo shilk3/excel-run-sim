@@ -89,8 +89,9 @@ Relax, and Food. Everything is connected:
   of chances actually costs you income — you're fired, and the same slider
   becomes a Job Search until you log a random 10–40 cumulative hours
   (rolled each time you lose the job, and shown on the slider) — at least 1h
-  of searching a day, or the day can't end, so you can't idle into debt. Reach League 2
-  with $5,000 banked while employed and you go pro automatically: Work
+  of searching a day, or the day can't end, so you can't idle into debt. Once you've
+  reached League 2 (ever) and all 7 skills are 85+ at the same time, while
+  employed, you go pro automatically: Work
   drops to 5h/day of Pro Duties, same chances rule. Pros also have to stay
   current — a new Excel technique appears roughly every 30 days needing
   25-40h to master (any Pro Duties hours beyond the 5h minimum go toward
