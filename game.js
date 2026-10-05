@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.51.1";
+const APP_VERSION = "4.52.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -2888,7 +2888,28 @@ function stickyHeadHtml(title, extraHtml = "") {
 // onDismiss runs once if this pop-up is closed (✕, tapping outside, or
 // closeModal) rather than replaced by another pop-up.
 let modalDismissHook = null;
-function openModal(html, { ownClose = false, keepScroll = false, onDismiss = null } = {}) {
+// Page navigation: pages (Leagues, Match History, a rival, Staff…) passed
+// as `page: { key, reopen }`. Opening a page from another page remembers
+// the one underneath (and how far it was scrolled); closing goes back one
+// step instead of all the way out. Re-rendering the same page (a tab
+// switch, a purchase) replaces it rather than stacking. Anything that isn't
+// a page (match result, splash, menu) starts the stack afresh.
+let navStack = [];
+let currentPage = null;
+let navigatingBack = false;
+function openModal(html, { ownClose = false, keepScroll = false, onDismiss = null, page = null } = {}) {
+  const wasOpen = !$("modalOverlay").classList.contains("hidden");
+  if (page) {
+    if (wasOpen && currentPage && currentPage.key !== page.key && !navigatingBack) {
+      // Also remember inner scroll boxes (the league table scrolls on its own).
+      const inner = [...$("modalBody").querySelectorAll(".league-table")].map((el) => el.scrollTop);
+      navStack.push({ ...currentPage, scroll: $("modal").scrollTop, inner });
+    }
+    currentPage = page;
+  } else {
+    navStack = [];
+    currentPage = null;
+  }
   modalDismissHook = onDismiss;
   $("modalBody").innerHTML = html;
   // Modals with their own sticky header carry their own ✕; hide the
@@ -2902,17 +2923,36 @@ function openModal(html, { ownClose = false, keepScroll = false, onDismiss = nul
   // position.
   if (!keepScroll) $("modal").scrollTop = 0;
   const inlineClose = $("modalBody").querySelector("[data-modal-close]");
-  if (inlineClose) inlineClose.addEventListener("click", closeModal);
+  if (inlineClose) inlineClose.addEventListener("click", userCloseModal);
 }
 function closeModal() {
   $("modalOverlay").classList.add("hidden");
+  navStack = [];
+  currentPage = null;
   const hook = modalDismissHook;
   modalDismissHook = null;
   if (hook) hook();
 }
-$("modalClose").addEventListener("click", closeModal);
+// ✕ and tapping outside: back one page if there is one, else close.
+function userCloseModal() {
+  if (navStack.length) navBack();
+  else closeModal();
+}
+function navBack() {
+  const prev = navStack.pop();
+  if (!prev) return closeModal();
+  navigatingBack = true;
+  try {
+    prev.reopen();
+  } finally {
+    navigatingBack = false;
+  }
+  $("modal").scrollTop = prev.scroll || 0;
+  [...$("modalBody").querySelectorAll(".league-table")].forEach((el, i) => (el.scrollTop = (prev.inner || [])[i] || 0));
+}
+$("modalClose").addEventListener("click", userCloseModal);
 $("modalOverlay").addEventListener("click", (e) => {
-  if (e.target.id === "modalOverlay") closeModal();
+  if (e.target.id === "modalOverlay") userCloseModal();
 });
 
 /* ---------------------------------------------------------------------- */
@@ -3085,7 +3125,7 @@ function luckExplainerHtml(result) {
 
 // onContinue replaces what the Continue button does (✕ still just closes);
 // onDone runs however the result is closed — used to chain the next screen.
-function showMatchModal(result, extraHtml = "", { onContinue = null, continueLabel = "Continue", onDone = null } = {}) {
+function showMatchModal(result, extraHtml = "", { onContinue = null, continueLabel = "Continue", onDone = null, page = null } = {}) {
   const context = result.roundLabel ? `${result.roundLabel}${result.opponentName ? " vs " + result.opponentName : ""}` : "";
   const title = `<span class="match-head ${result.win ? "win" : "loss"}">${result.win ? "VICTORY" : "DEFEAT"}</span>${
     context ? `<span class="match-head-sub">${context}</span>` : ""
@@ -3112,7 +3152,7 @@ function showMatchModal(result, extraHtml = "", { onContinue = null, continueLab
         ${extraHtml}
         <button class="primary-btn" id="matchOk">${continueLabel}</button>
       </div>`;
-  openModal(html, { ownClose: true, onDismiss: onDone });
+  openModal(html, { ownClose: true, onDismiss: onDone, page });
   $("matchOk").addEventListener("click", onContinue || closeModal);
 }
 
@@ -3265,7 +3305,7 @@ function openShop(opts) {
   // Called directly as a click handler too, so opts may be an Event.
   const keepScroll = !!(opts && opts.keepScroll === true);
   if (opts && (opts.tab === "staff" || opts.tab === "items")) shopTab = opts.tab;
-  openModal(shopHtml(), { ownClose: true, keepScroll });
+  openModal(shopHtml(), { ownClose: true, keepScroll, page: { key: "shop", reopen: () => openShop() } });
   document.querySelectorAll("[data-shop-tab]").forEach((btn) =>
     btn.addEventListener("click", () => {
       if (btn.dataset.shopTab !== shopTab) openShop({ tab: btn.dataset.shopTab });
@@ -3532,7 +3572,7 @@ function openCareer() {
       <h3>Current Stats</h3>
       ${currentStatsHtml()}
     </div>`;
-  openModal(html, { ownClose: true });
+  openModal(html, { ownClose: true, page: { key: "career", reopen: openCareer } });
   $("viewLeaguesLink").addEventListener("click", () => openLeagues(state.leagueTier));
   $("viewHistoryLink").addEventListener("click", () => openHistory());
 }
@@ -3626,14 +3666,14 @@ function openLeagues(startTier) {
     </div>
     <div class="menu-row" id="leaguesHistoryLink"><span>📜 Results by round</span><span class="arrow">›</span></div>
     <div id="leagueTableContainer">${leagueTableHtml(startTier)}</div>`;
-  openModal(html);
   let shownTier = startTier;
+  openModal(html, { page: { key: "leagues", reopen: () => openLeagues(shownTier) } });
   $("leaguesHistoryLink").addEventListener("click", () => openHistory({ tab: "league", view: { tier: shownTier } }));
   // Tap a rival in the table to see their season (delegated: the table is
   // rebuilt whenever the tab changes).
   $("leagueTableContainer").addEventListener("click", (e) => {
     const row = e.target.closest("[data-rival]");
-    if (row) openRival(Number(row.dataset.rival), () => openLeagues(shownTier));
+    if (row) openRival(Number(row.dataset.rival));
   });
   document.querySelectorAll(".league-tab").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -3669,45 +3709,96 @@ function roundShort(label) {
   return { "Round of 16": "R16", Quarterfinal: "QF", Semifinal: "SF", Final: "F" }[label] || label;
 }
 
+// ---- Shared results list (My matches and every rival's page) ----
+// Columns: Rd · W/L · #N Opponent · their Rating · rating +/− · own Pos.
+// #N and Pos are table positions going into the match (playoffs: the final
+// table), rebuilt from the stored league results.
+function resultsListHtml(rows) {
+  const head = `<div class="hist-row res2-row up-head"><span>Rd</span><span></span><span>Opponent</span><span>Rating</span><span>+/−</span><span>Pos</span></div>`;
+  const body = rows
+    .map((r) => `<div class="hist-row res2-row ${r.cls || ""}" ${r.attrs || ""}>
+        <span class="hist-round">${r.round}</span>
+        <span class="hist-wl ${r.win ? "win" : "loss"}">${r.win ? "W" : "L"}</span>
+        <span class="hist-opp">${r.oppPos ? `<span class="hist-pos">#${r.oppPos}</span> ` : ""}${r.oppName}</span>
+        <span class="hist-score">${r.oppRating != null ? fmt(r.oppRating) : ""}</span>
+        <span class="hist-delta ${deltaClass(r.delta || 0)}">${r.delta != null ? signedNum(r.delta) : ""}</span>
+        <span class="up-pos">${r.ownPos ? `#${r.ownPos}` : ""}</span>
+      </div>`)
+    .join("");
+  return `<div class="hist-list">${head}${body}</div>`;
+}
+const RESULTS_NOTE = `<p class="modal-sub">#N and Pos = table positions going into the match (playoffs: the final table). Rating = the opponent's going in; +/− = the rating change from the match.</p>`;
+function resultsSummaryHtml({ league, rating, season, pos, allTime }) {
+  return `<div class="modal-section">
+      <div class="kv-row"><span>League</span><span>League ${league}</span></div>
+      <div class="kv-row"><span>Rating</span><span>${fmt(rating)}</span></div>
+      <div class="kv-row"><span>This season</span><span>${season}${pos ? ` · #${pos} in the table` : ""}</span></div>
+      <div class="kv-row"><span>All-time record</span><span>${allTime}</span></div>
+    </div>`;
+}
+// Cached table rebuilds for one render.
+function tableLookup() {
+  const cache = new Map();
+  return (year, tier, key, id) => {
+    if (tier == null || key == null) return null;
+    const k = `${year}|${tier}|${key}`;
+    if (!cache.has(k)) cache.set(k, tablePositionsBefore(year, tier, key));
+    const t = cache.get(k);
+    return t && t.has(id) ? t.get(id) : null;
+  };
+}
+function roundKeyFromLabel(label) {
+  const m = /^Round (\d+)/.exec(label || "");
+  if (m) return m[1];
+  return Object.keys(PLAYOFF_ROUND_NAMES).find((k) => PLAYOFF_ROUND_NAMES[k] === label) || null;
+}
+
 function myMatchesHtml() {
   const mine = ensureHistory().mine;
-  if (!mine.length) return `<p class="modal-sub">No matches played yet. Every match you play from now on is kept here — tap one to see its full result again.</p>`;
-  const years = [...new Set(mine.map((m) => m.year))].sort((a, b) => b - a);
-  const positions = currentTablePositions(state.leagueTier);
-  const myPos = positions.get(HISTORY_PLAYER_ID);
-  // Older results didn't store the rival's id — names are unique, so fall
-  // back to looking it up.
+  const rec = seasonRecord();
+  const summary = resultsSummaryHtml({
+    league: state.leagueTier,
+    rating: state.rank,
+    season: `${rec.wins}–${rec.losses}`,
+    pos: currentTablePositions(state.leagueTier).get(HISTORY_PLAYER_ID),
+    allTime: `${state.wins}–${state.losses}`,
+  });
+  if (!mine.length) return `${summary}<p class="modal-sub">No matches played yet. Every match you play from now on is kept here — tap one to see its full result again.</p>`;
+  const posAt = tableLookup();
+  // Older results didn't store the rival's id — names are unique.
   const oppId = (m) => {
     if (m.opponentRivalId != null) return m.opponentRivalId;
     const r = state.rivals.find((x) => x.name === m.opponentName);
     return r ? r.id : null;
   };
-  return years
+  const years = [...new Set(mine.map((m) => m.year))].sort((a, b) => b - a);
+  const sections = years
     .map((y) => {
       const list = mine.map((m, i) => ({ m, i })).filter((x) => x.m.year === y).reverse();
       const w = list.filter((x) => x.m.win).length;
       const tiers = [...new Set(list.map((x) => x.m.tier).filter(Boolean))];
-      const rows = list
-        .map(({ m, i }) => {
-          const n = (x) => (x < 0 ? `−${-x}` : `${x}`);
-          const score = m.sides ? `${n(m.sides.you.final)}–${n(m.sides.opp.final)}` : "—";
-          const delta = m.ratingAfter != null ? signedNum(m.ratingAfter - m.rankBefore) : "";
-          return `<div class="hist-row ${m.legacy ? "hist-legacy" : ""}" ${m.legacy ? "" : `data-mi="${i}"`}>
-            <span class="hist-round">${roundShort(m.roundLabel)}</span>
-            <span class="hist-wl ${m.win ? "win" : "loss"}">${m.win ? "W" : "L"}</span>
-            <span class="hist-opp">${m.opponentName || "?"}${y === state.year && positions.has(oppId(m)) ? ` <span class="hist-pos">#${positions.get(oppId(m))}</span>` : ""}</span>
-            <span class="hist-score">${score}</span>
-            <span class="hist-delta ${deltaClass(m.ratingAfter != null ? m.ratingAfter - m.rankBefore : 0)}">${delta}</span>
-          </div>`;
-        })
-        .join("");
-      const legacyNote = list.some((x) => x.m.legacy) ? `<p class="modal-sub">Matches without a score were played before full results were saved.</p>` : "";
+      const rows = list.map(({ m, i }) => {
+        const key = roundKeyFromLabel(m.roundLabel);
+        return {
+          round: roundShort(m.roundLabel),
+          win: m.win,
+          oppName: m.opponentName || "?",
+          oppPos: posAt(y, m.tier, key, oppId(m)),
+          oppRating: m.opponentRating,
+          delta: m.ratingAfter != null ? m.ratingAfter - m.rankBefore : null,
+          ownPos: posAt(y, m.tier, key, HISTORY_PLAYER_ID),
+          cls: m.legacy ? "hist-legacy" : "",
+          attrs: m.legacy ? "" : `data-mi="${i}"`,
+        };
+      });
+      const legacyNote = list.some((x) => x.m.legacy) ? `<p class="modal-sub">Matches without details were played before full results were saved.</p>` : "";
       return `<div class="modal-section">
-        <h3>Year ${y}${tiers.length ? ` · League ${tiers.join(" → ")}` : ""} · ${w}–${list.length - w}${y === state.year && myPos ? ` · you're #${myPos}` : ""}</h3>
-        <div class="hist-list">${rows}</div>${legacyNote}
+        <h3>Year ${y}${tiers.length ? ` · League ${tiers.join(" → ")}` : ""} · ${w}–${list.length - w}</h3>
+        ${resultsListHtml(rows)}${legacyNote}
       </div>`;
     })
     .join("");
+  return `${summary}${sections}${RESULTS_NOTE}<p class="modal-sub">Tap a match to see its full result.</p>`;
 }
 
 // Which season / league / round the League results tab shows by default:
@@ -3923,7 +4014,11 @@ function openHistory(opts = {}) {
       <button class="league-tab ${tab === "league" ? "active" : ""}" data-htab="league">League results</button>
     </div>
     <div id="historyBody">${tab === "upcoming" ? upcomingHtml() : tab === "mine" ? myMatchesHtml() : leagueResultsHtml(view)}</div>`;
-  openModal(html, { ownClose: true, keepScroll: !!opts.keepScroll });
+  openModal(html, {
+    ownClose: true,
+    keepScroll: !!opts.keepScroll,
+    page: { key: "history", reopen: () => openHistory({ tab, view: cur ? { year: cur.year, tier: cur.tier, round: cur.round } : view }) },
+  });
   const body = $("modalBody");
   body.querySelectorAll("[data-htab]").forEach((b) => b.addEventListener("click", () => openHistory({ tab: b.dataset.htab })));
   const cur = tab === "league" ? defaultLeagueView(view) : null;
@@ -3931,12 +4026,13 @@ function openHistory(opts = {}) {
   body.querySelectorAll("[data-htier]").forEach((b) => b.addEventListener("click", () => openHistory({ tab, view: { year: cur.year, tier: Number(b.dataset.htier) }, keepScroll: true })));
   body.querySelectorAll("[data-hround]").forEach((b) => b.addEventListener("click", () => b.dataset.hround && openHistory({ tab, view: { year: cur.year, tier: cur.tier, round: b.dataset.hround }, keepScroll: true })));
   body.querySelectorAll("[data-rival]").forEach((b) =>
-    b.addEventListener("click", () => openRival(Number(b.dataset.rival), () => openHistory({ tab, view: cur ? { year: cur.year, tier: cur.tier, round: cur.round } : view })))
+    b.addEventListener("click", () => openRival(Number(b.dataset.rival)))
   );
   body.querySelectorAll("[data-mi]").forEach((row) =>
     row.addEventListener("click", () => {
       const m = ensureHistory().mine[Number(row.dataset.mi)];
-      showMatchModal(m, "", { onContinue: () => openHistory({ tab: "mine" }), continueLabel: "◀ Back to Match History" });
+      const open = () => showMatchModal(m, "", { onContinue: navBack, continueLabel: "◀ Back to Match History", page: { key: `result:${row.dataset.mi}`, reopen: () => open() } });
+      open();
     })
   );
 }
@@ -3969,59 +4065,60 @@ function tablePositionsBefore(year, tier, key) {
   return new Map(ids.map((x, i) => [x, i + 1]));
 }
 
-function openRival(id, back) {
+function openRival(id) {
   const r = findRival(id);
   if (!r) return;
-  const yearData = ensureHistory().league[state.year] || {};
+  const league = ensureHistory().league;
+  // This season and last, oldest first so each game's rating change is
+  // the difference to their rating going into the next one.
   const games = [];
-  Object.keys(yearData).forEach((tier) =>
-    HISTORY_ROUND_KEYS.forEach((key) =>
-      (yearData[tier][key] || []).forEach(([w, l, wr, lr]) => {
-        if (w === id) games.push({ key, tier, win: true, opp: l, oppRating: lr, rating: wr });
-        else if (l === id) games.push({ key, tier, win: false, opp: w, oppRating: wr, rating: lr });
-      })
-    )
-  );
-  const w = games.filter((g) => g.win).length;
-  // Both sides' table positions going into each match (the final table for
-  // playoff games), rebuilt from the stored results.
-  const tables = new Map();
-  const posAt = (g, who) => {
-    const k = `${g.tier}|${g.key}`;
-    if (!tables.has(k)) tables.set(k, tablePositionsBefore(state.year, g.tier, g.key));
-    const t = tables.get(k);
-    return t && t.has(who) ? `#${t.get(who)}` : "";
-  };
-  const rows = games
-    .slice()
-    .reverse()
-    .map((g) => {
-      const oppPos = posAt(g, g.opp);
-      return `<div class="hist-row rival-row">
-        <span class="hist-round">${roundShort(roundKeyLabel(g.key))}</span>
-        <span class="hist-wl ${g.win ? "win" : "loss"}">${g.win ? "W" : "L"}</span>
-        <span class="hist-opp">${g.win ? "beat" : "lost to"} ${oppPos ? `<span class="hist-pos">${oppPos}</span> ` : ""}${historyName(g.opp)}</span>
-        <span class="hist-score">${g.oppRating}</span>
-        <span class="up-pos">${posAt(g, id)}</span>
+  [state.year - 1, state.year].forEach((year) => {
+    const yearData = league[year] || {};
+    Object.keys(yearData).forEach((tier) =>
+      HISTORY_ROUND_KEYS.forEach((key) =>
+        (yearData[tier][key] || []).forEach(([w, l, wr, lr]) => {
+          if (w === id) games.push({ year, key, tier: Number(tier), win: true, opp: l, oppRating: lr, rating: wr });
+          else if (l === id) games.push({ year, key, tier: Number(tier), win: false, opp: w, oppRating: wr, rating: lr });
+        })
+      )
+    );
+  });
+  games.forEach((g, i) => (g.delta = Math.round((i + 1 < games.length ? games[i + 1].rating : r.rating) - g.rating)));
+  const posAt = tableLookup();
+  const sections = [state.year, state.year - 1]
+    .map((year) => {
+      const list = games.filter((g) => g.year === year).reverse();
+      if (!list.length) return year === state.year ? `<div class="modal-section"><h3>Year ${year}</h3><p class="modal-sub">No results recorded for them this season yet.</p></div>` : "";
+      const w = list.filter((g) => g.win).length;
+      const tiers = [...new Set(list.map((g) => g.tier))];
+      const rows = list.map((g) => ({
+        round: roundShort(roundKeyLabel(g.key)),
+        win: g.win,
+        oppName: historyName(g.opp),
+        oppPos: posAt(year, g.tier, g.key, g.opp),
+        oppRating: g.oppRating,
+        delta: g.delta,
+        ownPos: posAt(year, g.tier, g.key, id),
+        cls: g.opp === HISTORY_PLAYER_ID ? "res2-you" : "",
+      }));
+      return `<div class="modal-section">
+        <h3>Year ${year} · League ${tiers.join(" → ")} · ${w}–${list.length - w}</h3>
+        ${resultsListHtml(rows)}
       </div>`;
     })
     .join("");
-  const nowPos = currentTablePositions(r.league).get(id);
+  const thisYear = games.filter((g) => g.year === state.year);
+  const tw = thisYear.filter((g) => g.win).length;
   const html = `
     ${stickyHeadHtml(r.name)}
-    <div class="modal-section">
-      <div class="kv-row"><span>League</span><span>League ${r.league}</span></div>
-      <div class="kv-row"><span>Rating</span><span>${fmt(r.rating)}</span></div>
-      <div class="kv-row"><span>This season</span><span>${w}–${games.length - w}${nowPos ? ` · #${nowPos} in the table` : ""}</span></div>
-      <div class="kv-row"><span>All-time record</span><span>${r.wins}–${r.losses}</span></div>
-    </div>
-    <div class="modal-section">
-      <h3>Year ${state.year} results</h3>
-      ${games.length ? `<div class="hist-list"><div class="hist-row rival-row up-head"><span>Rd</span><span></span><span>Opponent</span><span>Rating</span><span>Them</span></div>${rows}</div><p class="modal-sub">#N = table position going into the match (playoffs: final table). Rating = the opponent's going into the match; Them = ${r.name}'s own position then.</p>` : `<p class="modal-sub">No results recorded for them this season yet.</p>`}
-    </div>
-    ${back ? `<button class="ghost-btn" id="rivalBack">◀ Back</button>` : ""}`;
-  openModal(html, { ownClose: true });
-  if (back) $("rivalBack").addEventListener("click", back);
+    ${resultsSummaryHtml({ league: r.league, rating: r.rating, season: `${tw}–${thisYear.length - tw}`, pos: currentTablePositions(r.league).get(id), allTime: `${r.wins}–${r.losses}` })}
+    ${sections}
+    ${games.length ? RESULTS_NOTE : ""}`;
+  openModal(html, { ownClose: true, page: { key: `rival:${id}`, reopen: () => openRival(id) } });
+  if (navStack.length) {
+    $("modalBody").insertAdjacentHTML("beforeend", `<button class="ghost-btn" id="rivalBack">◀ Back</button>`);
+    $("rivalBack").addEventListener("click", navBack);
+  }
 }
 
 
@@ -4461,7 +4558,7 @@ function openHowTo() {
   const body = sections
     .map((s) => `<div class="modal-section howto-section" id="howto-${s.id}"><h3>${s.icon} ${s.title}</h3>${s.body}</div>`)
     .join("");
-  openModal(`${stickyHeadHtml("How to Play")}${nav}${body}`, { ownClose: true });
+  openModal(`${stickyHeadHtml("How to Play")}${nav}${body}`, { ownClose: true, page: { key: "howto", reopen: openHowTo } });
   document.querySelectorAll("[data-jump]").forEach((btn) =>
     btn.addEventListener("click", () => {
       const target = $(`howto-${btn.dataset.jump}`);
@@ -4484,7 +4581,7 @@ function openInstall() {
       <p>It'll launch full-screen from your home screen, and your progress is saved on this device.</p>
       <p>Already have a career in Safari? The Home Screen app keeps its own separate save — use <b>💾 Export / Import Save</b> in the menu to move it across.</p>
     </div>`;
-  openModal(html);
+  openModal(html, { page: { key: "install", reopen: openInstall } });
 }
 
 /* ---------------------------------------------------------------------- */
@@ -4618,7 +4715,7 @@ function openSaveTransfer() {
       <div class="save-transfer-status" id="saveImportStatus"></div>
       <p class="save-transfer-note">Importing replaces the career on this device.</p>
     </div>`;
-  openModal(html);
+  openModal(html, { page: { key: "save", reopen: openSaveTransfer } });
 
   const exportStatus = (msg, bad) => {
     const el = $("saveExportStatus");

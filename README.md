@@ -158,7 +158,14 @@ bracket once it starts, plus the whole playoff bracket (seeds, results, the
 champion) during the playoffs and offseason — and keeps every match
 you play — tap one to reopen its full result screen — plus every result in
 all 5 leagues, round by round, for this season and last. Tap any rival's
-name (there or in a league table) to see their season so far.
+name (there or in a league table) to see their season so far. Your matches
+and every rival's page share one layout: round, W/L, the opponent with their
+table position going in, their rating, the rating change, and your (or
+their) own position going in, for this season and last.
+
+Pages opened from another page go back one step when closed (✕ or tapping
+outside), keeping your scroll position — e.g. Leagues → a rival → ✕ returns
+to Leagues.
 
 Rating, Cash, stats, and unlocked staff levels all carry over between years
 and leagues.
