@@ -69,7 +69,12 @@ Relax, and Food. Everything is connected:
   fee and a high enough league, and cost more per week; wages are tuned so
   you can afford roughly 90% of what you'd want in a 1-skill week and 40% in
   a 3-skill week.
-- **Work** funds everything else. 9h/day, every phase, no exceptions (up
+- **Work** funds everything else. 9h/day in every phase except preseason,
+  which is paid **🏖️ annual leave**: the Work (or Pro Duties) row is greyed
+  out, pay continues as normal, no chances are at risk, and a Pro's
+  technique clock waits; it comes back at the full requirement when the
+  season starts (a screen says so if your plan then needs trimming). A job
+  search carries on as normal through preseason. Otherwise no exceptions (up
   to 4h of overtime on top pays half your hourly rate — $4/h at the
   starting $70/day, rising with raises) — you
   start with 3.0 chances, and the bar shows exactly what today's shortfall

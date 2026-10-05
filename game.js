@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.54.0";
+const APP_VERSION = "4.55.0";
 const SAVE_KEY = "cellgrind_save_v1";
 const SAVE_BACKUP_KEY = "cellgrind_save_unreadable";
 // Bumped when a save's shape changes. Older saves aren't converted (there's
@@ -621,7 +621,16 @@ function jobSecurityPreviewPct(hours, isPro) {
   const previewLives = clamp(livesRemaining() - loss, 0, BAL.strikesToFire);
   return clamp((previewLives / BAL.strikesToFire) * 100, 0, 100);
 }
-function workMaxHours(st = state.employment.status) {
+// Annual leave: preseason is paid time off from Work and Pro Duties. A job
+// search carries on as normal.
+function onLeave(st = state.employment.status, phase = state.seasonPhase) {
+  return phase === "preseason" && st !== "unemployed";
+}
+function requiredWorkHours(st = state.employment.status) {
+  return st === "pro" ? BAL.proDutyHoursRequired : st === "employed" ? BAL.workHoursRequired : BAL.jobSearchMinHours;
+}
+function workMaxHours(st = state.employment.status, phase = state.seasonPhase) {
+  if (onLeave(st, phase)) return 0;
   if (st === "pro") return 12; // 5 required + headroom to push a technique
   if (st === "unemployed") return 16; // no requirement, just a generous daily ceiling
   return BAL.workHoursRequired + BAL.overtimeMaxHours; // Employed: overtime past the requirement
@@ -836,7 +845,7 @@ function freshState() {
       sleep: 7,
       relax: BAL.relaxComposureThreshold,
       nutrition: 1,
-      work: BAL.workHoursRequired,
+      work: 0, // a new career starts in preseason, on annual leave
     },
     employment: {
       status: "employed", // "employed" | "unemployed" | "pro"
@@ -898,7 +907,7 @@ function migrateSave(parsed) {
   // Slider maxes can drop between versions — never load a plan past them.
   const a = fresh.allocation;
   a.exercise = clamp(a.exercise || 0, 0, BAL.gymMaxHours);
-  a.work = clamp(a.work || 0, 0, workMaxHours(fresh.employment.status));
+  a.work = clamp(a.work || 0, 0, workMaxHours(fresh.employment.status, fresh.seasonPhase));
   return fresh;
 }
 
@@ -1296,10 +1305,20 @@ function resolveEmploymentDay() {
       // Job Search allows up to 16h but Work caps at its 9h requirement, so
       // reset to exactly that rather than leaving extra hours stranded.
       state.allocation.work = BAL.workHoursRequired;
-      events.push({ type: "good", text: `💼 Found a new job! Work resumes at ${BAL.workHoursRequired}h/day.` });
+      events.push({
+        type: "good",
+        text: onLeave() ? `💼 Found a new job! You start once preseason is over — on paid leave until then.` : `💼 Found a new job! Work resumes at ${BAL.workHoursRequired}h/day.`,
+      });
     } else if (workH > 0) {
       events.push({ type: "neutral", text: `🔍 Job search: ${fmt(emp.jobSearchHours)}/${jobSearchTarget()}h` });
     }
+  } else if (onLeave()) {
+    // Paid as normal; no hours, so no overtime, chances or technique work,
+    // and the clock to the next technique waits too.
+    const pay = emp.status === "pro" ? emp.proPay : emp.workPay;
+    state.cash += pay;
+    state.yearCashFlow.workPay += pay;
+    events.push({ type: "neutral", text: `🏖️ Annual leave: +$${pay} pay` });
   } else {
     const isPro = emp.status === "pro";
     const required = isPro ? BAL.proDutyHoursRequired : BAL.workHoursRequired;
@@ -2424,6 +2443,23 @@ function workRowHtml() {
   }
 
   const isPro = emp.status === "pro";
+  if (onLeave()) {
+    const back = BAL.preseasonDays - state.phaseDay;
+    return comboRowHtml("work", {
+      icon: "🏖️",
+      label: "Annual leave",
+      outcomeText: `Paid · ${isPro ? "Pro Duties" : "Work"} back in ${back} day${back === 1 ? "" : "s"}`,
+      shopTag: netPerDayTag((isPro ? emp.proPay : emp.workPay) - BAL.dailyExpenses),
+      value: jobSecurityPct(),
+      previewValue: jobSecurityPct(),
+      cap: 100,
+      hours: 0,
+      maxHours: 1,
+      markerHours: 0,
+      disabled: true,
+      barClass: "work",
+    });
+  }
   const required = isPro ? BAL.proDutyHoursRequired : BAL.workHoursRequired;
   const atRisk = hours < required;
   const livesText = `${fmt1(livesRemaining())}/${fmt1(BAL.strikesToFire)} left`;
@@ -3237,20 +3273,21 @@ function employmentSectionHtml() {
     return `${expensesLine}<p>🔍 <b>Unemployed</b> — job searching: ${fmt(emp.jobSearchHours)} / ${jobSearchTarget()}h accumulated (each search needs a random ${BAL.jobSearchHoursRange[0]}–${BAL.jobSearchHoursRange[1]}h). Every hour counts toward it, and you need at least ${BAL.jobSearchMinHours}h a day to end the day.</p>`;
   }
 
+  const leaveLine = onLeave() ? `<p>🏖️ <b>Annual leave</b> — no ${emp.status === "pro" ? "Pro Duties" : "Work"} until the season starts in ${BAL.preseasonDays - state.phaseDay} days, paid as normal.</p>` : "";
   if (emp.status === "pro") {
     const queue = emp.techniqueQueue;
     const penalty = Math.round(Math.min(1, queue.length * BAL.techniquePenaltyPerUnmastered) * 100);
     const queueHtml = queue.length
       ? queue.map((t, i) => `${i === 0 ? "▶" : "⏸"} ${t.name}: ${fmt(t.hoursDone)}/${t.hoursNeeded}h`).join("<br>")
       : "Fully caught up — no match penalty.";
-    return `${expensesLine}<p>🏆 <b>Pro</b> · Pro Duties ${BAL.proDutyHoursRequired}h/day required ($${fmt(emp.proPay)}/day) · ${fmt1(lives)}/${fmt1(BAL.strikesToFire)} chances</p>${strikeLines}
+    return `${expensesLine}${leaveLine}<p>🏆 <b>Pro</b> · Pro Duties ${BAL.proDutyHoursRequired}h/day required ($${fmt(emp.proPay)}/day) · ${fmt1(lives)}/${fmt1(BAL.strikesToFire)} chances</p>${strikeLines}
       <p><b>Technique queue</b> (hours above ${BAL.proDutyHoursRequired}h/day go here)${penalty > 0 ? ` — currently <b>-${penalty}%</b> match performance` : ""}:<br>${queueHtml}</p>`;
   }
 
   const goProHint = checkGoProEligible()
     ? "Thresholds met — going pro next time a day resolves."
     : `Go pro at League ${BAL.goProLeagueTier} or higher with $${BAL.goProCash}+ banked (currently League ${state.leagueTier}, ${fmtMoney(state.cash)}).`;
-  return `${expensesLine}<p>💼 <b>Employed</b> · Work ${BAL.workHoursRequired}h/day required ($${fmt(emp.workPay)}/day) · ${fmt1(lives)}/${fmt1(BAL.strikesToFire)} chances</p>${strikeLines}
+  return `${expensesLine}${leaveLine}<p>💼 <b>Employed</b> · Work ${BAL.workHoursRequired}h/day required ($${fmt(emp.workPay)}/day) · ${fmt1(lives)}/${fmt1(BAL.strikesToFire)} chances</p>${strikeLines}
     <p class="modal-sub">${goProHint}</p>`;
 }
 
@@ -3981,6 +4018,7 @@ function buildPhaseSplash(from, to, { yearSummary = null, tierBefore = state.lea
     if (state.leagueTier > 1) zones.push(`playoff champion + next ${BAL.promotionTablePlaces} in the table promoted`);
     if (state.leagueTier < BAL.leagueCount) zones.push(`bottom ${BAL.relegationCount} relegated`);
     next.push(["The table", zones.join(" · ")]);
+    if (state.employment.status !== "unemployed") next.push(["💼 Back to work", `annual leave is over — ${state.employment.status === "pro" ? "Pro Duties" : "Work"} ${requiredWorkHours()}h/day from today`]);
     notes.push("Only the week's focus skills can be trained now — hire their coaches in 🧑‍🏫 Staff. Contracts end after each match.");
   } else if (from === "regular" && to === "playoffs") {
     icon = "🏆"; title = "Through to the playoffs!"; sub = `Year ${state.year} · League ${playedTier}`;
@@ -4018,6 +4056,7 @@ function buildPhaseSplash(from, to, { yearSummary = null, tierBefore = state.lea
       if (yearSummary.newPayRate != null) money.push(["📈 Annual raise", `pay is now $${fmt(yearSummary.newPayRate)}/day`]);
     }
     next.push(["Preseason", `${BAL.preseasonDays} days — all 7 skills trainable, no matches`]);
+    next.push(state.employment.status === "unemployed" ? ["🔍 Job search", "carries on as normal"] : ["🏖️ Annual leave", `no ${state.employment.status === "pro" ? "Pro Duties" : "Work"} all preseason, paid as normal`]);
     next.push(["League cap", `skills can reach ${leagueSkillCap()} (League ${state.peakLeagueTier} best)`]);
     const unlockable = [];
     if (SKILL_COACH_LEVELS.some((l, i) => l.unlock === state.peakLeagueTier && i > 0)) unlockable.push(`Coach Lv${SKILL_COACH_LEVELS.findIndex((l) => l.unlock === state.peakLeagueTier) + 1}`);
@@ -4145,7 +4184,15 @@ function dayEventCards(before) {
       tip: "Hire them again in 🧑‍🏫 Staff once you can afford it, and switch auto-rehire back on if you want it.",
     });
   }
-  if (isOverAllocated()) {
+  const leaveOver = before.leave && !onLeave() && emp.status !== "unemployed";
+  if (isOverAllocated() && leaveOver) {
+    const label = emp.status === "pro" ? "Pro Duties" : "Work";
+    cards.push({
+      icon: "💼", tone: "neutral", title: "Back from annual leave",
+      body: `Preseason is over, so ${label} needs <b>${requiredWorkHours()}h a day</b> again — it's back in your plan, which now uses ${totalAssigned()}h of today's ${todayHours()}h.`,
+      tip: `Trim training or other hours to fit, then carry on. Missing ${label} hours costs chances again from today.`,
+    });
+  } else if (isOverAllocated()) {
     const carbGone = (before.carbHours || 0) > (state.carbHours || 0);
     cards.push(
       carbGone
@@ -4198,8 +4245,8 @@ function showEventSplash(cards, extraHtml = "", onDone = null) {
 function tutorialPages() {
   return [
     { icon: "👋", title: `Welcome, ${escapeHtml(state.playerName || "rookie")}`, body: `You're an Excel esports rookie starting at the bottom: <b>League ${BAL.leagueCount}</b> of ${BAL.leagueCount}. Win matches, climb the table and get promoted — all the way to League 1.` },
-    { icon: "🗓️", title: "Plan your day", body: `Each day you share out up to 24 hours with the sliders. <b>💼 Work ${BAL.workHoursRequired}h</b> pays the bills — $${BAL.dailyExpenses}/day living costs never stop. Train skills, and keep <b>🏃 Gym</b>, <b>🌙 Sleep</b> (${BAL.idealSleep}h+), <b>🎮 Relax</b> and <b>🥗 Food</b> topped up. The small marker on each slider is the minimum to avoid losing ground; bars preview tomorrow — green up, red down.` },
-    { icon: "🏋️", title: `This preseason: ${BAL.preseasonDays} days`, body: `No matches yet, and <b>all 7 skills</b> can be trained. Once the season starts only 1–3 <b>focus skills</b> a week can be trained — and they're exactly what that week's match tests. Tap <b>End Day ▶</b> for one day, or <b>End Week ▶▶</b> to play the week out.` },
+    { icon: "🗓️", title: "Plan your day", body: `Each day you share out up to 24 hours with the sliders. <b>💼 Work ${BAL.workHoursRequired}h</b> pays the bills — $${BAL.dailyExpenses}/day living costs never stop — but preseason is paid <b>🏖️ annual leave</b>, so it's greyed out for now. Train skills, and keep <b>🏃 Gym</b>, <b>🌙 Sleep</b> (${BAL.idealSleep}h+), <b>🎮 Relax</b> and <b>🥗 Food</b> topped up. The small marker on each slider is the minimum to avoid losing ground; bars preview tomorrow — green up, red down.` },
+    { icon: "🏋️", title: `This preseason: ${BAL.preseasonDays} days`, body: `No matches and no Work yet, and <b>all 7 skills</b> can be trained. Once the season starts only 1–3 <b>focus skills</b> a week can be trained — and they're exactly what that week's match tests. Tap <b>End Day ▶</b> for one day, or <b>End Week ▶▶</b> to play the week out.` },
     { icon: "🧑‍🏫", title: "Staff & money", body: `Skills train up to <b>${BAL.skillShopCapBase}</b> on your own. To go higher, hire that skill's <b>Coach</b> in Staff — one week at a time, paid up front. At $${SKILL_COACH_LEVELS[0].wage}/week a coach is a big chunk of your pay, so you can't hire everyone every week: spend where it counts.` },
     { icon: "⚔️", title: "Match day", body: `One match a week. Your stats set your <b>performance</b>, add some luck, and the higher match-day rating wins. Top ${BAL.playoffSize} reach the playoffs. <b>Four are promoted</b>: the playoff champion, plus the next ${BAL.promotionTablePlaces} highest in the table — so a top-${BAL.promotionTablePlaces} finish always goes up. Every result is explained on its result screen, and ☰ <b>How to Play</b> has the full rules.` },
   ];
@@ -4254,7 +4301,7 @@ function openHowTo() {
       ["🌙 Sleep", "Rest", `${B.idealSleep}h`],
       ["🎮 Relax", "Calm", `${B.relaxComposureThreshold}h`],
       ["🥗 Food", "Nutrition", `${B.skillDecayThresholdHours}h`],
-      ["💼 Work", "pay, keeps the job", `${B.workHoursRequired}h`],
+      ["💼 Work", "pay, keeps the job", `${B.workHoursRequired}h (none in preseason)`],
     ])}
     ${ul([
       "Below its <b>minimum</b> (the tick on each slider) a stat slips instead of growing. The slider track turns green when you've met it, red when you haven't.",
@@ -4327,7 +4374,8 @@ function openHowTo() {
 
   sec("money", "💼", "Work & money", `
     ${ul([
-      `Work <b>${B.workHoursRequired}h/day</b>, every phase. Pay starts at $${B.workPayMin}/day, +$${B.payRaisePerYear} each year for ${B.payRaiseMaxYears} years. Living costs are <b>$${B.dailyExpenses}/day</b>, always.`,
+      `Work <b>${B.workHoursRequired}h/day</b>, every phase but preseason. Pay starts at $${B.workPayMin}/day, +$${B.payRaisePerYear} each year for ${B.payRaiseMaxYears} years. Living costs are <b>$${B.dailyExpenses}/day</b>, always.`,
+      `<b>🏖️ Annual leave:</b> preseason is paid time off — no Work or Pro Duties, full pay, no chances at risk. A job search carries on as normal.`,
       `<b>Overtime:</b> up to ${B.overtimeMaxHours}h extra at half your hourly rate ($${Math.round(B.workPayMin / B.workHoursRequired / 2)}/h at $${B.workPayMin}/day).`,
       `Short on Work hours? You keep your pay but lose part of a <b>chance</b> (back after ${B.strikeWindowDays} days). Lose all ${fmt1(B.strikesToFire)} and you're fired.`,
       `Fired: the Work slider becomes <b>Job Search</b> — ${B.jobSearchHoursRange[0]}–${B.jobSearchHoursRange[1]}h in total gets you hired, at least ${B.jobSearchMinHours}h a day. Pay resets to the minimum.`,
@@ -4657,6 +4705,7 @@ function runDay() {
   const weekEndsToday = daysLeftInWeek() === 1;
   const phaseBefore = state.seasonPhase;
   const tierBefore = state.leagueTier;
+  const leaveBefore = onLeave();
   if (!state.phaseStart) state.phaseStart = phaseSnapshot();
   const dayHeaderHtml = `Day ${state.day} — Results`;
   const entry = { html: dayHeaderHtml, cls: "day-header" };
@@ -4688,6 +4737,10 @@ function runDay() {
   // rerolls — the match grades the skills actually trained this week, not
   // whatever gets revealed for the week ahead.
   const { matchResult, phaseEvent, yearSummary } = processDayEnd();
+  // Annual leave starts with preseason (Work goes to 0h) and ends with it
+  // (back to the required hours — the plan may need trimming to fit).
+  if (onLeave()) state.allocation.work = 0;
+  else if (leaveBefore && state.employment.status !== "unemployed") state.allocation.work = requiredWorkHours();
   if (matchResult) {
     // Rating after everything this match did (incl. a champion bonus), so a
     // replay of the result screen shows the same numbers later on.
@@ -4804,6 +4857,7 @@ function weekSnapshot() {
     employment: state.employment.status,
     techniques: state.employment.techniqueQueue.length,
     carbHours: state.carbHours || 0,
+    leave: onLeave(),
   };
 }
 
@@ -4934,6 +4988,7 @@ function wireInputs() {
     if (!btn) return;
     const key = btn.getAttribute("data-key");
     if (key === "exercise" && state.injury.active) return;
+    if (key === "work" && onLeave()) return;
     const dir = Number(btn.getAttribute("data-dir"));
     setAllocation(key, getAllocHours(key) + dir);
   });
