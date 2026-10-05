@@ -3,8 +3,21 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.52.0";
+const APP_VERSION = "4.53.0";
 const SAVE_KEY = "cellgrind_save_v1";
+const SAVE_BACKUP_KEY = "cellgrind_save_unreadable";
+// Bumped when a save's shape changes. Older saves aren't converted (there's
+// only ever been one tester) — anything missing is filled from a new
+// career's defaults (see migrateSave), and a save too different to use is
+// refused.
+const SAVE_VERSION = 5;
+
+// Nested records a save might be missing a newer field in: filled from a
+// new career's defaults, keeping everything the save already has.
+const SAVE_DEFAULT_PATHS = [
+  "stats", "stats.skills", "allocation", "allocation.skills", "employment", "staff", "items", "items.crash",
+  "equipment", "matchHistory", "injury", "burnout", "yearCashFlow", "upgrades",
+];
 
 /* ---------------------------------------------------------------------- */
 /* Balance constants — tune game feel here                                */
@@ -27,20 +40,21 @@ const BAL = {
   // Sleep's bonus to Calm on top: 7h gives half, 8h+ the full amount.
   sleepComposureBonusIdeal: 1.5,
   sleepComposureBonusLong: 3,
-  // Rest below this starts wearing on Calm and Health, by these much
-  // per point under it per day.
   // Calm above 100 is a reserve: Relax past what's needed banks at half
   // rate up to this cap, fading this much a day. Match day counts 100 max.
   calmBankCap: 130,
   calmBankRate: 0.5,
   calmBankFade: 1,
-  // Employed: Work can run this many hours past the requirement, each paid
-  // at half the job's hourly rate.
-  overtimeMaxHours: 4,
-  carbLoadMaxHours: 3,
+  // Rest below this starts wearing on Calm and Health, by these much
+  // per point under it per day.
   restDragThreshold: 80,
   restDragComposure: 0.08,
   restDragHealth: 0.04,
+  // Employed: Work can run this many hours past the requirement, each paid
+  // at half the job's hourly rate.
+  overtimeMaxHours: 4,
+  // Food past 1h with Nutrition already at 100 banks hours for tomorrow.
+  carbLoadMaxHours: 3,
   injuryChancePerHour: 0.025, // every Gym hour adds this much injury chance that day — only 0h is risk-free
   gymMaxHours: 8,
   injuryPhysLoss: [5, 10],
@@ -76,8 +90,8 @@ const BAL = {
   trainingCampDays: 28,
   statCapBase: 70, // Physical Health ceiling with zero relevant upgrades
   statCapPerLevel: 10, // + this much per Physio level (max 3 levels -> +30 -> 100)
-  // Skill ceilings stack two independent gates: the Coaching Shop (per
-  // skill, 5 levels) and the league you've ever reached (peak, not
+  // Skill ceilings stack two independent gates: the hired coach's level
+  // (per skill, 5 levels) and the league you've ever reached (peak, not
   // current — getting relegated doesn't lower it). Effective cap is the
   // lower of the two.
   skillShopCapBase: 50,
@@ -90,8 +104,11 @@ const BAL = {
   // the champion — always 4, matching relegationCount so every tier stays at
   // exactly leagueSize. The top 3 are therefore always promoted.
   promotionTablePlaces: 3,
-  oppPerfRange: [50, 92], // rivals' cosmetic match-day performance (see resolveMatch)
   relegationCount: 4,
+  oppPerfRange: [50, 95], // rivals' cosmetic match-day performance (see resolveMatch)
+  // Rating change per match: up to this many points, scaled by how
+  // unlikely the result was (Elo).
+  ratingK: 24,
   // Rating bounds — the same for the player and every rival. The floor only
   // stops a long losing run going negative; the ceiling is well above any
   // rating the game produces.
@@ -211,13 +228,12 @@ const LEAGUE_RATING_BANDS = {
   5: [350, 600],
 };
 
-// Each upgrade has up to 3 purchasable levels (5 for the 7 skill coaches).
-// state.upgrades[key] stores the current level (0 = not purchased). Buying
-// goes 0->1->2->... in order; each level's fields describe that level's
-// total (not additive) effect.
-// Staff are hired a week at a time (see hireStaff). Each level is a one-off
-// fee to unlock — only once your peak league allows it — plus a weekly wage
-// to have that level on hand. Level 1 is free to unlock. Wages are tuned so
+// Staff: 7 skill coaches (5 levels) and 6 support roles (3 levels). Each
+// level's fields are that level's total (not additive) effect, and
+// state.upgrades[key] is the highest level unlocked. Staff are hired a week
+// at a time (see hireStaff). Each level is a one-off fee to unlock — only
+// once your peak league allows it — plus a weekly wage to have that level
+// on hand. Level 1 is free to unlock. Wages are tuned so
 // your weekly spare money covers ~90% of what you'd want in a 1-skill week
 // and ~40% in a 3-skill week, in every league at that league's best level.
 const SKILL_COACH_LEVELS = [
@@ -256,57 +272,58 @@ Object.assign(UPGRADES, {
     name: "Sports Physio",
     icon: "🩺",
     levels: [
-      { cost: 300, injuryReduceMult: 0.8, exerciseBonus: 0.05, desc: "-20% injury risk, +5% Gym gains, Health ceiling 80" },
-      { cost: 650, injuryReduceMult: 0.65, exerciseBonus: 0.1, desc: "-35% injury risk, +10% Gym gains, Health ceiling 90" },
-      { cost: 1200, injuryReduceMult: 0.5, exerciseBonus: 0.18, desc: "-50% injury risk, +18% Gym gains, Health ceiling 100" },
+      { injuryReduceMult: 0.8, exerciseBonus: 0.05, desc: "-20% injury risk, +5% Gym gains, Health ceiling 80" },
+      { injuryReduceMult: 0.65, exerciseBonus: 0.1, desc: "-35% injury risk, +10% Gym gains, Health ceiling 90" },
+      { injuryReduceMult: 0.5, exerciseBonus: 0.18, desc: "-50% injury risk, +18% Gym gains, Health ceiling 100" },
     ],
   },
   sleepApp: {
     name: "Sleep Coach App",
     icon: "💤",
     levels: [
-      { cost: 250, sleepDebtMult: 0.85, desc: "-15% Rest lost from poor sleep" },
-      { cost: 550, sleepDebtMult: 0.75, desc: "-25% Rest lost from poor sleep" },
-      { cost: 1000, sleepDebtMult: 0.6, desc: "-40% Rest lost from poor sleep" },
+      { sleepDebtMult: 0.85, desc: "-15% Rest lost from poor sleep" },
+      { sleepDebtMult: 0.75, desc: "-25% Rest lost from poor sleep" },
+      { sleepDebtMult: 0.6, desc: "-40% Rest lost from poor sleep" },
     ],
   },
   nutritionist: {
     name: "Nutritionist",
     icon: "🥗",
     levels: [
-      { cost: 300, nutritionGainMult: 1.15, nutritionDecayMult: 0.85, desc: "+15% Nutrition gain, -15% Nutrition lost when neglected" },
-      { cost: 650, nutritionGainMult: 1.3, nutritionDecayMult: 0.7, desc: "+30% Nutrition gain, -30% Nutrition lost when neglected" },
-      { cost: 1150, nutritionGainMult: 1.5, nutritionDecayMult: 0.5, desc: "+50% Nutrition gain, -50% Nutrition lost when neglected" },
+      { nutritionGainMult: 1.15, nutritionDecayMult: 0.85, desc: "+15% Nutrition gain, -15% Nutrition lost when neglected" },
+      { nutritionGainMult: 1.3, nutritionDecayMult: 0.7, desc: "+30% Nutrition gain, -30% Nutrition lost when neglected" },
+      { nutritionGainMult: 1.5, nutritionDecayMult: 0.5, desc: "+50% Nutrition gain, -50% Nutrition lost when neglected" },
     ],
   },
   meditation: {
     name: "Meditation Coach",
     icon: "🧘",
     levels: [
-      { cost: 200, reliefMult: 1.2, desc: "+20% Calm relief from Relax" },
-      { cost: 450, reliefMult: 1.4, desc: "+40% Calm relief from Relax" },
-      { cost: 850, reliefMult: 1.65, desc: "+65% Calm relief from Relax" },
+      { reliefMult: 1.2, desc: "+20% Calm relief from Relax" },
+      { reliefMult: 1.4, desc: "+40% Calm relief from Relax" },
+      { reliefMult: 1.65, desc: "+65% Calm relief from Relax" },
     ],
   },
   recovery: {
     name: "Recovery Program",
     icon: "🧊",
     levels: [
-      { cost: 350, injuryDaysReduce: 1, detrainMult: 0.7, desc: "-1 day injury duration, -30% detraining" },
-      { cost: 750, injuryDaysReduce: 2, detrainMult: 0.45, desc: "-2 days injury duration, -55% detraining" },
-      { cost: 1400, injuryDaysReduce: 3, detrainMult: 0.2, desc: "-3 days injury duration, -80% detraining" },
+      { injuryDaysReduce: 1, detrainMult: 0.7, desc: "-1 day injury duration, -30% detraining" },
+      { injuryDaysReduce: 2, detrainMult: 0.45, desc: "-2 days injury duration, -55% detraining" },
+      { injuryDaysReduce: 3, detrainMult: 0.2, desc: "-3 days injury duration, -80% detraining" },
     ],
   },
   manager: {
     name: "Team Manager",
     icon: "🧑‍💼",
     levels: [
-      { cost: 400, rankLossMult: 0.9, cashBonusMult: 1.0, desc: "-10% rating lost on defeat" },
-      { cost: 800, rankLossMult: 0.8, cashBonusMult: 1.05, desc: "-20% rating lost on defeat, +5% prize money" },
-      { cost: 1500, rankLossMult: 0.65, cashBonusMult: 1.1, desc: "-35% rating lost on defeat, +10% prize money" },
+      { rankLossMult: 0.9, cashBonusMult: 1.0, desc: "-10% rating lost on defeat" },
+      { rankLossMult: 0.8, cashBonusMult: 1.05, desc: "-20% rating lost on defeat, +5% prize money" },
+      { rankLossMult: 0.65, cashBonusMult: 1.1, desc: "-35% rating lost on defeat, +10% prize money" },
     ],
   },
 });
+// Support fees, wages and unlocks are shared by level — filled in here.
 Object.keys(SUPPORT_WAGES).forEach((key) => {
   UPGRADES[key].levels.forEach((lvl, i) => {
     lvl.cost = SUPPORT_LEVEL_FEES[i];
@@ -479,8 +496,8 @@ function injuryChance(gymHours) {
 function physCap() {
   return BAL.statCapBase + BAL.statCapPerLevel * hiredLevel("physio");
 }
-// Effective skill ceiling stacks two independent gates: the Coaching Shop
-// (per skill, 5 levels) and the highest league ever reached (peak tier).
+// Effective skill ceiling stacks two independent gates: the hired coach's
+// level (per skill, 5 levels) and the highest league ever reached (peak tier).
 function skillShopCap(key) {
   return BAL.skillShopCapBase + BAL.skillShopCapPerLevel * hiredLevel(coachKey(key));
 }
@@ -679,42 +696,6 @@ function shuffledRivalNames() {
   return names;
 }
 
-// Saves from before v4.33.0 used names built from 28 + 28 repeating parts.
-// Give every rival a name from the new list, and carry it through every
-// stored copy of the old one (fixtures, standings snapshots, brackets,
-// champions, season results) and the log, so nothing is left pointing at a
-// name that no longer exists. Ratings, records and league places are kept.
-function renameRivalsToCurrentList(s) {
-  const pool = shuffledRivalNames();
-  const map = new Map();
-  s.rivals.forEach((r, i) => {
-    const fresh = pool[i % pool.length];
-    map.set(r.name, fresh);
-    r.name = fresh;
-  });
-  const NAME_KEYS = ["name", "opponent", "opponentName"];
-  const walk = (node) => {
-    if (!node || typeof node !== "object") return;
-    if (Array.isArray(node)) return node.forEach(walk);
-    if (!node.isPlayer) {
-      NAME_KEYS.forEach((k) => {
-        if (typeof node[k] === "string" && map.has(node[k])) node[k] = map.get(node[k]);
-      });
-    }
-    Object.keys(node).forEach((k) => walk(node[k]));
-  };
-  Object.keys(s).forEach((k) => {
-    if (k !== "rivals" && k !== "logEntries") walk(s[k]);
-  });
-  if (Array.isArray(s.logEntries) && map.size) {
-    const olds = [...map.keys()].sort((x, y) => y.length - x.length).map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-    const re = new RegExp(`(?<![A-Za-z0-9])(${olds.join("|")})(?![A-Za-z0-9])`, "g");
-    s.logEntries.forEach((e) => {
-      if (typeof e.html === "string") e.html = e.html.replace(re, (m) => map.get(m) || m);
-    });
-  }
-}
-
 /* ---------------------------------------------------------------------- */
 /* Persistent league roster                                               */
 /* ---------------------------------------------------------------------- */
@@ -739,16 +720,6 @@ function generateRivalRoster(playerTier) {
     }
   }
   return rivals;
-}
-
-// One-time placement for saves migrating in from before leagues existed —
-// buckets an already-earned rank into the tier whose band it best fits.
-function rankToLeagueTier(rank) {
-  if (rank >= LEAGUE_RATING_BANDS[1][0]) return 1;
-  if (rank >= LEAGUE_RATING_BANDS[2][0]) return 2;
-  if (rank >= LEAGUE_RATING_BANDS[3][0]) return 3;
-  if (rank >= LEAGUE_RATING_BANDS[4][0]) return 4;
-  return 5;
 }
 
 // Standard circle-method round-robin: N members (even), N-1 rounds, every
@@ -810,6 +781,7 @@ function freshState() {
   const rivals = generateRivalRoster(leagueTier);
   const leagueData = buildSeasonLeagueData(rivals, leagueTier);
   return {
+    saveVersion: SAVE_VERSION,
     day: 1, // total career days played — flavor/log only
     playerName: null,
     year: 1,
@@ -819,7 +791,6 @@ function freshState() {
     leagueTier, // 1 (top) - 5 (bottom); new careers start at the bottom
     peakLeagueTier: leagueTier, // numerically lowest (best) tier ever reached
     rivals, // 199 persistent named rivals, spanning all 5 leagues
-    rivalNamesVersion: 2, // 2 = names from RIVAL_NAMES (see renameRivalsToCurrentList)
     matchHistory: { mine: [], league: {} }, // see recordLeagueResult / recordMyMatch
     // hired: { [upgradeKey]: level } for this week only. auto: support staff
     // to rehire at the same level when a week ends. missed: names that
@@ -863,7 +834,7 @@ function freshState() {
       skills: Object.fromEntries(SKILL_KEYS.map((k) => [k, 0])),
       exercise: 1,
       sleep: 7,
-      relax: 2,
+      relax: BAL.relaxComposureThreshold,
       nutrition: 1,
       work: BAL.workHoursRequired,
     },
@@ -899,263 +870,56 @@ function storageAvailable() {
 
 const STORAGE_OK = storageAvailable();
 let lastLoadedFromSave = false;
+let loadFailed = false; // the saved career couldn't be read (kept under SAVE_BACKUP_KEY)
 let state = loadState();
 
+// Turns parsed save JSON into a full state. Throws if it isn't a usable save.
 function migrateSave(parsed) {
-  // v1.2.0 merged the separate Running/Cross Training sliders into one
-  // Exercise slider. Old saves still have { running, cross } instead.
-  const alloc = parsed.allocation;
-  if (alloc && alloc.exercise === undefined && (alloc.running !== undefined || alloc.cross !== undefined)) {
-    alloc.exercise = clamp((alloc.running || 0) + (alloc.cross || 0), 0, 12);
-    delete alloc.running;
-    delete alloc.cross;
-  }
-
-  // v1.3.0 turned upgrades from owned:boolean into owned:level (0-3), and
-  // added two new upgrade types. Rebuild upgrades from scratch so old
-  // booleans convert to level 1 and any new/missing keys default to 0.
-  const oldUpgrades = parsed.upgrades || {};
-  const normalizedUpgrades = {};
-  Object.keys(UPGRADES).forEach((key) => {
-    const v = oldUpgrades[key];
-    if (typeof v === "boolean") normalizedUpgrades[key] = v ? 1 : 0;
-    else if (typeof v === "number") normalizedUpgrades[key] = v;
-    else normalizedUpgrades[key] = 0;
+  const usable =
+    parsed && typeof parsed === "object" &&
+    Array.isArray(parsed.rivals) && parsed.rivals.length &&
+    parsed.stats && parsed.stats.skills && parsed.leaguePoints && parsed.leagueRoundRobins && parsed.employment;
+  if (!usable) throw new Error("Save is from an unsupported version");
+  const fresh = freshState();
+  const defaults = freshState(); // a separate copy, so nothing ends up shared
+  // Only keys the game still uses — anything retired is dropped.
+  Object.keys(fresh).forEach((k) => {
+    if (parsed[k] !== undefined) fresh[k] = parsed[k];
   });
-  parsed.upgrades = normalizedUpgrades;
-
-  // v2.0.0 introduced the season/league structure (preseason -> 39-round
-  // regular season -> top-16 playoffs -> offseason -> new year). Any save
-  // that predates it needs a Year 1 reset; handled together with the
-  // v3.0.0 migration below since every such save also predates leagues.
-  if (!parsed.seasonPhase) {
-    parsed.year = 1;
-  }
-
-  // v3.0.0 introduced 5 persistent leagues (199 rivals + the player, 40 per
-  // tier) with promotion/relegation, replacing the old per-season randomly
-  // generated 39-rival schedule. Any save without a roster gets one now,
-  // placed into whichever tier its existing rank best fits, and starts a
-  // fresh preseason there — reconciling an in-flight old-style season
-  // against the new league structure isn't worth the complexity. This also
-  // covers saves from before v2.0.0, which equally lack a roster.
-  if (!parsed.rivals) {
-    const tier = rankToLeagueTier(parsed.rank || 480);
-    const rivals = generateRivalRoster(tier);
-    parsed.rivals = rivals;
-    parsed.leagueTier = tier;
-    parsed.peakLeagueTier = tier;
-    parsed.leagueStandings = { 1: null, 2: null, 3: null, 4: null, 5: null };
-    parsed.seasonPhase = "preseason";
-    parsed.phaseDay = 0;
-    parsed.roundIndex = 0;
-    parsed.seasonResults = [];
-    parsed.lastStandings = null;
-    parsed.lastPlayerPosition = null;
-    parsed.offseasonDays = BAL.offseasonDays;
-    parsed.offseasonReason = null;
-    parsed.playoff = null;
-    const leagueData = buildSeasonLeagueData(rivals, tier);
-    parsed.schedule = leagueData.schedule;
-    parsed.leagueRoundRobins = leagueData.roundRobins;
-    parsed.leaguePoints = leagueData.points;
-  }
-
-  // v4.0.0 replaced the single Excel Skill stat with 7 case specialties
-  // (only 1-3 "active" and trainable each round), and renamed/inverted
-  // Sleep Debt -> Rest and Stress -> Calm (both higher-is-better now,
-  // matching every other stat). Any save still on the old single-skill
-  // shape gets migrated: every new skill starts at the old Excel Skill
-  // level (simplest continuity, no worse than a fresh grind), Rest/Calm
-  // are seeded from their old inverse, and cash is refunded for whatever
-  // was invested in the old single Personal Coach upgrade (it no longer
-  // exists — 5 flat levels: 300/650/1200 cumulative) since that progress
-  // can't carry over 1:1 into 7 separate per-skill coaches.
-  if (!parsed.stats || parsed.stats.skills === undefined) {
-    const oldStats = parsed.stats || { excel: 8, phys: 65, sleepDebt: 0, stress: 8 };
-    const oldExcel = oldStats.excel !== undefined ? oldStats.excel : 8;
-    // Every skill starts fresh (level 0) in the new per-skill Coaching Shop,
-    // so the migrated value can't exceed the shop-base/league-cap gate any
-    // veteran's real progress would still have to clear.
-    const migratedSkillCap = Math.min(BAL.skillShopCapBase, LEAGUE_SKILL_CAP[parsed.peakLeagueTier] || LEAGUE_SKILL_CAP[5]);
-    const seededSkill = clamp(oldExcel, 0, migratedSkillCap);
-    parsed.stats = {
-      skills: Object.fromEntries(SKILL_KEYS.map((k) => [k, seededSkill])),
-      phys: oldStats.phys !== undefined ? oldStats.phys : 65,
-      rest: oldStats.sleepDebt !== undefined ? clamp(100 - oldStats.sleepDebt, 0, 100) : 100,
-      composure: oldStats.stress !== undefined ? clamp(100 - oldStats.stress, 0, 100) : 92,
-    };
-
-    const oldAlloc = parsed.allocation || {};
-    parsed.allocation = {
-      skills: Object.fromEntries(SKILL_KEYS.map((k) => [k, 0])),
-      exercise: oldAlloc.exercise !== undefined ? oldAlloc.exercise : 1,
-      sleep: oldAlloc.sleep !== undefined ? oldAlloc.sleep : 8,
-      relax: oldAlloc.relax !== undefined ? oldAlloc.relax : 2,
-    };
-
-    const OLD_COACH_CUMULATIVE = [0, 300, 950, 2150];
-    const oldCoachLvl = clamp(oldUpgrades.coach || 0, 0, 3);
-    parsed.cash = (parsed.cash || 0) + OLD_COACH_CUMULATIVE[oldCoachLvl];
-
-    parsed.activeSkills = rollActiveSkills();
-    parsed.skillCycleDay = 0;
-  }
-
-  // v4.2.0 removed Energy — Rest already fully covered training
-  // effectiveness — and replaced it with Nutrition, which instead governs
-  // the day's total hours budget. There's no meaningful way to derive
-  // Nutrition from the old Energy number since they measure different
-  // things, so any save missing it just gets the same starting value a
-  // fresh career gets.
-  if (parsed.stats && parsed.stats.nutrition === undefined) {
-    delete parsed.stats.energy;
-    parsed.stats.nutrition = 75;
-  }
-  if (parsed.allocation && parsed.allocation.nutrition === undefined) {
-    parsed.allocation.nutrition = 1;
-  }
-
-  // v4.4.0 added mandatory employment (Work -> Pro, with Unemployed as the
-  // recovery state). Every existing career just starts Employed — there's
-  // no prior data to derive a status from, and starting employed means no
-  // save is retroactively punished by a surprise strike. Any save already
-  // meeting the go-pro thresholds is promoted automatically the next time
-  // a day resolves, same as a freshly-qualifying career.
-  if (!parsed.employment) {
-    parsed.employment = {
-      status: "employed",
-      strikes: [],
-      jobSearchHours: 0,
-      techniqueQueue: [],
-      techniqueDayCounter: 0,
-    };
-  }
-  if (parsed.allocation && parsed.allocation.work === undefined) {
-    parsed.allocation.work = BAL.workHoursRequired;
-  }
-
-  // v4.9.0 replaced flat pay with per-role rates that rise with tenure and
-  // reset on job loss. Any save missing them starts both at their minimum —
-  // under-crediting tenure already built up is the safe direction (never
-  // retroactively grants raises that weren't earned under the old flat rate).
-  if (parsed.employment && parsed.employment.workPay === undefined) {
-    parsed.employment.workPay = BAL.workPayMin;
-  }
-  if (parsed.employment && parsed.employment.proPay === undefined) {
-    parsed.employment.proPay = BAL.proPayMin;
-  }
-
-  // v4.5.0 replaced "simulate every league in one bulk pass at season end"
-  // with a real week-by-week round-robin for all 5 tiers, so standings are
-  // live and visible from round 1 instead of hidden for an entire 39-round
-  // season. Any save missing that structure gets a fresh one for its
-  // current league: there's no way to recover what the old random-shuffle
-  // schedule would have played next, so only the unplayed tail of the
-  // fixture list is replaced — already-played rounds and their results
-  // stay exactly as recorded. The player's own points so far are credited
-  // from their real record; other members start this season's live table
-  // at 0, since the old model never tracked interim standings for anyone
-  // but the player.
-  if (!parsed.leagueRoundRobins || !parsed.leaguePoints) {
-    const tier = parsed.leagueTier;
-    const leagueData = buildSeasonLeagueData(parsed.rivals, tier);
-    parsed.leagueRoundRobins = leagueData.roundRobins;
-    parsed.leaguePoints = leagueData.points;
-
-    const playedCount = parsed.roundIndex || 0;
-    const oldSchedule = parsed.schedule || [];
-    parsed.schedule = oldSchedule.slice(0, playedCount).concat(leagueData.schedule.slice(playedCount));
-
-    const playerWinsSoFar = (parsed.seasonResults || []).filter((r) => r.win).length;
-    parsed.leaguePoints[tier].player = playerWinsSoFar * 3;
-  }
-
-  // Promotion now waits for the playoffs (champion + top 3). A save already
-  // in the playoffs or offseason when that shipped had its movement applied
-  // at season end under the old table-only rule — mark it done so the end
-  // of its playoffs doesn't move everyone a second time.
-  if (parsed.seasonMovementApplied === undefined) {
-    parsed.seasonMovementApplied = parsed.seasonPhase === "playoffs" || parsed.seasonPhase === "offseason";
-  }
-  if (parsed.playoffChampions === undefined) parsed.playoffChampions = null;
-
-  // Injured saves from before the Gym slider was cleared on injury still
-  // have hours locked in it — free them.
-  if (parsed.injury && parsed.injury.active && parsed.allocation) parsed.allocation.exercise = 0;
-  // The Gym slider's max dropped from 12h to 8h.
-  if (parsed.allocation) parsed.allocation.exercise = Math.min(parsed.allocation.exercise || 0, BAL.gymMaxHours);
-  // Job search targets became a random 10-40h rolled on job loss; a save
-  // that's mid-search keeps the fixed 30h it started with.
-  if (parsed.employment && parsed.employment.jobSearchHoursNeeded === undefined) {
-    parsed.employment.jobSearchHoursNeeded = parsed.employment.status === "unemployed" ? 30 : null;
-  }
-  // A rehire used to keep Job Search's up-to-16h on a Work slider that caps
-  // at 9, counting phantom hours against the day (and blocking End Day).
-  if (parsed.allocation && parsed.employment) {
-    parsed.allocation.work = Math.min(parsed.allocation.work || 0, workMaxHours(parsed.employment.status));
-  }
-
-  // In-season, skillCycleDay and phaseDay always advance together — both
-  // start at 0 with the regular season, same every-day increment, same
-  // reset-at-7. A save written while a prior bug let them drift (the weekly
-  // skill reveal landing a day before that week's match) gets them
-  // realigned here instead of carrying the offset forever.
-  if ((parsed.seasonPhase === "regular" || parsed.seasonPhase === "playoffs") && parsed.skillCycleDay !== parsed.phaseDay) {
-    parsed.skillCycleDay = parsed.phaseDay;
-  }
-
-  // v4.37.0: phase splash screens + tutorial. Existing careers have seen
-  // the game already; their current phase's summary starts from now.
-  if (parsed.tutorialSeen === undefined) parsed.tutorialSeen = true;
-
-  // v4.36.0: staff are hired weekly (owned levels stay unlocked).
-  if (!parsed.staff) parsed.staff = { hired: {} };
-  // v4.39.0: auto-rehire for support staff.
-  if (!parsed.staff.auto) parsed.staff.auto = {};
-  if (!parsed.staff.missed) parsed.staff.missed = [];
-  // v4.43.0: energy items.
-  if (!parsed.items) parsed.items = { used: {}, crash: { rest: 0, composure: 0 } };
-  // v4.46.0: equipment.
-  if (!parsed.equipment) parsed.equipment = { owned: {} };
-  // v4.49.0: carb loading.
-  if (parsed.carbHours == null) parsed.carbHours = 0;
-
-  // v4.35.0: match history. Earlier matches this season only kept opponent
-  // and result, so they come in as simple rows; league-wide results start now.
-  if (!parsed.matchHistory) {
-    const tier = parsed.lastStandingsTier || parsed.leagueTier;
-    parsed.matchHistory = {
-      mine: (parsed.seasonResults || []).map((r, i) => ({
-        legacy: true,
-        year: parsed.year,
-        tier,
-        roundLabel: `Round ${i + 1}/${BAL.seasonRounds}`,
-        opponentName: r.opponent,
-        win: r.win,
-      })),
-      league: {},
-    };
-  }
-
-  // v4.33.0: rivals get names from the hand-picked list (no repeated words).
-  if (parsed.rivalNamesVersion !== 2 && Array.isArray(parsed.rivals) && parsed.rivals.length) {
-    renameRivalsToCurrentList(parsed);
-    parsed.rivalNamesVersion = 2;
-  }
-
-  return parsed;
+  SAVE_DEFAULT_PATHS.forEach((path) => {
+    const keys = path.split(".");
+    const last = keys.pop();
+    const from = keys.reduce((o, k) => o[k], defaults);
+    const target = keys.reduce((o, k) => o[k], fresh);
+    const v = target[last];
+    target[last] = v && typeof v === "object" && !Array.isArray(v) ? { ...from[last], ...v } : from[last];
+  });
+  fresh.saveVersion = SAVE_VERSION;
+  // Slider maxes can drop between versions — never load a plan past them.
+  const a = fresh.allocation;
+  a.exercise = clamp(a.exercise || 0, 0, BAL.gymMaxHours);
+  a.work = clamp(a.work || 0, 0, workMaxHours(fresh.employment.status));
+  return fresh;
 }
 
 function loadState() {
   if (!STORAGE_OK) return freshState();
+  let raw = null;
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
+    raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return freshState();
-    const parsed = migrateSave(JSON.parse(raw));
+    const loaded = migrateSave(JSON.parse(raw));
     lastLoadedFromSave = true;
-    return Object.assign(freshState(), parsed);
+    return loaded;
   } catch (e) {
+    // Don't let the new career's first save wipe it: keep the unreadable
+    // save under a backup key, and say so in the log.
+    try {
+      if (raw) localStorage.setItem(SAVE_BACKUP_KEY, raw);
+    } catch (e2) {
+      // storage full — nothing more we can do
+    }
+    loadFailed = true;
     return freshState();
   }
 }
@@ -1416,7 +1180,7 @@ function resolveDay() {
   s.phys = result.phys;
   const physDelta = result.phys - physBefore;
   if (result.exerciseH > 0) {
-    let note = result.physWasAtCap && result.pCap < 100 ? ` (capped at ${result.pCap} — upgrade Sports Physio for a higher ceiling)` : "";
+    let note = result.physWasAtCap && result.pCap < 100 ? ` (capped at ${result.pCap} — hire a Sports Physio for a higher ceiling)` : "";
     events.push({ type: physDelta > 0 ? "good" : "neutral", text: `🏃 Gym (${result.exerciseH}h): Health ${fmtSigned(physDelta)}${note}` });
   }
   if (result.physDecayFromRest > 1) {
@@ -1468,10 +1232,13 @@ function resolveDay() {
   s.composure = result.composure;
   const calmChange = s.composure - calmBefore;
   const bankNote = calmBank() >= 0.5 ? ` (${fmt(calmBank())} 😎 Chill)` : "";
+  // Coloured by which way Calm actually moved — Sleep and low Rest move it
+  // too, so short Relax can still end up, and enough Relax down.
+  const calmType = calmChange > 0.05 ? "good" : calmChange < -0.05 ? "bad" : "neutral";
   if (result.relaxH < BAL.relaxComposureThreshold) {
-    events.push({ type: "bad", text: `🔥 Under ${BAL.relaxComposureThreshold}h Relax: Calm ${fmtSigned(calmChange)} (now ${fmt(s.composure)})` });
+    events.push({ type: calmType, text: `🔥 Under ${BAL.relaxComposureThreshold}h Relax: Calm ${fmtSigned(calmChange)} (now ${fmt(s.composure)})` });
   } else {
-    events.push({ type: "good", text: `🎮 Relaxed ${result.relaxH}h: Calm ${fmtSigned(calmChange)}${bankNote}` });
+    events.push({ type: calmType, text: `🎮 Relaxed ${result.relaxH}h: Calm ${fmtSigned(calmChange)}${bankNote}` });
   }
   if (result.crash.rest || result.crash.composure) {
     const parts = [result.crash.rest ? `Rest −${result.crash.rest}` : "", result.crash.composure ? `Calm −${result.crash.composure}` : ""].filter(Boolean);
@@ -1500,9 +1267,7 @@ function resolveDay() {
   return events;
 }
 
-// This job search's hour target, rolled when the job was lost. Saves that
-// were already unemployed before targets were randomised keep the fixed
-// 30h they were promised.
+// This job search's hour target, rolled when the job was lost.
 function jobSearchTarget(emp = state.employment) {
   return emp.jobSearchHoursNeeded || 30;
 }
@@ -1555,9 +1320,13 @@ function resolveEmploymentDay() {
       }
       if (isPro) {
         const extra = workH - required;
-        if (extra > 0 && emp.techniqueQueue.length > 0) {
+        // Hours left over after mastering one carry on into the next.
+        let left = extra;
+        while (left > 0 && emp.techniqueQueue.length > 0) {
           const current = emp.techniqueQueue[0];
-          current.hoursDone = Math.min(current.hoursNeeded, current.hoursDone + extra);
+          const used = Math.min(left, current.hoursNeeded - current.hoursDone);
+          current.hoursDone += used;
+          left -= used;
           if (current.hoursDone >= current.hoursNeeded) {
             emp.techniqueQueue.shift();
             events.push({
@@ -1734,10 +1503,11 @@ function resolveMatch(opponentRating) {
   const oppFinal = opponentRating + oppLuck;
   const win = yourFinal > oppFinal || (yourFinal === oppFinal && matchRating >= opponentRating);
   // Rivals have no stats, so their "performance" is cosmetic: around 70,
-  // nudged by their rating (a weak rival rarely plays a blinder) plus a
-  // little day-to-day wobble, on the same ×3 scale as yours.
-  const oppPerf = clamp(Math.round(70 + (opponentRating - 500) / 25) + randInt(-5, 5), BAL.oppPerfRange[0], BAL.oppPerfRange[1]);
-  const K = 24;
+  // nudged by how their rating compares with yours (a weaker rival rarely
+  // plays a blinder) plus a little day-to-day wobble, on the same ×3 scale.
+  // Relative to you, so it reads the same in every league.
+  const oppPerf = clamp(Math.round(70 + (opponentRating - rankBefore) / 25) + randInt(-5, 5), BAL.oppPerfRange[0], BAL.oppPerfRange[1]);
+  const K = BAL.ratingK;
   const actual = win ? 1 : 0;
   let ratingChange = Math.round(K * (actual - winProb));
   if (ratingChange < 0) ratingChange = Math.round(ratingChange * rankLossMult);
@@ -1819,14 +1589,11 @@ function simulateNpcMatch(ratingA, ratingB) {
   return Math.random() < winProbA;
 }
 
-function eloChange(ratingA, ratingB, aWon, K = 24) {
+function eloChange(ratingA, ratingB, aWon, K = BAL.ratingK) {
   const winProbA = 1 / (1 + Math.pow(10, (ratingB - ratingA) / 400));
   return Math.round(K * ((aWon ? 1 : 0) - winProbA));
 }
 
-// Resolves one NPC-vs-NPC match and updates both rivals' persistent ratings
-// and lifetime records — this is what makes the other 199 rivals a real,
-// evolving world rather than static names.
 // ---- Match history ----
 // mine: every match you play, as the full result object (so its result
 //   screen can be reopened later). Kept for the whole career.
@@ -1870,6 +1637,9 @@ function recordMyMatch(result) {
   ensureHistory().mine.push(copy);
 }
 
+// Resolves one rival-vs-rival match and updates both rivals' persistent
+// ratings and lifetime records — this is what makes the other 199 rivals a
+// real, evolving world rather than static names.
 function resolveNpcMatch(rivalA, rivalB) {
   const aWon = simulateNpcMatch(rivalA.rating, rivalB.rating);
   const change = eloChange(rivalA.rating, rivalB.rating, aWon);
@@ -1943,7 +1713,9 @@ function sortStandingsWithHeadToHead(standings, tier) {
       h2h.set(e, group.filter((o) => o !== e && beat.has(`${me}>${idOf(o)}`)).length);
     });
   });
-  return standings.sort((a, b) => b.points - a.points || h2h.get(b) - h2h.get(a) || b.rating - a.rating);
+  // A fixed last resort (id) so an exact tie always sorts the same way —
+  // the table rebuilt from history (tablePositionsBefore) relies on it.
+  return standings.sort((a, b) => b.points - a.points || h2h.get(b) - h2h.get(a) || b.rating - a.rating || idOf(a) - idOf(b));
 }
 
 // The player's table position for the topbar's Leagues button: live during
@@ -1957,7 +1729,7 @@ function playerTablePosition() {
     return { pos: standings.findIndex((r) => r.isPlayer) + 1, size: standings.length, tier: state.leagueTier, final: false };
   }
   if ((state.seasonPhase === "playoffs" || state.seasonPhase === "offseason") && state.lastPlayerPosition && state.lastStandingsTier) {
-    return { pos: state.lastPlayerPosition, size: (state.lastStandings && state.lastStandings.length) || BAL.seasonRounds + 1, tier: state.lastStandingsTier, final: true };
+    return { pos: state.lastPlayerPosition, size: (state.lastStandings && state.lastStandings.length) || BAL.leagueSize, tier: state.lastStandingsTier, final: true };
   }
   return null;
 }
@@ -2097,8 +1869,7 @@ function finalizeSeasonMovement(playerTierChampion) {
   }
   state.playoffChampions = champions;
 
-  // Saves already mid-playoffs/offseason when this rule shipped had their
-  // movement applied under the old table-only rule — never apply it twice.
+  // Promotion/relegation runs once per season, never twice.
   if (state.seasonMovementApplied) return "";
   state.seasonMovementApplied = true;
 
@@ -2557,11 +2328,6 @@ function renderStats() {
   }
 }
 
-function setBar(key, val, max) {
-  $(`${key}Val`).textContent = fmt(val);
-  $(`${key}Bar`).style.width = `${clamp((val / max) * 100, 0, 100)}%`;
-}
-
 function totalAssigned() {
   const a = state.allocation;
   const skillSum = trainableSkills().reduce((sum, k) => sum + (a.skills[k] || 0), 0);
@@ -2619,8 +2385,6 @@ function comboRowHtml(key, { icon, label, outcomeText, value, previewValue, cap,
   </div>`;
 }
 
-// Net of cost of living, not gross pay — what actually lands in (or leaves)
-// cash each day. The Career modal still breaks out gross pay and expenses.
 function bankHtml(bank, bankPreview) {
   if (bank < 0.5 && bankPreview < 0.5) return "";
   const room = BAL.calmBankCap - 100;
@@ -2629,6 +2393,8 @@ function bankHtml(bank, bankPreview) {
   return `<div class="bar-bank" style="width:${now}%"></div>${next > now + 0.3 ? `<div class="bar-bank bar-bank-gain" style="left:${now}%;width:${next - now}%"></div>` : ""}`;
 }
 
+// Net of cost of living, not gross pay — what actually lands in (or leaves)
+// cash each day. The Career modal still breaks out gross pay and expenses.
 function netPerDayTag(net) {
   return `<span class="skill-shop-tag${net < 0 ? " skill-shop-tag-negative" : ""}">Net ${fmtMoney(net)}/d</span>`;
 }
@@ -3046,8 +2812,8 @@ function ratingCashExplainerHtml(result) {
   const raw = result.ratingChangeRaw;
   const ratingRows = [
     result.win
-      ? row(`Win: 24 × your ${100 - result.winProb}% chance to lose`, signedNum(raw))
-      : row(`Loss: 24 × your ${result.winProb}% chance to win`, signedNum(raw)),
+      ? row(`Win: ${BAL.ratingK} × your ${100 - result.winProb}% chance to lose`, signedNum(raw))
+      : row(`Loss: ${BAL.ratingK} × your ${result.winProb}% chance to win`, signedNum(raw)),
   ];
   if (result.ratingChange !== raw) {
     ratingRows.push(row(`🧑‍💼 Team Manager (−${Math.round((1 - result.rankLossMult) * 100)}% on losses)`, signedNum(result.ratingChange - raw), "perf-sub"));
@@ -3075,7 +2841,7 @@ function ratingCashExplainerHtml(result) {
       <tbody>${ratingRows.join("")}</tbody>
       <tfoot><tr><td>Rating change</td><td>${signedNum(ratingTotal)}</td></tr></tfoot>
     </table>
-    <div class="match-sub perf-note">A win is worth up to 24 points and a loss costs up to 24. The less likely the result, the bigger the change — beating a favourite earns a lot, beating an underdog very little.</div>
+    <div class="match-sub perf-note">A win is worth up to ${BAL.ratingK} points and a loss costs up to ${BAL.ratingK}. The less likely the result, the bigger the change — beating a favourite earns a lot, beating an underdog very little.</div>
     <table class="perf-table calc-table">
       <thead><tr><th>💰 Cash</th><th></th></tr></thead>
       <tbody>${cashRows.join("")}</tbody>
@@ -4061,7 +3827,7 @@ function tablePositionsBefore(year, tier, key) {
   if (!points.size) return null;
   const ids = [...points.keys()];
   const h2h = new Map(ids.map((a) => [a, ids.filter((b) => b !== a && points.get(b) === points.get(a) && beat.has(`${a}>${b}`)).length]));
-  ids.sort((a, b) => points.get(b) - points.get(a) || h2h.get(b) - h2h.get(a) || (rating.get(b) || 0) - (rating.get(a) || 0));
+  ids.sort((a, b) => points.get(b) - points.get(a) || h2h.get(b) - h2h.get(a) || (rating.get(b) || 0) - (rating.get(a) || 0) || a - b);
   return new Map(ids.map((x, i) => [x, i + 1]));
 }
 
@@ -4177,7 +3943,7 @@ function buildPhaseSplash(from, to, { yearSummary = null, tierBefore = state.lea
     notes.push("Only the week's focus skills can be trained now — hire their coaches in 🧑‍🏫 Staff. Contracts end after each match.");
   } else if (from === "regular" && to === "playoffs") {
     icon = "🏆"; title = "Through to the playoffs!"; sub = `Year ${state.year} · League ${playedTier}`;
-    how.unshift(["📊 Finished", `#${state.lastPlayerPosition} of ${BAL.seasonRounds + 1} · ${w}–${season.length - w}`]);
+    how.unshift(["📊 Finished", `#${state.lastPlayerPosition} of ${BAL.leagueSize} · ${w}–${season.length - w}`]);
     if (playedTier > 1 && state.lastPlayerPosition <= BAL.promotionTablePlaces) how.unshift(["⬆️ Promotion", "secured — top " + BAL.promotionTablePlaces + " finish"]);
     const info = getNextMatchInfo();
     next.push(["Your seed", `#${state.playoff.playerSeed} of ${BAL.playoffSize}`]);
@@ -4187,7 +3953,7 @@ function buildPhaseSplash(from, to, { yearSummary = null, tierBefore = state.lea
     next.push(["Knocked out", "training camp until the Final would have finished"]);
   } else if (from === "regular" && to === "offseason") {
     icon = "📋"; title = "Regular season over"; sub = `Year ${state.year} · League ${playedTier}`;
-    how.unshift(["📊 Finished", `#${state.lastPlayerPosition} of ${BAL.seasonRounds + 1} · ${w}–${season.length - w} — missed the top ${BAL.playoffSize}`]);
+    how.unshift(["📊 Finished", `#${state.lastPlayerPosition} of ${BAL.leagueSize} · ${w}–${season.length - w} — missed the top ${BAL.playoffSize}`]);
     how.push(["Next season", moveText(playedTier, state.leagueTier)]);
     next.push(["Training camp", `${state.offseasonDays} days — all 7 skills trainable, no matches`]);
     next.push(["Then", `Year ${state.year + 1} preseason in League ${state.leagueTier}`]);
@@ -4503,14 +4269,14 @@ function openHowTo() {
     "Each side's <b>match-day rating</b> = rating + performance + luck. Higher wins.",
     `Performance comes from your stats (skills ${Math.round(PERF_WEIGHTS.skill * 100)}%, Health ${Math.round(PERF_WEIGHTS.phys * 100)}%, Calm ${Math.round(PERF_WEIGHTS.composure * 100)}%, Rest ${Math.round(PERF_WEIGHTS.rest * 100)}%). Each point above 70 adds 3; below 70 costs 3.`,
     "Luck is random for both sides and is drawn so you win exactly as often as the win chance says. Most games end up close; upsets always stay possible.",
-    "Rivals' performance tracks their rating — a weak rival rarely has a great day, but luck can still carry them.",
+    "Rivals' performance is shown around 70, higher the further their rating is above yours — a weaker rival rarely has a great day, but luck can still carry them.",
     "The result screen explains every number.",
   ]));
 
   sec("season", "📅", "Season & leagues", `
     ${ul([
       `<b>Preseason:</b> ${B.preseasonDays} days of training. <b>Regular season:</b> ${B.seasonRounds} rounds, one match a week, all scheduled in advance.`,
-      `Top <b>${B.playoffSize}</b> of ${B.seasonRounds + 1} reach the knockout playoffs (R16 → QF → SF → Final).`,
+      `Top <b>${B.playoffSize}</b> of ${B.leagueSize} reach the knockout playoffs (R16 → QF → SF → Final).`,
       `Miss the playoffs: a ${B.trainingCampDays}-day <b>training camp</b>. Knocked out: camp for the rest of the playoff window. Champion: a ${B.offseasonDays}-day offseason.`,
       `${B.leagueCount} leagues — you start in League ${B.leagueCount}. <b>Four go up</b> from each: the playoff champion plus the next ${B.promotionTablePlaces} highest in the table. Bottom ${B.relegationCount} go down.`,
       "Every rival plays real simulated matches — all tables are live. Tap a name to see their season.",
@@ -4644,12 +4410,17 @@ function extractSaveCode(text) {
     for (let j = i + 1; j < tokens.length && isB64(tokens[j]); j++) body += tokens[j];
     return body;
   };
+  // Prefixes first: a plain code's base64 can happen to contain "H4sI".
   for (let i = 0; i < tokens.length; i++) {
-    const t = tokens[i];
-    const gz = t.indexOf("H4sI");
-    if (gz !== -1 && isB64(t.slice(gz))) return { kind: "gz", body: runFrom(i, gz) };
-    const plain = t.toUpperCase().indexOf(SAVE_CODE_PLAIN.toUpperCase());
+    const t = tokens[i].toUpperCase();
+    const plain = t.indexOf(SAVE_CODE_PLAIN.toUpperCase());
     if (plain !== -1) return { kind: "plain", body: runFrom(i, plain + SAVE_CODE_PLAIN.length) };
+    const gzp = t.indexOf(SAVE_CODE_GZ.toUpperCase());
+    if (gzp !== -1) return { kind: "gz", body: runFrom(i, gzp + SAVE_CODE_GZ.length) };
+  }
+  for (let i = 0; i < tokens.length; i++) {
+    const gz = tokens[i].indexOf("H4sI");
+    if (gz !== -1 && isB64(tokens[i].slice(gz))) return { kind: "gz", body: runFrom(i, gz) };
   }
   const flat = tokens.join("");
   if (/^[A-Za-z0-9+/=_-]{200,}$/.test(flat)) return { kind: "plain", body: flat };
@@ -4794,9 +4565,9 @@ function openSaveTransfer() {
     const who = parsed.playerName ? `${parsed.playerName}, ` : "";
     if (!confirm(`Load ${who}Day ${parsed.day}? This replaces the career on this device.`)) return;
     try {
-      state = Object.assign(freshState(), migrateSave(parsed));
+      state = migrateSave(parsed);
     } catch (e) {
-      importStatus("That save couldn't be loaded — it may be from a much older version.");
+      importStatus("That save couldn't be loaded — it's from an older version of the game.");
       return;
     }
     lastLoadedFromSave = false;
@@ -4809,6 +4580,7 @@ function openSaveTransfer() {
     saveState();
     showSaveToast(ok);
     if (!state.playerName) openNameModal(true);
+    else if (state.pendingSplash) showPhaseSplash(state.pendingSplash);
   };
 
   $("saveImportBtn").addEventListener("click", () => importFrom($("saveImportText").value));
@@ -4997,7 +4769,6 @@ function weekSnapshot() {
 // Anything that changes what today's plan means stops End Week so the
 // player can re-plan before the next day runs. Several can land on the same
 // day (an injury and a shrinking day, say) — report them all.
-
 function endWeek() {
   if (endDayBlocker()) return;
   const planned = daysLeftInWeek();
@@ -5152,6 +4923,10 @@ function renderAll() {
     appendLog(`Welcome back — resumed from Day ${state.day}.`, "event-good");
   }
 
+  if (loadFailed) {
+    appendLog("⚠️ Your saved career couldn't be read, so a new one has started. The old save is kept on this device as a backup.", "event-bad");
+    loadFailed = false;
+  }
   if (!STORAGE_OK) {
     appendLog(
       "⚠️ This browser isn't allowing saves (private/incognito mode, or storage is blocked). You can still play, but progress won't persist after you close this tab.",

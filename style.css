@@ -107,21 +107,6 @@ html, body {
   gap: 6px;
   padding: 2px 16px 8px;
 }
-.stat-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-dim);
-  margin-bottom: 2px;
-}
-.stat-icon { font-size: 13px; }
-.stat-val {
-  margin-left: auto;
-  font-weight: 700;
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-}
 .bar {
   position: relative;
   height: 7px;
@@ -166,7 +151,6 @@ html, body {
 .bar-fill.work { background: var(--work); }
 .bar-fill.rest { background: var(--rest); }
 .bar-fill.composure { background: var(--composure); }
-.stat-cap { color: var(--text-dim); font-weight: 400; font-size: 11px; margin-left: 1px; }
 
 .warning-banner {
   margin: 0 16px 8px;
@@ -496,9 +480,6 @@ input[type="range"]::-webkit-slider-thumb {
 .match-result.loss { color: var(--danger); }
 .match-result.neutral { color: var(--work); }
 .match-sub { color: var(--text-dim); font-size: 13px; margin-bottom: 14px; }
-.match-stats { display: flex; justify-content: center; gap: 24px; margin: 12px 0; }
-.match-stats div { font-size: 13px; color: var(--text-dim); }
-.match-stats b { display: block; font-size: 18px; color: var(--text); }
 
 .shop-item {
   display: flex;
@@ -524,30 +505,6 @@ input[type="range"]::-webkit-slider-thumb {
 .shop-item-icon { font-size: 22px; }
 .shop-item-info { flex: 1; }
 .shop-item-name { font-weight: 700; font-size: 14px; }
-.shop-item-level {
-  display: inline-block;
-  background: rgba(52, 208, 160, 0.15);
-  color: var(--accent);
-  border-radius: 999px;
-  padding: 1px 7px;
-  font-size: 10px;
-  font-weight: 800;
-  vertical-align: middle;
-}
-.shop-item-desc { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
-.shop-item-current { opacity: 0.75; }
-.shop-item-btn {
-  border: none;
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-weight: 700;
-  font-size: 13px;
-  background: var(--accent);
-  color: #04241a;
-  white-space: nowrap;
-}
-.shop-item-btn:disabled { background: var(--border); color: var(--text-dim); }
-.shop-item-btn.owned { background: var(--bg-elev); color: var(--text-dim); border: 1px solid var(--border); }
 
 .primary-btn {
   width: 100%;
@@ -733,7 +690,6 @@ input[type="range"]::-webkit-slider-thumb {
 .modal-sticky-head .match-head.win { color: var(--accent); }
 .modal-sticky-head .match-head.loss { color: var(--danger); }
 .match-card > .match-sub:first-child { margin-top: 2px; }
-.win-table { margin-top: 10px; }
 .win-ladder { margin-top: 2px; }
 .win-ladder .ladder-you td { color: var(--text); font-weight: 800; background: var(--bg-elev-2); }
 
@@ -743,13 +699,6 @@ input[type="range"]::-webkit-slider-thumb {
 .leagues-pos.pos-promo { color: var(--accent); }
 .leagues-pos.pos-releg { color: var(--danger); }
 .leagues-pos.pos-out { color: var(--text-dim); }
-
-/* Shop: coach level that the league cap makes (partly) pointless */
-.shop-item-capnote { font-size: 11.5px; color: var(--warn); margin-top: 4px; line-height: 1.35; }
-.shop-item-capnote.capnote-none { color: var(--danger); }
-.shop-item.shop-item-capped .shop-item-icon,
-.shop-item.shop-item-capped .shop-item-name,
-.shop-item.shop-item-capped .shop-item-desc { opacity: 0.6; }
 
 /* Match result v2: header subline, Result + You vs Opponent tables, collapsibles */
 .modal-sticky-head .match-head { display: block; }

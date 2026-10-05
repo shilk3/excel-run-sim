@@ -108,7 +108,7 @@ after End Day too — saying what changed and what to do about it.
 **Match day**: both sides get a match-day rating = rating + performance +
 luck, and the higher one wins. Your performance comes from your stats (each
 point above 70 adds 3, below 70 costs 3); rivals get a performance on the same
-scale, tracking their rating. Luck is random for both sides every match,
+scale, around 70 and higher the further their rating is above yours. Luck is random for both sides every match,
 drawn so the odds of winning match the classic Elo win chance for the rating
 gap — upsets always stay possible — and the scores shown are scaled so most
 games read as close. The result
