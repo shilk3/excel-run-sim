@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.49.1";
+const APP_VERSION = "4.49.2";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -2788,8 +2788,9 @@ function renderPlannerRows() {
   if (capTomorrow !== capToday) nutritionOutcome += ` → ${capTomorrow}h tomorrow`;
   const carbToday = state.carbHours || 0;
   const carbTomorrow = carbHoursFrom(a.nutrition, s.nutrition);
-  if (carbToday) nutritionOutcome += ` · 🍝 +${carbToday}h today`;
-  if (carbTomorrow) nutritionOutcome += ` · 🍝 +${carbTomorrow}h tmrw`;
+  // One 🍝 for both parts so the row fits: "🍝 +2h today · +3h tmrw".
+  const carbParts = [carbToday ? `+${carbToday}h today` : "", carbTomorrow ? `+${carbTomorrow}h tmrw` : ""].filter(Boolean);
+  if (carbParts.length) nutritionOutcome += ` · 🍝 ${carbParts.join(" · ")}`;
   rows.push(
     comboRowHtml("nutrition", {
       icon: "🥗",
