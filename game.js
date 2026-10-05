@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.53.0";
+const APP_VERSION = "4.53.1";
 const SAVE_KEY = "cellgrind_save_v1";
 const SAVE_BACKUP_KEY = "cellgrind_save_unreadable";
 // Bumped when a save's shape changes. Older saves aren't converted (there's
@@ -2456,7 +2456,10 @@ function renderPlannerRows() {
     const meta = skillMeta(key);
     const cap = skillCap(key);
     const lvl = hiredLevel(coachKey(key));
-    const shopTag = lvl > 0 ? `<span class="skill-shop-tag">🧑‍🏫 Lv${lvl}</span>` : `<span class="skill-shop-tag skill-shop-tag-none">no coach</span>`;
+    // Tap it to go straight to this skill's coach in Staff.
+    const shopTag = lvl > 0
+      ? `<button class="skill-shop-tag coach-link" data-coach="${key}">🧑‍🏫 Lv${lvl}</button>`
+      : `<button class="skill-shop-tag skill-shop-tag-none coach-link" data-coach="${key}">no coach</button>`;
     rows.push(
       comboRowHtml(key, {
         icon: meta.icon,
@@ -2973,7 +2976,7 @@ function staffCardHtml(key, { focus = false, statNote = "" } = {}) {
       </label>
       ${auto ? `<div class="staff-line">${hired ? `Kept on at Lv${hired} ($${fmt(u.levels[hired - 1].wage)}/wk) when each new week starts, if you have the cash.${coachNote}` : `Hire them once and they'll be kept on at that level every week.${coachNote}`}</div>` : ""}`;
   return `
-  <div class="shop-item staff-card${focus ? " shop-item-match" : ""}${hired ? " staff-card-hired" : ""}">
+  <div class="shop-item staff-card${focus ? " shop-item-match" : ""}${hired ? " staff-card-hired" : ""}" data-staff-card="${key}">
     <div class="shop-item-icon">${u.icon}</div>
     <div class="shop-item-info">
       <div class="shop-item-name">${u.name}${focus ? ` <span class="shop-item-match-tag">This week</span>` : ""}</div>
@@ -2992,7 +2995,9 @@ function staffCardHtml(key, { focus = false, statNote = "" } = {}) {
 let shopTab = "staff";
 function shopHtml(tab = shopTab) {
   const focusKeys = inSeason() ? state.activeSkills : [];
-  const order = SKILLS.map((sk) => sk.key).sort((x, y) => focusKeys.includes(y) - focusKeys.includes(x));
+  // This week's focus first, in the same order as the main screen's rows,
+  // then the rest.
+  const order = [...focusKeys, ...SKILL_KEYS.filter((k) => !focusKeys.includes(k))];
   const skillCards = order
     .map((k) => staffCardHtml(coachKey(k), { focus: focusKeys.includes(k), statNote: `${skillMeta(k).icon} ${skillMeta(k).name} now ${fmt(state.stats.skills[k])} · league cap ${leagueSkillCap()}` }))
     .join("");
@@ -3072,6 +3077,12 @@ function openShop(opts) {
   const keepScroll = !!(opts && opts.keepScroll === true);
   if (opts && (opts.tab === "staff" || opts.tab === "items")) shopTab = opts.tab;
   openModal(shopHtml(), { ownClose: true, keepScroll, page: { key: "shop", reopen: () => openShop() } });
+  // Opened from a skill's coach tag: scroll that coach into view.
+  const card = opts && opts.coach && document.querySelector(`[data-staff-card="${opts.coach}"]`);
+  if (card) {
+    const head = document.querySelector(".modal-sticky-head");
+    $("modal").scrollTop = card.offsetTop - (head ? head.offsetHeight : 0) - 8;
+  }
   document.querySelectorAll("[data-shop-tab]").forEach((btn) =>
     btn.addEventListener("click", () => {
       if (btn.dataset.shopTab !== shopTab) openShop({ tab: btn.dataset.shopTab });
@@ -4887,6 +4898,8 @@ function wireInputs() {
     if (key) setAllocation(key, Number(e.target.value));
   });
   container.addEventListener("click", (e) => {
+    const coach = e.target.closest("[data-coach]");
+    if (coach) return openShop({ tab: "staff", coach: coachKey(coach.dataset.coach) });
     const btn = e.target.closest(".step-btn");
     if (!btn) return;
     const key = btn.getAttribute("data-key");

@@ -240,6 +240,8 @@ html, body {
   white-space: nowrap;
 }
 .skill-shop-tag-none { opacity: 0.6; font-weight: 600; }
+/* A skill row's coach tag opens that coach in Staff. */
+button.coach-link { font-family: inherit; line-height: inherit; cursor: pointer; margin: 0; }
 .skill-shop-tag-negative { color: var(--danger); }
 .step-btn {
   width: 34px;
