@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.49.2";
+const APP_VERSION = "4.50.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -3745,16 +3745,89 @@ function leagueResultsHtml(view) {
     <p class="modal-sub">Ratings are as they stood going into the match. Tap a name to see that rival's season.</p>`;
 }
 
+// Upcoming matches: the rest of the regular season (or the whole schedule in
+// preseason), then your path through the playoff bracket once it starts.
+function upcomingHtml() {
+  const s = state;
+  const winPct = (rating) => Math.round(winProbabilityAgainst(rating) * 100);
+  const row = (round, name, rivalId, rating, pos, next) => `
+    <div class="hist-row up-row${next ? " up-next" : ""}" ${rivalId != null ? `data-rival="${rivalId}"` : ""}>
+      <span class="hist-round">${round}</span>
+      <span class="hist-opp">${name}</span>
+      <span class="hist-score">${rating != null ? fmt(rating) : ""}</span>
+      <span class="up-pos">${pos ? `#${pos}` : ""}</span>
+      <span class="up-pct">${rating != null ? `${winPct(rating)}%` : ""}</span>
+    </div>`;
+  const head = `<div class="hist-row up-row up-head"><span>Rd</span><span>Opponent</span><span>Rating</span><span>Table</span><span>Win</span></div>`;
+
+  if (s.seasonPhase === "preseason" || s.seasonPhase === "regular") {
+    const positions = {};
+    if (s.seasonPhase === "regular" && s.roundIndex > 0) buildStandingsFromPoints(s.leagueTier).forEach((e, i) => e.rivalId != null && (positions[e.rivalId] = i + 1));
+    const from = s.seasonPhase === "regular" ? s.roundIndex : 0;
+    const left = s.schedule.slice(from);
+    if (!left.length) return `<p class="modal-sub">The regular season is wrapping up.</p>`;
+    const days = s.seasonPhase === "regular" ? BAL.roundIntervalDays - s.phaseDay : BAL.preseasonDays - s.phaseDay + BAL.roundIntervalDays;
+    const rows = left.map((f, i) => row(`R${from + i + 1}`, f.name, f.rivalId, liveOpponentRating(f), positions[f.rivalId], i === 0)).join("");
+    return `<div class="modal-section">
+      <h3>Year ${s.year} · League ${s.leagueTier} · ${left.length} to play</h3>
+      <p class="modal-sub">Next match ${days <= 0 ? "today" : daysUntilPhrase(days)}. Top ${BAL.playoffSize} reach the playoffs.</p>
+      <div class="hist-list">${head}${rows}</div>
+      <p class="modal-sub">Win chances use everyone's rating today, so they'll move as the season goes. Each week's focus skills are revealed when that week starts.</p>
+    </div>`;
+  }
+
+  if (s.seasonPhase === "playoffs" && s.playoff && !s.playoff.eliminated && !s.playoff.champion) {
+    const p = s.playoff;
+    const stages = ["r16", "qf", "sf", "f"];
+    const at = stages.indexOf(p.stage);
+    const teams = p.currentRound;
+    const idx = teams.findIndex((t) => t.isPlayer);
+    const days = BAL.roundIntervalDays - s.phaseDay;
+    const rows = [];
+    for (let j = 0; at + j < stages.length && idx >= 0; j++) {
+      // Round j ahead: your opponent comes from the other half of your block
+      // of 2^(j+1) teams in this bracket.
+      const size = 2 ** (j + 1);
+      const start = Math.floor(idx / size) * size;
+      const mine = Math.floor(idx / (size / 2));
+      const pool = teams.slice(start, start + size).filter((_, k) => Math.floor((start + k) / (size / 2)) !== mine);
+      const label = PLAYOFF_ROUND_NAMES[stages[at + j]];
+      const short = roundShort(label);
+      if (pool.length === 1) {
+        const o = pool[0];
+        rows.push(row(short, o.name, o.rivalId, liveOpponentRating(o), null, j === 0));
+      } else if (pool.length) {
+        const fav = pool.slice().sort((a, b) => liveOpponentRating(b) - liveOpponentRating(a))[0];
+        const who = pool.length === 2 ? `${pool[0].name} or ${pool[1].name}` : `one of ${pool.length} — favourite ${fav.name}`;
+        rows.push(row(short, `<span class="up-tbd">${who}</span>`, null, null, null, false));
+      }
+    }
+    return `<div class="modal-section">
+      <h3>Year ${s.year} · League ${p.tier} playoffs · seed #${p.playerSeed}</h3>
+      <p class="modal-sub">${PLAYOFF_ROUND_NAMES[p.stage]} ${days <= 0 ? "today" : daysUntilPhrase(days)}. Single elimination — lose and you're out.</p>
+      <div class="hist-list">${head}${rows.join("")}</div>
+      <p class="modal-sub">Later rounds depend on who wins in the rest of the bracket.</p>
+    </div>`;
+  }
+
+  const why =
+    s.seasonPhase === "playoffs"
+      ? s.playoff && s.playoff.champion ? "You're the champion — no more matches this season." : "You're out of the playoffs — no more matches this season."
+      : "No matches until next season.";
+  return `<p class="modal-sub">${why} The new schedule appears here once Year ${s.seasonPhase === "offseason" ? s.year + 1 : s.year} starts.</p>`;
+}
+
 function openHistory(opts = {}) {
   const tab = opts.tab || "mine";
   const view = opts.view || {};
   const html = `
     ${stickyHeadHtml("Match History")}
     <div class="league-tabs history-tabs">
+      <button class="league-tab ${tab === "upcoming" ? "active" : ""}" data-htab="upcoming">Upcoming</button>
       <button class="league-tab ${tab === "mine" ? "active" : ""}" data-htab="mine">My matches</button>
       <button class="league-tab ${tab === "league" ? "active" : ""}" data-htab="league">League results</button>
     </div>
-    <div id="historyBody">${tab === "mine" ? myMatchesHtml() : leagueResultsHtml(view)}</div>`;
+    <div id="historyBody">${tab === "upcoming" ? upcomingHtml() : tab === "mine" ? myMatchesHtml() : leagueResultsHtml(view)}</div>`;
   openModal(html, { ownClose: true, keepScroll: !!opts.keepScroll });
   const body = $("modalBody");
   body.querySelectorAll("[data-htab]").forEach((b) => b.addEventListener("click", () => openHistory({ tab: b.dataset.htab })));
@@ -4194,7 +4267,7 @@ function openHowTo() {
       `${B.leagueCount} leagues — you start in League ${B.leagueCount}. <b>Four go up</b> from each: the playoff champion plus the next ${B.promotionTablePlaces} highest in the table. Bottom ${B.relegationCount} go down.`,
       "Every rival plays real simulated matches — all tables are live. Tap a name to see their season.",
       "<b>Rating</b> (🏆) is your strength and sets your win chance. <b>Table position</b> comes from league points (3 per win); players level on points are split by their games against each other, then by rating.",
-      "<b>Match History</b> keeps your matches and every league result for this season and last.",
+      "<b>Match History</b> shows your <b>upcoming</b> matches (the rest of the season, then your playoff path), your past matches, and every league result for this season and last.",
     ])}`);
 
   sec("money", "💼", "Work & money", `
