@@ -91,7 +91,10 @@ Relax, and Food. Everything is connected:
   (rolled each time you lose the job, and shown on the slider) — at least 1h
   of searching a day, or the day can't end, so you can't idle into debt. Once you've
   reached League 2 (ever) and all 7 skills are 85+ at the same time, while
-  employed, you go pro automatically: Work
+  employed, you go pro automatically (a screen says so). The sponsorship
+  lasts to the end of the year whatever your skills do, and is renewed only
+  if all 7 are still 85+ when the year ends; if not, the new-year screen
+  says so and you're unemployed, back to a Job Search. As a pro: Work
   drops to 5h/day of Pro Duties, same chances rule. Pros also have to stay
   current — a new Excel technique appears roughly every 30 days needing
   25-40h to master (any Pro Duties hours beyond the 5h minimum go toward

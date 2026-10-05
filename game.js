@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.58.0";
+const APP_VERSION = "4.59.0";
 const SAVE_KEY = "cellgrind_save_v1";
 const SAVE_BACKUP_KEY = "cellgrind_save_unreadable";
 // Bumped when a save's shape changes. Older saves aren't converted (there's
@@ -1338,6 +1338,7 @@ function resolveEmploymentDay() {
     emp.jobSearchHours += workH;
     if (emp.jobSearchHours >= jobSearchTarget()) {
       emp.status = "employed";
+      emp.endedBy = null;
       emp.jobSearchHours = 0;
       emp.jobSearchHoursNeeded = null;
       // Job Search allows up to 16h but Work caps at its 9h requirement, so
@@ -1402,6 +1403,7 @@ function resolveEmploymentDay() {
       events.push({ type: "bad", text: `💼 Missed your ${label} hours — lost ${fmt1(amount)} ${amount === 1 ? "chance" : "chances"} (${fmt1(lives)}/${fmt1(BAL.strikesToFire)} left).` });
       if (total >= BAL.strikesToFire) {
         emp.status = "unemployed";
+        emp.endedBy = "chances";
         emp.strikes = [];
         emp.jobSearchHours = 0;
         emp.jobSearchHoursNeeded = randInt(BAL.jobSearchHoursRange[0], BAL.jobSearchHoursRange[1]);
@@ -2042,10 +2044,27 @@ function startNewYear() {
   };
   state.yearCashFlow = { workPay: 0, matchCash: 0, expenses: 0 };
 
+  // Pro sponsorship runs to the end of the year, whatever skills do in the
+  // meantime; it's renewed only if every skill is still at the bar now.
+  // If not, you're back to finding a job.
+  const emp = state.employment;
+  if (emp.status === "pro") {
+    const short = skillsBelowPro();
+    if (short.length) {
+      emp.status = "unemployed";
+      emp.strikes = [];
+      emp.jobSearchHours = 0;
+      emp.jobSearchHoursNeeded = randInt(BAL.jobSearchHoursRange[0], BAL.jobSearchHoursRange[1]);
+      emp.endedBy = "renewal";
+      yearSummary.proEnded = { short: short.map((k) => `${skillMeta(k).icon} ${skillMeta(k).name} ${fmt(state.stats.skills[k])}`), searchHours: emp.jobSearchHoursNeeded };
+    } else {
+      yearSummary.proRenewed = true;
+    }
+  }
+
   // Annual raise — rises $10/year for 5 years of unbroken tenure in
   // whichever role is currently held, then plateaus. Only the active
   // role's rate moves; the other sits untouched until it's relevant.
-  const emp = state.employment;
   const maxRaise = BAL.payRaisePerYear * BAL.payRaiseMaxYears;
   if (emp.status === "employed") {
     emp.workPay = Math.min(emp.workPay + BAL.payRaisePerYear, BAL.workPayMin + maxRaise);
@@ -2069,6 +2088,8 @@ function startNewYear() {
   state.leaguePoints = newLeagueData.points;
   state.playoff = null;
   let phaseEvent = `🎉 Year ${state.year} begins! A fresh ${BAL.seasonRounds}-round season has been scheduled — good luck.`;
+  if (yearSummary.proEnded) phaseEvent += ` 📉 Sponsorship not renewed — not every skill is ${BAL.goProSkill}+ (${yearSummary.proEnded.short.join(", ")}). Time to find a job: ${yearSummary.proEnded.searchHours}h of Job Search.`;
+  else if (yearSummary.proRenewed) phaseEvent += ` 🏆 Sponsorship renewed for Year ${state.year}.`;
   if (worn.length) phaseEvent += ` Last year's equipment has worn out (${worn.map((e) => e.name).join(", ")}).`;
   return { yearSummary, phaseEvent };
 }
@@ -3339,6 +3360,7 @@ function employmentSectionHtml() {
       ? queue.map((t, i) => `${i === 0 ? "▶" : "⏸"} ${t.name}: ${fmt(t.hoursDone)}/${t.hoursNeeded}h`).join("<br>")
       : "Fully caught up — no match penalty.";
     return `${expensesLine}${leaveLine}<p>🏆 <b>Pro</b> · Pro Duties ${BAL.proDutyHoursRequired}h/day required ($${fmt(emp.proPay)}/day) · ${fmt1(lives)}/${fmt1(BAL.strikesToFire)} chances</p>${strikeLines}
+      <p class="modal-sub">Sponsored to the end of Year ${state.year}. Renewal needs every skill ${BAL.goProSkill}+ when the year ends: ${skillsBelowPro().length ? `⚠️ not yet — under ${BAL.goProSkill}: ${skillsBelowPro().map((k) => `${skillMeta(k).icon} ${fmt(state.stats.skills[k])}`).join(", ")}` : "on track ✓"}.</p>
       <p><b>Technique queue</b> (hours above ${BAL.proDutyHoursRequired}h/day go here)${penalty > 0 ? ` — currently <b>-${penalty}%</b> match performance` : ""}:<br>${queueHtml}</p>`;
   }
 
@@ -4119,6 +4141,11 @@ function buildPhaseSplash(from, to, { yearSummary = null, tierBefore = state.lea
       money.push(["Net", `${yearSummary.net < 0 ? "−" : "+"}${fmtMoney(Math.abs(yearSummary.net))} · cash now ${fmtMoney(state.cash)}`]);
       if (yearSummary.newPayRate != null) money.push(["📈 Annual raise", `pay is now $${fmt(yearSummary.newPayRate)}/day`]);
     }
+    if (yearSummary && yearSummary.proEnded) {
+      notes.push(`📉 <b>No longer pro.</b> Your sponsorship wasn't renewed: every skill needed to be ${BAL.goProSkill}+ when the year ended, and these weren't — ${yearSummary.proEnded.short.join(", ")}. You'll have to find a job: the Work slider is now a <b>Job Search</b> (${yearSummary.proEnded.searchHours}h in total). Get every skill back to ${BAL.goProSkill}+ and you'll go pro again.`);
+    } else if (yearSummary && yearSummary.proRenewed) {
+      next.push(["🏆 Sponsorship", `renewed for Year ${state.year} — every skill ${BAL.goProSkill}+`]);
+    }
     next.push(["Preseason", `${BAL.preseasonDays} days — all 7 skills trainable, no matches`]);
     next.push(state.employment.status === "unemployed" ? ["🔍 Job search", "carries on as normal"] : ["🏖️ Annual leave", `all preseason — no ${state.employment.status === "pro" ? "Pro Duties" : "Work"}, paid as normal`]);
     next.push(["🧑‍🏫 Skill coaches", "half price all preseason"]);
@@ -4221,7 +4248,9 @@ function dayEventCards(before) {
     });
   }
   if (before.employment !== emp.status) {
-    if (emp.status === "unemployed") {
+    if (emp.status === "unemployed" && emp.endedBy === "renewal") {
+      // Sponsorship not renewed at the new year — its own screen says so.
+    } else if (emp.status === "unemployed") {
       const wasPro = before.employment === "pro";
       cards.push({
         icon: "🔥", tone: "bad", title: wasPro ? "Dropped by your sponsor" : "You lost your job",
@@ -4232,7 +4261,7 @@ function dayEventCards(before) {
       cards.push({
         icon: "🏆", tone: "good", title: "You've gone pro!",
         body: `Sponsorship replaces the day job: <b>${BAL.proDutyHoursRequired}h/day of Pro Duties</b> at $${fmt(emp.proPay)}/day, with the same chances rule. About every ${BAL.techniqueIntervalDays} days a new technique appears; Pro Duties hours beyond ${BAL.proDutyHoursRequired}h go towards mastering it.`,
-        tip: `Each unmastered technique costs ${Math.round(BAL.techniquePenaltyPerUnmastered * 100)}% match performance, so keep a little extra Pro time in the plan.`,
+        tip: `You're pro until Year ${state.year} ends, even if skills dip. To be renewed for next year, all 7 skills must be ${BAL.goProSkill}+ when the year ends — or it's back to finding a job. Each unmastered technique costs ${Math.round(BAL.techniquePenaltyPerUnmastered * 100)}% match performance.`,
       });
     } else {
       cards.push({
@@ -4461,7 +4490,7 @@ function openHowTo() {
       `<b>Overtime:</b> up to ${B.overtimeMaxHours}h extra at half your hourly rate ($${Math.round(B.workPayMin / B.workHoursRequired / 2)}/h at $${B.workPayMin}/day).`,
       `Short on Work hours? You keep your pay but lose part of a <b>chance</b> (back after ${B.strikeWindowDays} days). Lose all ${fmt1(B.strikesToFire)} and you're fired.`,
       `Fired: the Work slider becomes <b>Job Search</b> — ${B.jobSearchHoursRange[0]}–${B.jobSearchHoursRange[1]}h in total gets you hired, at least ${B.jobSearchMinHours}h a day. Pay resets to the minimum.`,
-      `<b>Go pro</b> automatically once you've reached League ${B.goProLeagueTier} (ever) and all 7 skills are ${B.goProSkill}+ at once: ${B.proDutyHoursRequired}h/day of Pro Duties from $${B.proPayMin}/day.`,
+      `<b>Go pro</b> automatically once you've reached League ${B.goProLeagueTier} (ever) and all 7 skills are ${B.goProSkill}+ at once. You stay pro to the end of the year whatever your skills do; it's renewed only if all 7 are still ${B.goProSkill}+ when the year ends — if not, you're back to finding a job. Pro: ${B.proDutyHoursRequired}h/day of Pro Duties from $${B.proPayMin}/day.`,
     ])}
     ${tbl(["Prize money", ""], [
       ["Win", `$${B.prizeWinBase} + rating ÷ ${B.prizeRatingDiv}`],
