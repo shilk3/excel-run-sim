@@ -44,10 +44,10 @@ Relax, and Food. Everything is connected:
   Day $250 (+10 Rest, +30 Calm, no crash). Nothing goes past 100.
 - **Equipment** (also in Staff & Items) is bought outright and works until
   the current year ends, then wears out — never pro-rated, so buy early:
-  🖥️ Second Monitor $1,500 (+5% skill training), 💻 Gaming PC $4,000
-  (+10%), 🪑 Ergonomic Chair $1,200 (−20% Gym injury risk), 🎧
-  Noise-cancelling Headphones $1,000 (+1 Calm a day), 🛏️ Memory-foam
-  Mattress $1,000 (−25% Rest lost from short sleep).
+  🖥️ Second Monitor $2,000 (+5% skill training), 💻 Gaming PC $5,000
+  (+10%), 🪑 Ergonomic Chair $1,800 (−20% Gym injury risk), 🎧
+  Noise-cancelling Headphones $1,500 (+0.5 Calm a day), 🛏️ Memory-foam
+  Mattress $1,500 (−25% Rest lost from short sleep).
 - **Prize money**: a win pays $60 + your new rating ÷ 20 (about $85 at
   rating 500); a loss pays nothing. Winning the playoffs adds a $1,000
   champion bonus (+40 rating).

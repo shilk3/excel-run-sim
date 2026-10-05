@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.47.0";
+const APP_VERSION = "4.47.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -358,11 +358,13 @@ const ENERGY_ITEMS = [
 // Equipment: bought outright (never pro-rated), works until the current
 // year ends, then it's gone.
 const EQUIPMENT = [
-  { key: "monitor", icon: "🖥️", name: "Second Monitor", price: 1500, desc: "+5% skill training", training: 0.05 },
-  { key: "pc", icon: "💻", name: "Gaming PC", price: 4000, desc: "+10% skill training", training: 0.1 },
-  { key: "chair", icon: "🪑", name: "Ergonomic Chair", price: 1200, desc: "−20% Gym injury risk", injuryMult: 0.8 },
-  { key: "headphones", icon: "🎧", name: "Noise-cancelling Headphones", price: 1000, desc: "+1 Calm a day", calmPerDay: 1 },
-  { key: "mattress", icon: "🛏️", name: "Memory-foam Mattress", price: 1000, desc: "−25% Rest lost from short sleep", sleepDebtMult: 0.75 },
+  { key: "monitor", icon: "🖥️", name: "Second Monitor", price: 2000, desc: "+5% skill training", training: 0.05 },
+  { key: "pc", icon: "💻", name: "Gaming PC", price: 5000, desc: "+10% skill training", training: 0.1 },
+  { key: "chair", icon: "🪑", name: "Ergonomic Chair", price: 1800, desc: "−20% Gym injury risk", injuryMult: 0.8 },
+  // Half a point, not a whole one: +1 exactly covered a missing Relax hour
+  // alongside 7h sleep's bonus — a free hour a day.
+  { key: "headphones", icon: "🎧", name: "Noise-cancelling Headphones", price: 1500, desc: "+0.5 Calm a day", calmPerDay: 0.5 },
+  { key: "mattress", icon: "🛏️", name: "Memory-foam Mattress", price: 1500, desc: "−25% Rest lost from short sleep", sleepDebtMult: 0.75 },
 ];
 function ownsEquipment(key) {
   return !!(state.equipment && state.equipment.owned[key]);
