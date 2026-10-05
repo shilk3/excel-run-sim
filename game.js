@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.53.1";
+const APP_VERSION = "4.54.0";
 const SAVE_KEY = "cellgrind_save_v1";
 const SAVE_BACKUP_KEY = "cellgrind_save_unreadable";
 // Bumped when a save's shape changes. Older saves aren't converted (there's
@@ -2892,9 +2892,38 @@ function luckExplainerHtml(result) {
     </table>`;
 }
 
+// Straight after a match: who's next, laid out like Head to Head. Nothing
+// when the season has no next match (out, champion, or regular season over
+// without the playoffs) — the phase screen that follows covers that.
+function nextMatchPreviewHtml() {
+  const info = getNextMatchInfo();
+  if ((info.kind !== "fixture" && info.kind !== "playoff") || info.opponentRivalId == null) return "";
+  const tier = info.kind === "playoff" ? state.playoff.tier : state.leagueTier;
+  const pos = currentTablePositions(tier);
+  const youPos = pos.get(HISTORY_PLAYER_ID), oppPos = pos.get(info.opponentRivalId);
+  const what = info.kind === "playoff" ? PLAYOFF_ROUND_NAMES[state.playoff.stage] : `Round ${state.roundIndex + 1}/${BAL.seasonRounds}`;
+  const when = info.daysUntil <= 0 ? "today" : daysUntilPhrase(info.daysUntil);
+  const row = (label, a, b) => `<tr><td>${label}</td><td>${a}</td><td>${b}</td></tr>`;
+  const focus = state.activeSkills.map((k) => `${skillMeta(k).icon} ${skillMeta(k).name} ${fmt(state.stats.skills[k])}`).join(" · ");
+  return `
+    <div class="next-match">
+      <div class="next-match-title">⏭️ Next: ${what} · ${when}</div>
+      <table class="perf-table h2h-table next-match-table">
+        <thead><tr><th>Next Match</th><th>You</th><th class="h2h-opp">${info.opponentName}</th></tr></thead>
+        <tbody>
+          ${row("🏆 Rating", fmt(state.rank), fmt(info.opponentRating))}
+          ${youPos && oppPos ? row(info.kind === "playoff" ? "📊 Final table" : "📊 Table", `#${youPos}`, `#${oppPos}`) : ""}
+        </tbody>
+      </table>
+      <div class="match-sub perf-note">At today's form you have a <b>${info.winPct}%</b> win chance.</div>
+      <div class="match-sub perf-note">This week's focus: ${focus}.</div>
+    </div>`;
+}
+
 // onContinue replaces what the Continue button does (✕ still just closes);
 // onDone runs however the result is closed — used to chain the next screen.
-function showMatchModal(result, extraHtml = "", { onContinue = null, continueLabel = "Continue", onDone = null, page = null } = {}) {
+// showNext: a result just played (not a replay) also previews the next match.
+function showMatchModal(result, extraHtml = "", { onContinue = null, continueLabel = "Continue", onDone = null, page = null, showNext = false } = {}) {
   const context = result.roundLabel ? `${result.roundLabel}${result.opponentName ? " vs " + result.opponentName : ""}` : "";
   const title = `<span class="match-head ${result.win ? "win" : "loss"}">${result.win ? "VICTORY" : "DEFEAT"}</span>${
     context ? `<span class="match-head-sub">${context}</span>` : ""
@@ -2918,6 +2947,7 @@ function showMatchModal(result, extraHtml = "", { onContinue = null, continueLab
           <summary>How were rating and cash worked out?</summary>
           ${ratingCashExplainerHtml(result)}
         </details>
+        ${showNext ? nextMatchPreviewHtml() : ""}
         ${extraHtml}
         <button class="primary-btn" id="matchOk">${continueLabel}</button>
       </div>`;
@@ -4740,7 +4770,7 @@ function endDay() {
   // The match result comes first, then the phase change, then anything
   // else that happened — each opens once the one before is closed.
   showSequence([
-    matchResult && ((next) => showMatchModal(matchResult, "", { onDone: next })),
+    matchResult && ((next) => showMatchModal(matchResult, "", { onDone: next, showNext: true })),
     splash && ((next) => showPhaseSplash(splash, "", next)),
     cards.length && ((next) => showEventSplash(cards, "", next)),
   ]);
@@ -4812,7 +4842,7 @@ function endWeek() {
   // The week summary rides on the first screen shown.
   if (!matchResult && !splash && !cards.length) return showWeekSummaryModal(summaryHtml, daysRun);
   showSequence([
-    matchResult && ((next) => showMatchModal(matchResult, summaryHtml, { onDone: next })),
+    matchResult && ((next) => showMatchModal(matchResult, summaryHtml, { onDone: next, showNext: true })),
     splash && ((next) => showPhaseSplash(splash, matchResult ? "" : summaryHtml, next)),
     cards.length && ((next) => showEventSplash(cards, matchResult || splash ? "" : summaryHtml, next)),
   ]);

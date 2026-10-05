@@ -713,6 +713,9 @@ input[type="range"]::-webkit-slider-thumb {
 .h2h-table th.h2h-opp { max-width: 120px; overflow: hidden; text-overflow: ellipsis; text-transform: none; letter-spacing: 0; }
 .h2h-table thead th:nth-child(2) { text-transform: none; letter-spacing: 0; }
 .h2h-table tfoot td { font-size: 15px; }
+.next-match { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+.next-match-title { font-weight: 800; font-size: 14px; color: var(--text); }
+.next-match .next-match-table { margin-top: 8px; }
 .match-verdict { text-align: center; font-size: 16px; font-weight: 800; margin: 10px 0 4px; }
 .match-verdict.win { color: var(--accent); }
 .match-verdict.loss { color: var(--danger); }

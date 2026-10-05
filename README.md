@@ -113,7 +113,8 @@ drawn so the odds of winning match the classic Elo win chance for the rating
 gap — upsets always stay possible — and the scores shown are scaled so most
 games read as close. The result
 screen shows what changed (rating, table position, cash, record), both sides'
-numbers side by side, and collapsible explanations. League tables rank by points, then
+numbers side by side, collapsible explanations, and a preview of the next
+match (opponent, ratings, table places, win chance and the week's focus). League tables rank by points, then
 head-to-head between tied players, then rating; they show W and L too.
 
 **The season**: a 14-day preseason to train, then a 39-round regular season —
