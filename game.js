@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.55.0";
+const APP_VERSION = "4.56.0";
 const SAVE_KEY = "cellgrind_save_v1";
 const SAVE_BACKUP_KEY = "cellgrind_save_unreadable";
 // Bumped when a save's shape changes. Older saves aren't converted (there's
@@ -621,16 +621,27 @@ function jobSecurityPreviewPct(hours, isPro) {
   const previewLives = clamp(livesRemaining() - loss, 0, BAL.strikesToFire);
   return clamp((previewLives / BAL.strikesToFire) * 100, 0, 100);
 }
-// Annual leave: preseason is paid time off from Work and Pro Duties. A job
-// search carries on as normal.
-function onLeave(st = state.employment.status, phase = state.seasonPhase) {
-  return phase === "preseason" && st !== "unemployed";
+// Annual leave: paid time off from Work and Pro Duties for the offseason's
+// last week (the week after the Final — the whole break for a champion)
+// and all of preseason. A job search carries on as normal.
+function inLeavePeriod(s = state) {
+  if (s.seasonPhase === "preseason") return true;
+  return s.seasonPhase === "offseason" && s.phaseDay >= (s.offseasonDays || BAL.offseasonDays) - BAL.offseasonDays;
+}
+function onLeave(st = state.employment.status, s = state) {
+  return st !== "unemployed" && inLeavePeriod(s);
+}
+// Days of leave left, today included — until the season starts.
+function leaveDaysLeft() {
+  const s = state;
+  if (s.seasonPhase === "preseason") return BAL.preseasonDays - s.phaseDay;
+  return (s.offseasonDays || BAL.offseasonDays) - s.phaseDay + BAL.preseasonDays;
 }
 function requiredWorkHours(st = state.employment.status) {
   return st === "pro" ? BAL.proDutyHoursRequired : st === "employed" ? BAL.workHoursRequired : BAL.jobSearchMinHours;
 }
-function workMaxHours(st = state.employment.status, phase = state.seasonPhase) {
-  if (onLeave(st, phase)) return 0;
+function workMaxHours(st = state.employment.status, s = state) {
+  if (onLeave(st, s)) return 0;
   if (st === "pro") return 12; // 5 required + headroom to push a technique
   if (st === "unemployed") return 16; // no requirement, just a generous daily ceiling
   return BAL.workHoursRequired + BAL.overtimeMaxHours; // Employed: overtime past the requirement
@@ -907,7 +918,7 @@ function migrateSave(parsed) {
   // Slider maxes can drop between versions — never load a plan past them.
   const a = fresh.allocation;
   a.exercise = clamp(a.exercise || 0, 0, BAL.gymMaxHours);
-  a.work = clamp(a.work || 0, 0, workMaxHours(fresh.employment.status, fresh.seasonPhase));
+  a.work = clamp(a.work || 0, 0, workMaxHours(fresh.employment.status, fresh));
   return fresh;
 }
 
@@ -1307,7 +1318,7 @@ function resolveEmploymentDay() {
       state.allocation.work = BAL.workHoursRequired;
       events.push({
         type: "good",
-        text: onLeave() ? `💼 Found a new job! You start once preseason is over — on paid leave until then.` : `💼 Found a new job! Work resumes at ${BAL.workHoursRequired}h/day.`,
+        text: onLeave() ? `💼 Found a new job! You start when the season does — on paid leave until then.` : `💼 Found a new job! Work resumes at ${BAL.workHoursRequired}h/day.`,
       });
     } else if (workH > 0) {
       events.push({ type: "neutral", text: `🔍 Job search: ${fmt(emp.jobSearchHours)}/${jobSearchTarget()}h` });
@@ -2444,7 +2455,7 @@ function workRowHtml() {
 
   const isPro = emp.status === "pro";
   if (onLeave()) {
-    const back = BAL.preseasonDays - state.phaseDay;
+    const back = leaveDaysLeft();
     return comboRowHtml("work", {
       icon: "🏖️",
       label: "Annual leave",
@@ -3273,7 +3284,7 @@ function employmentSectionHtml() {
     return `${expensesLine}<p>🔍 <b>Unemployed</b> — job searching: ${fmt(emp.jobSearchHours)} / ${jobSearchTarget()}h accumulated (each search needs a random ${BAL.jobSearchHoursRange[0]}–${BAL.jobSearchHoursRange[1]}h). Every hour counts toward it, and you need at least ${BAL.jobSearchMinHours}h a day to end the day.</p>`;
   }
 
-  const leaveLine = onLeave() ? `<p>🏖️ <b>Annual leave</b> — no ${emp.status === "pro" ? "Pro Duties" : "Work"} until the season starts in ${BAL.preseasonDays - state.phaseDay} days, paid as normal.</p>` : "";
+  const leaveLine = onLeave() ? `<p>🏖️ <b>Annual leave</b> — no ${emp.status === "pro" ? "Pro Duties" : "Work"} until the season starts in ${leaveDaysLeft()} days, paid as normal.</p>` : "";
   if (emp.status === "pro") {
     const queue = emp.techniqueQueue;
     const penalty = Math.round(Math.min(1, queue.length * BAL.techniquePenaltyPerUnmastered) * 100);
@@ -4035,6 +4046,7 @@ function buildPhaseSplash(from, to, { yearSummary = null, tierBefore = state.lea
     how.unshift(["📊 Finished", `#${state.lastPlayerPosition} of ${BAL.leagueSize} · ${w}–${season.length - w} — missed the top ${BAL.playoffSize}`]);
     how.push(["Next season", moveText(playedTier, state.leagueTier)]);
     next.push(["Training camp", `${state.offseasonDays} days — all 7 skills trainable, no matches`]);
+    if (state.employment.status !== "unemployed") next.push(leaveSplashRow());
     next.push(["Then", `Year ${state.year + 1} preseason in League ${state.leagueTier}`]);
   } else if (from === "playoffs" && to === "offseason") {
     const p = state.playoff || {};
@@ -4045,6 +4057,7 @@ function buildPhaseSplash(from, to, { yearSummary = null, tierBefore = state.lea
     if (c && !c.isPlayer) how.push(["League champion", c.name]);
     how.push(["Next season", moveText(playedTier, state.leagueTier)]);
     next.push([champ ? "Offseason" : "Training camp", `${state.offseasonDays} days — all 7 skills trainable, no matches`]);
+    if (state.employment.status !== "unemployed") next.push(leaveSplashRow());
     next.push(["Then", `Year ${state.year + 1} preseason in League ${state.leagueTier}`]);
   } else if (from === "offseason" && to === "preseason") {
     icon = "🎉"; title = `Year ${state.year} begins`; sub = `League ${state.leagueTier}`;
@@ -4056,7 +4069,7 @@ function buildPhaseSplash(from, to, { yearSummary = null, tierBefore = state.lea
       if (yearSummary.newPayRate != null) money.push(["📈 Annual raise", `pay is now $${fmt(yearSummary.newPayRate)}/day`]);
     }
     next.push(["Preseason", `${BAL.preseasonDays} days — all 7 skills trainable, no matches`]);
-    next.push(state.employment.status === "unemployed" ? ["🔍 Job search", "carries on as normal"] : ["🏖️ Annual leave", `no ${state.employment.status === "pro" ? "Pro Duties" : "Work"} all preseason, paid as normal`]);
+    next.push(state.employment.status === "unemployed" ? ["🔍 Job search", "carries on as normal"] : ["🏖️ Annual leave", `carries on all preseason — no ${state.employment.status === "pro" ? "Pro Duties" : "Work"}, paid as normal`]);
     next.push(["League cap", `skills can reach ${leagueSkillCap()} (League ${state.peakLeagueTier} best)`]);
     const unlockable = [];
     if (SKILL_COACH_LEVELS.some((l, i) => l.unlock === state.peakLeagueTier && i > 0)) unlockable.push(`Coach Lv${SKILL_COACH_LEVELS.findIndex((l) => l.unlock === state.peakLeagueTier) + 1}`);
@@ -4069,6 +4082,14 @@ function buildPhaseSplash(from, to, { yearSummary = null, tierBefore = state.lea
   }
   const moneyTitle = yearSummary ? `Year ${yearSummary.year} money` : "";
   return { icon, title, sub, fromName: PHASE_NAMES[from] || from, how, skills, money, moneyTitle, next, notes };
+}
+
+// When the season ends: when annual leave starts.
+function leaveSplashRow() {
+  const label = state.employment.status === "pro" ? "Pro Duties" : "Work";
+  return state.offseasonDays > BAL.offseasonDays
+    ? ["🏖️ Annual leave", `the last ${BAL.offseasonDays} days (after the Final) and all preseason — no ${label}, paid as normal`]
+    : ["🏖️ Annual leave", `starts now, through to the end of preseason — no ${label}, paid as normal`];
 }
 
 // Same look and rounding as the week summary's table.
@@ -4182,6 +4203,13 @@ function dayEventCards(before) {
       icon: "🔁", tone: "bad", title: "Couldn't rehire staff",
       body: `Not enough cash to keep on ${missed.map((m) => `<b>${m.name}</b> ($${fmt(m.cost)})`).join(" and ")} — they're off this week, and their 🔁 Auto-rehire has been switched off.`,
       tip: "Hire them again in 🧑‍🏫 Staff once you can afford it, and switch auto-rehire back on if you want it.",
+    });
+  }
+  if (!before.leave && onLeave() && before.phase === state.seasonPhase && before.employment === emp.status) {
+    cards.push({
+      icon: "🏖️", tone: "good", title: "Annual leave",
+      body: `The playoffs are over, so you're on paid leave until the season starts — <b>${leaveDaysLeft()} days</b> with no ${emp.status === "pro" ? "Pro Duties" : "Work"}, full pay, and no chances at risk.`,
+      tip: `Those ${requiredWorkHours()}h are free — put them into training.`,
     });
   }
   const leaveOver = before.leave && !onLeave() && emp.status !== "unemployed";
@@ -4301,7 +4329,7 @@ function openHowTo() {
       ["🌙 Sleep", "Rest", `${B.idealSleep}h`],
       ["🎮 Relax", "Calm", `${B.relaxComposureThreshold}h`],
       ["🥗 Food", "Nutrition", `${B.skillDecayThresholdHours}h`],
-      ["💼 Work", "pay, keeps the job", `${B.workHoursRequired}h (none in preseason)`],
+      ["💼 Work", "pay, keeps the job", `${B.workHoursRequired}h (none on leave)`],
     ])}
     ${ul([
       "Below its <b>minimum</b> (the tick on each slider) a stat slips instead of growing. The slider track turns green when you've met it, red when you haven't.",
@@ -4374,8 +4402,8 @@ function openHowTo() {
 
   sec("money", "💼", "Work & money", `
     ${ul([
-      `Work <b>${B.workHoursRequired}h/day</b>, every phase but preseason. Pay starts at $${B.workPayMin}/day, +$${B.payRaisePerYear} each year for ${B.payRaiseMaxYears} years. Living costs are <b>$${B.dailyExpenses}/day</b>, always.`,
-      `<b>🏖️ Annual leave:</b> preseason is paid time off — no Work or Pro Duties, full pay, no chances at risk. A job search carries on as normal.`,
+      `Work <b>${B.workHoursRequired}h/day</b>, except on annual leave (below). Pay starts at $${B.workPayMin}/day, +$${B.payRaisePerYear} each year for ${B.payRaiseMaxYears} years. Living costs are <b>$${B.dailyExpenses}/day</b>, always.`,
+      `<b>🏖️ Annual leave:</b> the offseason's last ${B.offseasonDays} days (the week after the Final — all of a champion's break) and all of preseason are paid time off — no Work or Pro Duties, full pay, no chances at risk. A job search carries on as normal.`,
       `<b>Overtime:</b> up to ${B.overtimeMaxHours}h extra at half your hourly rate ($${Math.round(B.workPayMin / B.workHoursRequired / 2)}/h at $${B.workPayMin}/day).`,
       `Short on Work hours? You keep your pay but lose part of a <b>chance</b> (back after ${B.strikeWindowDays} days). Lose all ${fmt1(B.strikesToFire)} and you're fired.`,
       `Fired: the Work slider becomes <b>Job Search</b> — ${B.jobSearchHoursRange[0]}–${B.jobSearchHoursRange[1]}h in total gets you hired, at least ${B.jobSearchMinHours}h a day. Pay resets to the minimum.`,
@@ -4737,8 +4765,9 @@ function runDay() {
   // rerolls — the match grades the skills actually trained this week, not
   // whatever gets revealed for the week ahead.
   const { matchResult, phaseEvent, yearSummary } = processDayEnd();
-  // Annual leave starts with preseason (Work goes to 0h) and ends with it
-  // (back to the required hours — the plan may need trimming to fit).
+  // Annual leave starts in the offseason's last week (Work goes to 0h) and
+  // ends with preseason (back to the required hours — the plan may need
+  // trimming to fit).
   if (onLeave()) state.allocation.work = 0;
   else if (leaveBefore && state.employment.status !== "unemployed") state.allocation.work = requiredWorkHours();
   if (matchResult) {
@@ -4858,6 +4887,7 @@ function weekSnapshot() {
     techniques: state.employment.techniqueQueue.length,
     carbHours: state.carbHours || 0,
     leave: onLeave(),
+    phase: state.seasonPhase,
   };
 }
 
