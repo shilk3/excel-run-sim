@@ -24,6 +24,9 @@ Relax, and Food. Everything is connected:
   day still counts Calm as 100 at most. Let it hit 0 and you burn out,
   tanking your training until you recover.
 - **Food** builds Nutrition, which keeps tomorrow's day at full length — see below.
+  **Carb loading:** each Food hour past 1h banks one extra hour for the next
+  day only (up to +3h at 4h of Food) — it moves hours between days, 1:1.
+  End Week stops on a carb-loaded day so the extra hours can be planned.
 - **Decay is universal**: every stat needs upkeep or it slips — an
   inactive skill, Gym, Sleep, Relax, or Food below its
   threshold hours (shown as a marker on each slider) causes that stat to

@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.48.2";
+const APP_VERSION = "4.49.0";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -37,6 +37,7 @@ const BAL = {
   // Employed: Work can run this many hours past the requirement, each paid
   // at half the job's hourly rate.
   overtimeMaxHours: 4,
+  carbLoadMaxHours: 3,
   restDragThreshold: 80,
   restDragComposure: 0.08,
   restDragHealth: 0.04,
@@ -543,6 +544,17 @@ function composureMatchMultiplier(composure) {
 // How many hours the day actually has to allocate, driven by Nutrition —
 // linear between the floor (at/below the low anchor) and a full 24h
 // (at/above the high anchor).
+// Today's full budget: Nutrition's cap plus any carb-loaded hours banked
+// by yesterday's extra Food.
+function todayHours() {
+  return dailyHoursCap(state.stats.nutrition) + (state.carbHours || 0);
+}
+// Carb loading: each Food hour past the 1h minimum banks one extra hour for
+// tomorrow only (up to 3, at Food's 4h max). Exactly 1:1, so it moves
+// hours between days rather than adding any.
+function carbHoursFrom(foodH) {
+  return clamp((foodH || 0) - BAL.skillDecayThresholdHours, 0, BAL.carbLoadMaxHours);
+}
 function dailyHoursCap(nutrition) {
   const { nutritionHoursCapLow: lo, nutritionHoursCapHigh: hi, dailyHoursFloor: floor, dailyHoursCeiling: ceil } = BAL;
   if (nutrition <= lo) return floor;
@@ -814,6 +826,7 @@ function freshState() {
     // lands on the next day resolved.
     items: { used: {}, crash: { rest: 0, composure: 0 } },
     equipment: { owned: {} }, // lasts until the year it was bought ends
+    carbHours: 0, // extra hours today, banked by yesterday's extra Food
     phaseStart: null, // snapshot taken when each phase begins (phaseSnapshot) — for the phase splash
     pendingSplash: null, // a phase splash not yet dismissed
     tutorialSeen: false,
@@ -1102,6 +1115,8 @@ function migrateSave(parsed) {
   if (!parsed.items) parsed.items = { used: {}, crash: { rest: 0, composure: 0 } };
   // v4.46.0: equipment.
   if (!parsed.equipment) parsed.equipment = { owned: {} };
+  // v4.49.0: carb loading.
+  if (parsed.carbHours == null) parsed.carbHours = 0;
 
   // v4.35.0: match history. Earlier matches this season only kept opponent
   // and result, so they come in as simple rows; league-wide results start now.
@@ -1431,6 +1446,10 @@ function resolveDay() {
   } else {
     events.push({ type: "bad", text: `🥗 Skipped Food: Nutrition fell to ${fmt(s.nutrition)} — tomorrow's hours may shrink` });
   }
+  // Today's carb-loaded hours are used up; tonight's extra Food banks
+  // tomorrow's.
+  state.carbHours = carbHoursFrom(nutritionH);
+  if (state.carbHours > 0) events.push({ type: "good", text: `🍝 Carb-loaded: +${state.carbHours}h tomorrow` });
 
   // ---- Rest ----
   s.rest = result.rest;
@@ -2763,6 +2782,10 @@ function renderPlannerRows() {
   let nutritionOutcome = `${fmt(s.nutrition)}/100`;
   if (capToday < BAL.dailyHoursCeiling) nutritionOutcome += ` · ${capToday}h today`;
   if (capTomorrow !== capToday) nutritionOutcome += ` → ${capTomorrow}h tomorrow`;
+  const carbToday = state.carbHours || 0;
+  const carbTomorrow = carbHoursFrom(a.nutrition);
+  if (carbToday) nutritionOutcome += ` · 🍝 +${carbToday}h today`;
+  if (carbTomorrow) nutritionOutcome += ` · 🍝 +${carbTomorrow}h tmrw`;
   rows.push(
     comboRowHtml("nutrition", {
       icon: "🥗",
@@ -2783,7 +2806,7 @@ function renderPlannerRows() {
 
 function renderPlanner() {
   renderPlannerRows();
-  const cap = dailyHoursCap(state.stats.nutrition);
+  const cap = todayHours();
   const left = cap - totalAssigned();
   const hoursLeftEl = $("hoursLeft");
   hoursLeftEl.textContent = left;
@@ -2792,7 +2815,7 @@ function renderPlanner() {
   // The "why" (Nutrition) lives on Nutrition's own row now — this just
   // states the number so the header stays one line.
   const capNoteEl = $("hoursCapNote");
-  if (capNoteEl) capNoteEl.textContent = cap < BAL.dailyHoursCeiling ? ` of ${cap}h` : "";
+  if (capNoteEl) capNoteEl.textContent = cap !== BAL.dailyHoursCeiling ? ` of ${cap}h` : "";
   // Over-allocated (the cap can shrink overnight via Nutrition after hours
   // were already set against yesterday's higher cap) — block ending the day
   // until it's brought back down to the new, smaller budget.
@@ -3990,10 +4013,26 @@ function dayEventCards(before) {
     });
   }
   if (isOverAllocated()) {
+    const carbGone = (before.carbHours || 0) > (state.carbHours || 0);
+    cards.push(
+      carbGone
+        ? {
+            icon: "🍝", tone: "neutral", title: "Carb-load used up",
+            body: `Yesterday's extra hours have run out, so today has <b>${todayHours()}h</b> — but your plan uses ${totalAssigned()}h.`,
+            tip: "Trim the plan to carry on, or eat 2h+ again to bank more for tomorrow.",
+          }
+        : {
+            icon: "🥗", tone: "bad", title: "A shorter day",
+            body: `Nutrition is down to ${fmt(state.stats.nutrition)}, so today only has <b>${todayHours()}h</b> — but your plan uses ${totalAssigned()}h.`,
+            tip: "Trim the plan to carry on, and give Food more time so tomorrow's day grows back.",
+          }
+    );
+  } else if ((state.carbHours || 0) > 0 && todayHours() - totalAssigned() > 0) {
+    // Only stops End Week — after End Day you're already planning the day.
     cards.push({
-      icon: "🥗", tone: "bad", title: "A shorter day",
-      body: `Nutrition is down to ${fmt(state.stats.nutrition)}, so today only has <b>${dailyHoursCap(state.stats.nutrition)}h</b> — but your plan uses ${totalAssigned()}h.`,
-      tip: "Trim the plan to carry on, and give Food more time so tomorrow's day grows back.",
+      icon: "🍝", tone: "good", title: "Carb-loaded", weekOnly: true,
+      body: `Yesterday's extra Food gave today <b>+${state.carbHours}h</b> (${todayHours()}h in all). You have ${todayHours() - totalAssigned()}h unassigned.`,
+      tip: "Put them to use today — they don't carry over to tomorrow.",
     });
   }
   return cards;
@@ -4118,6 +4157,7 @@ function openHowTo() {
   sec("nutrition", "🥗", "Nutrition & day length", ul([
     `Nutrition sets how many hours tomorrow has: <b>${B.dailyHoursFloor}h</b> at ${B.nutritionHoursCapLow} or below, rising to the full <b>${B.dailyHoursCeiling}h</b> at ${B.nutritionHoursCapHigh}+.`,
     `Under ${B.skillDecayThresholdHours}h of Food a day, Nutrition drops.`,
+    `<b>🍝 Carb loading:</b> each Food hour past ${B.skillDecayThresholdHours}h banks one extra hour for <b>tomorrow only</b> (up to +${B.carbLoadMaxHours}h). It moves hours between days rather than adding any — End Week stops on a carb-loaded day so you can use them.`,
   ]));
 
   sec("health", "🏃", "Health & injuries", ul([
@@ -4458,7 +4498,7 @@ function openSaveTransfer() {
 /* End day flow                                                           */
 /* ---------------------------------------------------------------------- */
 function isOverAllocated() {
-  return dailyHoursCap(state.stats.nutrition) - totalAssigned() < 0;
+  return todayHours() - totalAssigned() < 0;
 }
 
 // Why today's plan can't be played yet (null = it can). Shared by both
@@ -4587,7 +4627,7 @@ function endDay() {
   const before = weekSnapshot();
   const { matchResult, splash } = runDay();
   finishTurn();
-  const cards = dayEventCards(before);
+  const cards = dayEventCards(before).filter((c) => !c.weekOnly);
   // The match result comes first, then the phase change, then anything
   // else that happened — each opens once the one before is closed.
   showSequence([
@@ -4624,6 +4664,7 @@ function weekSnapshot() {
     burnout: state.burnout.active,
     employment: state.employment.status,
     techniques: state.employment.techniqueQueue.length,
+    carbHours: state.carbHours || 0,
   };
 }
 
@@ -4733,7 +4774,7 @@ function setAllocHoursRaw(key, val) {
 function setAllocation(key, val) {
   const maxForKey = isSkillKey(key) ? SKILL_MAX_HOURS : key === "work" ? workMaxHours() : ACT_MAX[key];
   const others = totalAssigned() - getAllocHours(key);
-  const maxAllowed = Math.min(maxForKey, dailyHoursCap(state.stats.nutrition) - others);
+  const maxAllowed = Math.min(maxForKey, todayHours() - others);
   setAllocHoursRaw(key, clamp(val, 0, Math.max(0, maxAllowed)));
   renderPlanner();
 }
