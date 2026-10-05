@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.50.1";
+const APP_VERSION = "4.50.2";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -3944,13 +3944,13 @@ function buildPhaseSplash(from, to, { yearSummary = null, tierBefore = state.lea
   const next = [];
   const notes = [];
   const money = [];
+  let skills = null;
   const sgn = (n) => (n === 0 ? "±0" : n > 0 ? `+${fmt(n)}` : `−${fmt(-n)}`);
   if (start) {
     if (state.rank !== start.rank) how.push(["🏆 Rating", `${fmt(start.rank)} → ${fmt(state.rank)} (${sgn(state.rank - start.rank)})`]);
     if (!yearSummary) how.push(["💰 Cash", `${fmtMoney(start.cash)} → ${fmtMoney(state.cash)}`]);
-    const gains = SKILL_KEYS.map((k) => ({ k, d: state.stats.skills[k] - (start.skills[k] || 0) })).filter((g) => Math.abs(g.d) >= 0.5).sort((a, b) => b.d - a.d);
-    gains.filter((g) => g.d > 0).slice(0, 3).forEach((g) => how.push([`${skillMeta(g.k).icon} ${skillMeta(g.k).name}`, `${fmt(start.skills[g.k])} → ${fmt(state.stats.skills[g.k])} (${sgn(g.d)})`]));
-    if (!gains.some((g) => g.d > 0)) how.push(["Skills", "no gains this phase"]);
+    // Every skill, start → now, in its own table (not just the top gains).
+    skills = SKILL_KEYS.map((k) => [`${skillMeta(k).icon} ${skillMeta(k).name}`, start.skills[k] || 0, state.stats.skills[k]]);
   }
   const season = state.seasonResults || [];
   const w = season.filter((r) => r.win).length;
@@ -4016,7 +4016,22 @@ function buildPhaseSplash(from, to, { yearSummary = null, tierBefore = state.lea
     title = `${PHASE_NAMES[to] || to}`;
   }
   const moneyTitle = yearSummary ? `Year ${yearSummary.year} money` : "";
-  return { icon, title, sub, fromName: PHASE_NAMES[from] || from, how, money, moneyTitle, next, notes };
+  return { icon, title, sub, fromName: PHASE_NAMES[from] || from, how, skills, money, moneyTitle, next, notes };
+}
+
+// Same look and rounding as the week summary's table.
+function splashSkillsTable(skills) {
+  const small = (d) => Math.abs(d) >= 0.05 && Math.abs(d) < 1;
+  const num = (v, d) => (small(d) ? fmt1(v) : fmt(v));
+  const rowsHtml = skills
+    .map(([label, a, b]) => {
+      const d = b - a;
+      const cls = Math.abs(d) < 0.05 ? "" : d > 0 ? "wk-up" : "wk-down";
+      const ch = Math.abs(d) < 0.05 ? "±0" : `${d > 0 ? "+" : "−"}${num(Math.abs(d), d)}`;
+      return `<tr><td>${label}</td><td>${num(a, d)}</td><td>${num(b, d)}</td><td class="${cls}">${ch}</td></tr>`;
+    })
+    .join("");
+  return `<table class="perf-table week-table"><thead><tr><th>Skill</th><th>Start</th><th>Now</th><th>Change</th></tr></thead><tbody>${rowsHtml}</tbody></table>`;
 }
 
 function showPhaseSplash(sp, extraHtml = "", onDone = null) {
@@ -4027,6 +4042,7 @@ function showPhaseSplash(sp, extraHtml = "", onDone = null) {
       <div class="splash-title">${sp.title}</div>
       ${sp.sub ? `<div class="splash-sub">${sp.sub}</div>` : ""}
       ${sp.how.length ? `<div class="modal-section splash-section"><h3>How the ${sp.fromName.toLowerCase()} went</h3>${rows(sp.how)}</div>` : ""}
+      ${sp.skills ? `<div class="modal-section splash-section"><h3>Skills this ${sp.fromName.toLowerCase()}</h3>${splashSkillsTable(sp.skills)}</div>` : ""}
       ${sp.money && sp.money.length ? `<div class="modal-section splash-section"><h3>${sp.moneyTitle}</h3>${rows(sp.money)}</div>` : ""}
       ${sp.next.length ? `<div class="modal-section splash-section"><h3>What's next</h3>${rows(sp.next)}</div>` : ""}
       ${sp.notes.map((n) => `<div class="callout splash-note">${n}</div>`).join("")}
