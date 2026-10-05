@@ -129,6 +129,21 @@ numbers side by side, collapsible explanations, and a preview of the next
 match (opponent, ratings, table places, win chance and the week's focus). League tables rank by points, then
 head-to-head between tied players, then rating; they show W and L too.
 
+**Game length**: chosen when a game starts, and each length keeps its own
+save — so up to three games on one device (☰ → 🎮 Games to switch, start or
+restart one). All three have the same 5 leagues, and a year ends on the day
+of the Final.
+
+| Length | Preseason | League size (rounds) | Playoffs | Up / down | Year |
+|---|---|---|---|---|---|
+| Short | 1 week | 10 (9) | top 4: SF → Final | 2 / 2 | ~12 weeks |
+| Half | 2 weeks | 20 (19) | top 8: QF → Final | 3 / 3 | ~24 weeks |
+| Full | 3 weeks | 40 (39) | top 16: R16 → Final | 4 / 4 | ~46 weeks |
+
+Training camp is one week per playoff round (Short 14 days, Half 21, Full
+28). A save from before game lengths is the Full game. The numbers below are
+the Full game's.
+
 **The season**: a 21-day preseason to train (annual leave), then a 39-round regular season —
 one match a week against a named rival, the full schedule known in advance.
 Finish in the top 16 of your 40-competitor league to reach the knockout

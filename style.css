@@ -871,3 +871,6 @@ details.match-more[open] { padding-bottom: 8px; }
 .br-out { opacity: 0.45; }
 .br-you { background: rgba(255, 176, 32, 0.14); }
 .br-tbd { color: var(--text-dim); font-style: italic; font-size: 12px; }
+
+/* Games screen / menu: the game length beside a label */
+.menu-note { font-size: 12px; font-weight: 600; color: var(--text-dim); margin-left: 4px; }

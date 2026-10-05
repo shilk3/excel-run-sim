@@ -3,8 +3,14 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.59.0";
+const APP_VERSION = "4.60.0";
+// One save slot per game length. The Full game keeps the original key, so
+// a career from before game lengths carries on as the Full game.
 const SAVE_KEY = "cellgrind_save_v1";
+const ACTIVE_GAME_KEY = "cellgrind_active_game"; // which slot was played last
+function slotKey(len) {
+  return len === "full" ? SAVE_KEY : `cellgrind_save_${len}`;
+}
 const SAVE_BACKUP_KEY = "cellgrind_save_unreadable";
 // Bumped when a save's shape changes. Older saves aren't converted (there's
 // only ever been one tester) — anything missing is filled from a new
@@ -77,20 +83,21 @@ const BAL = {
   nutritionHoursCapHigh: 90, // >=90 Nutrition: the full day
   dailyHoursFloor: 16,
   dailyHoursCeiling: 24,
-  // Season structure
+  // Season structure. The values marked (length) are the Full game's —
+  // applyGameLength() swaps in the chosen game length's (GAME_LENGTHS).
   // Preseason is also annual leave (see onLeave). It starts the day after
   // the Final (the playoff window's last day), so that's when a year ends.
-  preseasonDays: 21,
+  preseasonDays: 21, // (length)
   preseasonCoachPrice: 0.5, // skill coaches' wages in preseason, as a share of normal
-  seasonRounds: 39,
+  seasonRounds: 39, // (length) leagueSize − 1: everyone plays everyone once
   roundIntervalDays: 7,
-  playoffSize: 16,
+  playoffSize: 16, // (length)
   // Missing the playoffs ends your season 4 rounds early compared to a
   // Final run — give that time back as an explicit training camp instead
   // of just a short generic break, so missing the cut isn't strictly worse
   // for preparing next season than qualifying and getting knocked out fast.
-  // It runs to the day of the Final.
-  trainingCampDays: 28,
+  // It runs to the day of the Final: one week per playoff round.
+  trainingCampDays: 28, // (length)
   statCapBase: 70, // Physical Health ceiling with zero relevant upgrades
   statCapPerLevel: 10, // + this much per Physio level (max 3 levels -> +30 -> 100)
   // Skill ceilings stack two independent gates: the hired coach's level
@@ -99,15 +106,16 @@ const BAL = {
   // lower of the two.
   skillShopCapBase: 50,
   skillShopCapPerLevel: 10, // levels 1-5 -> 60/70/80/90/100
-  // League structure: 5 tiers, 40 competitors each (199 persistent rivals +
-  // the player, who occupies one slot in whichever tier they're currently in).
+  // League structure: 5 tiers of leagueSize competitors (5 × leagueSize − 1
+  // persistent rivals + the player, who occupies one slot in whichever tier
+  // they're currently in).
   leagueCount: 5,
-  leagueSize: 40,
-  // Promotion: the playoff champion plus the top 3 of the table *other than*
-  // the champion — always 4, matching relegationCount so every tier stays at
-  // exactly leagueSize. The top 3 are therefore always promoted.
-  promotionTablePlaces: 3,
-  relegationCount: 4,
+  leagueSize: 40, // (length)
+  // Promotion: the playoff champion plus the top (relegationCount − 1) of
+  // the table *other than* the champion — so as many go up as come down
+  // and every tier stays at exactly leagueSize.
+  promotionTablePlaces: 3, // (length)
+  relegationCount: 4, // (length)
   oppPerfRange: [50, 95], // rivals' cosmetic match-day performance (see resolveMatch)
   // Rating change per match: up to this many points, scaled by how
   // unlikely the result was (Elo).
@@ -157,6 +165,42 @@ const BAL = {
   techniqueMaxHours: 40,
   techniquePenaltyPerUnmastered: 0.05,
 };
+
+// Game lengths, chosen when a game starts (state.gameLength). Each has its
+// own save slot. A year ends on the day of the Final either way.
+const GAME_LENGTHS = {
+  short: { key: "short", name: "Short", icon: "⚡", blurb: "a quarter-length season", leagueSize: 10, playoffSize: 4, moveCount: 2, preseasonDays: 7 },
+  half: { key: "half", name: "Half", icon: "🌗", blurb: "a half-length season", leagueSize: 20, playoffSize: 8, moveCount: 3, preseasonDays: 14 },
+  full: { key: "full", name: "Full", icon: "🏟️", blurb: "the full season", leagueSize: 40, playoffSize: 16, moveCount: 4, preseasonDays: 21 },
+};
+const GAME_LENGTH_KEYS = ["short", "half", "full"];
+const ALL_PLAYOFF_STAGES = ["r16", "qf", "sf", "f"];
+// This game length's playoff rounds: 16 → R16 to Final, 8 → QF on, 4 → SF on.
+function playoffStages() {
+  return ALL_PLAYOFF_STAGES.slice(ALL_PLAYOFF_STAGES.length - Math.log2(BAL.playoffSize));
+}
+function gameLengthInfo(key) {
+  return GAME_LENGTHS[key] || GAME_LENGTHS.full;
+}
+// Sets the season-structure BAL values for a game length. Called before a
+// game's state is built or loaded, since the engine reads BAL throughout.
+function applyGameLength(key) {
+  const g = gameLengthInfo(key);
+  BAL.gameLength = g.key;
+  BAL.leagueSize = g.leagueSize;
+  BAL.seasonRounds = g.leagueSize - 1;
+  BAL.playoffSize = g.playoffSize;
+  BAL.relegationCount = g.moveCount;
+  BAL.promotionTablePlaces = g.moveCount - 1;
+  BAL.preseasonDays = g.preseasonDays;
+  BAL.trainingCampDays = playoffStages().length * BAL.roundIntervalDays;
+}
+// A game length's numbers in one line, for the pickers.
+function gameLengthSummary(key) {
+  const g = gameLengthInfo(key);
+  const weeks = (g.preseasonDays + (g.leagueSize - 1) * 7 + Math.log2(g.playoffSize) * 7) / 7;
+  return `${g.leagueSize} per league (${g.leagueSize - 1} rounds) · top ${g.playoffSize} playoffs · ${g.moveCount} up, ${g.moveCount} down · ${g.preseasonDays / 7}-week preseason · ~${Math.round(weeks)} weeks a year`;
+}
 
 // Flavor pool for technique-queue entries — real Excel features, cycled
 // without repeating one already in the queue.
@@ -749,10 +793,10 @@ function generateRivalRoster(playerTier) {
   const names = shuffledRivalNames();
   const rivals = [];
   let id = 0;
-  // Whichever tier the player occupies gets 39 rivals instead of 40, leaving
-  // the player's slot open; every other tier is a full 40.
-  const countsByTier = { 1: 40, 2: 40, 3: 40, 4: 40, 5: 40 };
-  countsByTier[playerTier] = 39;
+  // Whichever tier the player occupies gets one rival fewer, leaving the
+  // player's slot open; every other tier is full.
+  const countsByTier = { 1: BAL.leagueSize, 2: BAL.leagueSize, 3: BAL.leagueSize, 4: BAL.leagueSize, 5: BAL.leagueSize };
+  countsByTier[playerTier] = BAL.leagueSize - 1;
   for (let tier = 1; tier <= 5; tier++) {
     const [lo, hi] = LEAGUE_RATING_BANDS[tier];
     for (let i = 0; i < countsByTier[tier]; i++) {
@@ -823,6 +867,7 @@ function freshState() {
   const leagueData = buildSeasonLeagueData(rivals, leagueTier);
   return {
     saveVersion: SAVE_VERSION,
+    gameLength: BAL.gameLength, // "short" | "half" | "full" — see applyGameLength
     day: 1, // total career days played — flavor/log only
     playerName: null,
     year: 1,
@@ -912,6 +957,8 @@ function storageAvailable() {
 const STORAGE_OK = storageAvailable();
 let lastLoadedFromSave = false;
 let loadFailed = false; // the saved career couldn't be read (kept under SAVE_BACKUP_KEY)
+let needsGamePick = false; // no game on this device yet — ask which length first
+applyGameLength("full");
 let state = loadState();
 
 // Turns parsed save JSON into a full state. Throws if it isn't a usable save.
@@ -921,6 +968,8 @@ function migrateSave(parsed) {
     Array.isArray(parsed.rivals) && parsed.rivals.length &&
     parsed.stats && parsed.stats.skills && parsed.leaguePoints && parsed.leagueRoundRobins && parsed.employment;
   if (!usable) throw new Error("Save is from an unsupported version");
+  // Saves from before game lengths are Full games.
+  applyGameLength(parsed.gameLength || "full");
   const fresh = freshState();
   const defaults = freshState(); // a separate copy, so nothing ends up shared
   // Only keys the game still uses — anything retired is dropped.
@@ -949,11 +998,29 @@ function migrateSave(parsed) {
   return fresh;
 }
 
+// The game played last: the remembered slot, else a Full save from before
+// slots existed, else none (a brand-new player picks a length).
+function activeGameLength() {
+  try {
+    const a = localStorage.getItem(ACTIVE_GAME_KEY);
+    if (GAME_LENGTHS[a]) return a;
+    return localStorage.getItem(SAVE_KEY) ? "full" : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 function loadState() {
   if (!STORAGE_OK) return freshState();
   let raw = null;
   try {
-    raw = localStorage.getItem(SAVE_KEY);
+    const len = activeGameLength();
+    if (!len) {
+      needsGamePick = true;
+      return freshState();
+    }
+    applyGameLength(len);
+    raw = localStorage.getItem(slotKey(len));
     if (!raw) return freshState();
     const loaded = migrateSave(JSON.parse(raw));
     lastLoadedFromSave = true;
@@ -979,7 +1046,8 @@ function saveState() {
   if (!STORAGE_OK) return false;
   if (state.logEntries.length > LOG_KEEP) state.logEntries = state.logEntries.slice(-LOG_KEEP);
   try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify(state));
+    localStorage.setItem(slotKey(state.gameLength), JSON.stringify(state));
+    localStorage.setItem(ACTIVE_GAME_KEY, state.gameLength);
     return true;
   } catch (e) {
     return false;
@@ -1661,7 +1729,11 @@ function eloChange(ratingA, ratingB, aWon, K = BAL.ratingK) {
 //   loserRating], …], roundKey "1".."39" or a playoff stage; you are id -1.
 //   Only this season and last are kept.
 const HISTORY_PLAYER_ID = -1;
-const HISTORY_ROUND_KEYS = Array.from({ length: BAL.seasonRounds }, (_, i) => String(i + 1)).concat(["r16", "qf", "sf", "f"]);
+// Every round key a season can have, in order: its rounds, then its
+// playoff stages.
+function historyRoundKeys() {
+  return Array.from({ length: BAL.seasonRounds }, (_, i) => String(i + 1)).concat(playoffStages());
+}
 const BRACKET_STAGE_BY_SIZE = { 16: "r16", 8: "qf", 4: "sf", 2: "f" };
 
 function ensureHistory() {
@@ -1869,14 +1941,18 @@ function processLeagueSeasonEnd() {
   return { standings: playerStandings, playerPosition, qualified };
 }
 
-// Standard 16-bracket seeding pairs so top seeds are spread across the draw
-// (1 and 2 can only meet in the Final, etc).
-const SEED_PAIRS_16 = [[1, 16], [8, 9], [5, 12], [4, 13], [6, 11], [3, 14], [7, 10], [2, 15]];
+// Standard seeding pairs so top seeds are spread across the draw (1 and 2
+// can only meet in the Final, etc), for each playoff size.
+const SEED_PAIRS = {
+  16: [[1, 16], [8, 9], [5, 12], [4, 13], [6, 11], [3, 14], [7, 10], [2, 15]],
+  8: [[1, 8], [4, 5], [3, 6], [2, 7]],
+  4: [[1, 4], [2, 3]],
+};
 
 function seedBracket(standings) {
   const top = standings.slice(0, BAL.playoffSize);
   const round = [];
-  SEED_PAIRS_16.forEach(([a, b]) => {
+  SEED_PAIRS[BAL.playoffSize].forEach(([a, b]) => {
     round.push(top[a - 1], top[b - 1]);
   });
   return round;
@@ -1884,7 +1960,7 @@ function seedBracket(standings) {
 
 function buildPlayoffBracket(standings, tier) {
   const playerSeed = standings.slice(0, BAL.playoffSize).findIndex((t) => t.isPlayer) + 1;
-  return { stage: "r16", currentRound: seedBracket(standings), eliminated: false, champion: false, playerSeed, tier };
+  return { stage: playoffStages()[0], currentRound: seedBracket(standings), eliminated: false, champion: false, playerSeed, tier };
 }
 
 // Plays an all-rival knockout from the given round (teams in bracket order)
@@ -1944,12 +2020,11 @@ function finalizeSeasonMovement(playerTierChampion) {
 
 const PLAYOFF_ROUND_NAMES = { r16: "Round of 16", qf: "Quarterfinal", sf: "Semifinal", f: "Final" };
 const PLAYOFF_NEXT_STAGE = { r16: "qf", qf: "sf", sf: "f" };
-const PLAYOFF_STAGES = ["r16", "qf", "sf", "f"];
 
 // Knocked out in `stage`: camp covers the playoff rounds still to come, up
 // to the Final's day. R16 exit → 21 days, QF → 14, SF → 7, Final → none.
 function eliminatedCampDays(stage) {
-  const roundsLeft = PLAYOFF_STAGES.length - 1 - Math.max(0, PLAYOFF_STAGES.indexOf(stage));
+  const roundsLeft = playoffStages().length - 1 - Math.max(0, playoffStages().indexOf(stage));
   return roundsLeft * BAL.roundIntervalDays;
 }
 
@@ -3273,6 +3348,7 @@ function openShop(opts) {
 function openMenu() {
   const html = `
     <h2>Menu</h2>
+    <div class="menu-row" id="menuGames"><span>🎮 Games <span class="menu-note">${gameLengthInfo(state.gameLength).icon} ${gameLengthInfo(state.gameLength).name} game</span></span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuShop"><span>🧑‍🏫 Staff &amp; Items</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuCareer"><span>📈 Career &amp; Season</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuLeagues"><span>🏅 Leagues</span><span class="arrow">›</span></div>
@@ -3282,10 +3358,11 @@ function openMenu() {
     <div class="menu-row" id="menuTutorial"><span>📖 Quick Tutorial</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuInstall"><span>📲 Add to Home Screen</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuSaveTransfer"><span>💾 Export / Import Save</span><span class="arrow">›</span></div>
-    <button class="ghost-btn" id="menuReset">Reset Career</button>
+    <button class="ghost-btn" id="menuReset">Restart this ${gameLengthInfo(state.gameLength).name} game</button>
     <div class="version-tag">Cell Grind v${APP_VERSION}</div>
   `;
   openModal(html);
+  $("menuGames").addEventListener("click", () => openGames());
   $("menuShop").addEventListener("click", openShop);
   $("menuCareer").addEventListener("click", openCareer);
   $("menuLeagues").addEventListener("click", () => openLeagues(state.leagueTier));
@@ -3296,13 +3373,109 @@ function openMenu() {
   $("menuInstall").addEventListener("click", openInstall);
   $("menuSaveTransfer").addEventListener("click", openSaveTransfer);
   $("menuReset").addEventListener("click", () => {
-    if (confirm("Start a new career? This wipes all progress.")) {
-      state = freshState();
-      saveState();
-      renderAll();
-      closeModal();
-    }
+    if (confirm(`Restart your ${gameLengthInfo(state.gameLength).name} game? This wipes its progress (your other games are kept).`)) startNewGame(state.gameLength);
   });
+}
+
+/* ---------------------------------------------------------------------- */
+/* Games: one save slot per game length                                   */
+/* ---------------------------------------------------------------------- */
+// What's saved in a slot, for the Games screen (null if it's empty).
+function slotSummary(len) {
+  if (len === state.gameLength) return state;
+  try {
+    const raw = localStorage.getItem(slotKey(len));
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// A brand-new game of this length in its slot (replacing what was there),
+// then naming the player.
+function startNewGame(len) {
+  // Starting a different length: keep the game being left (not the blank
+  // placeholder shown behind a first-time picker).
+  if (!needsGamePick && len !== state.gameLength) saveState();
+  needsGamePick = false;
+  applyGameLength(len);
+  state = freshState();
+  lastLoadedFromSave = false;
+  saveState();
+  closeModal();
+  renderAll();
+  openNameModal(true);
+}
+
+// Saves this game, then loads the one in another slot.
+function switchToGame(len) {
+  if (len === state.gameLength) return closeModal();
+  saveState();
+  const raw = localStorage.getItem(slotKey(len));
+  if (!raw) return startNewGame(len);
+  try {
+    state = migrateSave(JSON.parse(raw));
+  } catch (e) {
+    applyGameLength(state.gameLength);
+    alert("That game's save couldn't be read.");
+    return;
+  }
+  lastLoadedFromSave = true;
+  saveState();
+  closeModal();
+  renderAll();
+  if (!state.playerName) openNameModal(true);
+  else if (state.pendingSplash) showPendingSplashes();
+}
+
+function gameCardHtml(len, { first = false } = {}) {
+  const g = gameLengthInfo(len);
+  const s = first ? null : slotSummary(len);
+  const current = !first && len === state.gameLength;
+  let status = "";
+  let buttons;
+  if (first) {
+    buttons = `<button class="staff-chip" data-game-new="${len}">Start ${g.name} game</button>`;
+  } else if (s) {
+    const phase = PHASE_NAMES[s.seasonPhase] || s.seasonPhase;
+    status = `<div class="staff-line staff-stat">${s.playerName ? escapeHtml(s.playerName) + " · " : ""}Year ${s.year} · League ${s.leagueTier} · ${phase} · Day ${s.day}</div>`;
+    buttons = `${current ? `<span class="staff-hired">▶ Playing now</span>` : `<button class="staff-chip" data-game-play="${len}">Continue</button>`}<button class="staff-chip staff-unlock" data-game-restart="${len}">Restart</button>`;
+  } else {
+    buttons = `<button class="staff-chip" data-game-new="${len}">New ${g.name} game</button>`;
+  }
+  return `
+    <div class="shop-item staff-card${current ? " staff-card-hired" : ""}">
+      <div class="shop-item-icon">${g.icon}</div>
+      <div class="shop-item-info">
+        <div class="shop-item-name">${g.name} <span class="menu-note">${g.blurb}</span></div>
+        <div class="staff-line">${gameLengthSummary(len)}</div>
+        ${status}
+        <div class="staff-actions">${buttons}</div>
+      </div>
+    </div>`;
+}
+
+// The Games screen: your three slots. first: a brand-new player choosing
+// their first game (no ✕ to back out of it).
+function openGames({ first = false } = {}) {
+  const intro = first
+    ? `<p class="modal-sub">How long should a season be? Every length has the same 5 leagues, and a year ends on the day of the Final. You can start the others later from ☰ → 🎮 Games — each length keeps its own save.</p>`
+    : `<p class="modal-sub">One game of each length, each with its own save. Switching saves this one first.</p>`;
+  const html = `
+    ${first ? `<h2>Choose your game</h2>` : stickyHeadHtml("🎮 Games")}
+    ${intro}
+    ${GAME_LENGTH_KEYS.map((len) => gameCardHtml(len, { first })).join("")}`;
+  // A first game must be picked: closing the picker just brings it back.
+  openModal(html, first ? { onDismiss: () => needsGamePick && openGames({ first: true }) } : { ownClose: true, page: { key: "games", reopen: () => openGames() } });
+  const body = $("modalBody");
+  body.querySelectorAll("[data-game-new]").forEach((b) => b.addEventListener("click", () => startNewGame(b.dataset.gameNew)));
+  body.querySelectorAll("[data-game-play]").forEach((b) => b.addEventListener("click", () => switchToGame(b.dataset.gamePlay)));
+  body.querySelectorAll("[data-game-restart]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const g = gameLengthInfo(b.dataset.gameRestart);
+      if (confirm(`Restart your ${g.name} game? This wipes its progress (your other games are kept).`)) startNewGame(g.key);
+    })
+  );
 }
 
 function openNameModal(isFirstTime) {
@@ -3623,6 +3796,10 @@ function historyNameLink(id) {
   if (id === HISTORY_PLAYER_ID) return `<b>${historyName(id)}</b>`;
   return `<button class="link-name" data-rival="${id}">${historyName(id)}</button>`;
 }
+// "R16 → QF → SF → Final" for this game length.
+function playoffFormatText() {
+  return playoffStages().map((k) => (k === "f" ? "Final" : roundShort(PLAYOFF_ROUND_NAMES[k]))).join(" → ");
+}
 function roundKeyLabel(key) {
   return PLAYOFF_ROUND_NAMES[key] || `Round ${key}`;
 }
@@ -3737,7 +3914,7 @@ function defaultLeagueView(view = {}) {
   // promoted or relegated since), else your current one.
   const playedIn = Object.keys(tiers).map(Number).find((t) => Object.values(tiers[t]).some((rs) => rs.some((x) => x[0] === HISTORY_PLAYER_ID || x[1] === HISTORY_PLAYER_ID)));
   const tier = view.tier && tiers[view.tier] ? view.tier : playedIn || (tiers[state.leagueTier] ? state.leagueTier : Number(Object.keys(tiers)[0]));
-  const keys = HISTORY_ROUND_KEYS.filter((k) => tiers[tier] && tiers[tier][k]);
+  const keys = historyRoundKeys().filter((k) => tiers[tier] && tiers[tier][k]);
   const round = view.round && keys.includes(view.round) ? view.round : keys[keys.length - 1];
   return { year, tier, round, years, keys };
 }
@@ -3819,7 +3996,7 @@ function upcomingHtml() {
 
   if (s.seasonPhase === "playoffs" && s.playoff && !s.playoff.eliminated && !s.playoff.champion) {
     const p = s.playoff;
-    const stages = ["r16", "qf", "sf", "f"];
+    const stages = playoffStages();
     const at = stages.indexOf(p.stage);
     const teams = p.currentRound;
     const idx = teams.findIndex((t) => t.isPlayer);
@@ -3875,7 +4052,7 @@ function playoffBracket(tier, year) {
   let teams = seedBracket(standings).map(seeded);
   const rounds = [];
   let prev = null;
-  PLAYOFF_STAGES.forEach((stage) => {
+  playoffStages().forEach((stage) => {
     const played = results[stage] || [];
     const matches = [];
     for (let i = 0; i < teams.length; i += 2) {
@@ -3999,7 +4176,7 @@ function openRival(id) {
   [state.year - 1, state.year].forEach((year) => {
     const yearData = league[year] || {};
     Object.keys(yearData).forEach((tier) =>
-      HISTORY_ROUND_KEYS.forEach((key) =>
+      historyRoundKeys().forEach((key) =>
         (yearData[tier][key] || []).forEach(([w, l, wr, lr]) => {
           if (w === id) games.push({ year, key, tier: Number(tier), win: true, opp: l, oppRating: lr, rating: wr });
           else if (l === id) games.push({ year, key, tier: Number(tier), win: false, opp: w, oppRating: wr, rating: lr });
@@ -4107,8 +4284,8 @@ function buildPhaseSplash(from, to, { yearSummary = null, tierBefore = state.lea
     if (playedTier > 1 && state.lastPlayerPosition <= BAL.promotionTablePlaces) how.unshift(["⬆️ Promotion", "secured — top " + BAL.promotionTablePlaces + " finish"]);
     const info = getNextMatchInfo();
     next.push(["Your seed", `#${state.playoff.playerSeed} of ${BAL.playoffSize}`]);
-    if (info.opponentName) next.push(["Round of 16", `${info.opponentName} (${info.opponentRating}) · ${info.winPct}% to win`]);
-    next.push(["Format", "single elimination, one match a week: R16 → QF → SF → Final"]);
+    if (info.opponentName) next.push([PLAYOFF_ROUND_NAMES[playoffStages()[0]], `${info.opponentName} (${info.opponentRating}) · ${info.winPct}% to win`]);
+    next.push(["Format", `single elimination, one match a week: ${playoffFormatText()}`]);
     next.push(["Win it all", `champion: +$${BAL.championCash.toLocaleString()}, +${BAL.championRating} rating${playedTier > 1 ? ", promoted" : ""}`]);
     next.push(["Knocked out", "training camp until the day of the Final"]);
   } else if (from === "regular" && to === "offseason") {
@@ -4355,11 +4532,11 @@ function showEventSplash(cards, extraHtml = "", onDone = null) {
 /* ---------------------------------------------------------------------- */
 function tutorialPages() {
   return [
-    { icon: "👋", title: `Welcome, ${escapeHtml(state.playerName || "rookie")}`, body: `You're an Excel esports rookie starting at the bottom: <b>League ${BAL.leagueCount}</b> of ${BAL.leagueCount}. Win matches, climb the table and get promoted — all the way to League 1.` },
+    { icon: "👋", title: `Welcome, ${escapeHtml(state.playerName || "rookie")}`, body: `You're an Excel esports rookie starting at the bottom: <b>League ${BAL.leagueCount}</b> of ${BAL.leagueCount}, in a <b>${gameLengthInfo(state.gameLength).name}</b> game (${BAL.leagueSize} per league). Win matches, climb the table and get promoted — all the way to League 1.` },
     { icon: "🗓️", title: "Plan your day", body: `Each day you share out up to 24 hours with the sliders. <b>💼 Work ${BAL.workHoursRequired}h</b> pays the bills — $${BAL.dailyExpenses}/day living costs never stop — but preseason is paid <b>🏖️ annual leave</b>, so it's greyed out for now. Train skills, and keep <b>🏃 Gym</b>, <b>🌙 Sleep</b> (${BAL.idealSleep}h+), <b>🎮 Relax</b> and <b>🥗 Food</b> topped up. The small marker on each slider is the minimum to avoid losing ground; bars preview tomorrow — green up, red down.` },
     { icon: "🏋️", title: `This preseason: ${BAL.preseasonDays} days`, body: `No matches and no Work yet (it's paid 🏖️ annual leave), <b>all 7 skills</b> can be trained, and skill coaches are half price. Once the season starts only 1–3 <b>focus skills</b> a week can be trained — and they're exactly what that week's match tests. Tap <b>End Day ▶</b> for one day, or <b>End Week ▶▶</b> to play the week out.` },
     { icon: "🧑‍🏫", title: "Staff & money", body: `Skills train up to <b>${BAL.skillShopCapBase}</b> on your own. To go higher, hire that skill's <b>Coach</b> in Staff — one week at a time, paid up front. At $${SKILL_COACH_LEVELS[0].wage}/week a coach is a big chunk of your pay, so you can't hire everyone every week: spend where it counts.` },
-    { icon: "⚔️", title: "Match day", body: `One match a week. Your stats set your <b>performance</b>, add some luck, and the higher match-day rating wins. Top ${BAL.playoffSize} reach the playoffs. <b>Four are promoted</b>: the playoff champion, plus the next ${BAL.promotionTablePlaces} highest in the table — so a top-${BAL.promotionTablePlaces} finish always goes up. Every result is explained on its result screen, and ☰ <b>How to Play</b> has the full rules.` },
+    { icon: "⚔️", title: "Match day", body: `One match a week. Your stats set your <b>performance</b>, add some luck, and the higher match-day rating wins. Top ${BAL.playoffSize} reach the playoffs. <b>${BAL.relegationCount} are promoted</b>: the playoff champion, plus the next ${BAL.promotionTablePlaces === 1 ? "highest" : `${BAL.promotionTablePlaces} highest`} in the table — so a top-${BAL.promotionTablePlaces} finish always goes up. Every result is explained on its result screen, and ☰ <b>How to Play</b> has the full rules.` },
   ];
 }
 
@@ -4474,10 +4651,11 @@ function openHowTo() {
 
   sec("season", "📅", "Season & leagues", `
     ${ul([
+      `<b>Game length:</b> this is a <b>${gameLengthInfo(state.gameLength).name}</b> game — ${gameLengthSummary(state.gameLength)}. Each length (Short, Half, Full) has its own save: ☰ → 🎮 Games.`,
       `<b>Preseason:</b> ${B.preseasonDays} days of training. <b>Regular season:</b> ${B.seasonRounds} rounds, one match a week, all scheduled in advance.`,
-      `Top <b>${B.playoffSize}</b> of ${B.leagueSize} reach the knockout playoffs (R16 → QF → SF → Final).`,
+      `Top <b>${B.playoffSize}</b> of ${B.leagueSize} reach the knockout playoffs (${playoffFormatText()}).`,
       `Miss the playoffs: a ${B.trainingCampDays}-day <b>training camp</b>; knocked out: camp for the rest of the playoff window. Either way it runs to the day of the Final — the year's last day. Reach the Final and the new year starts straight after it.`,
-      `${B.leagueCount} leagues — you start in League ${B.leagueCount}. <b>Four go up</b> from each: the playoff champion plus the next ${B.promotionTablePlaces} highest in the table. Bottom ${B.relegationCount} go down.`,
+      `${B.leagueCount} leagues — you start in League ${B.leagueCount}. <b>${B.relegationCount} go up</b> from each: the playoff champion plus the next ${B.promotionTablePlaces} highest in the table. Bottom ${B.relegationCount} go down.`,
       "Every rival plays real simulated matches — all tables are live. Tap a name to see their season.",
       "<b>Rating</b> (🏆) is your strength and sets your win chance. <b>Table position</b> comes from league points (3 per win); players level on points are split by their games against each other, then by rating.",
       "<b>Match History</b> shows your <b>upcoming</b> matches (the rest of the season, then your playoff path), your past matches, and every league result for this season and last.",
@@ -4662,7 +4840,7 @@ async function decodeSaveCode(text) {
 
 function saveFileName() {
   const who = (state.playerName || "career").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "") || "career";
-  return `cellgrind-${who}-day${state.day}.txt`;
+  return `cellgrind-${state.gameLength}-${who}-day${state.day}.txt`;
 }
 
 function openSaveTransfer() {
@@ -4685,7 +4863,7 @@ function openSaveTransfer() {
       <button class="primary-btn" id="saveImportBtn">Load pasted code</button>
       <label class="ghost-btn save-file-btn">📂 Load from file<input type="file" id="saveImportFile" accept=".txt,.json,text/plain,application/json" hidden /></label>
       <div class="save-transfer-status" id="saveImportStatus"></div>
-      <p class="save-transfer-note">Importing replaces the career on this device.</p>
+      <p class="save-transfer-note">Importing replaces your game of the same length (Short, Half or Full) on this device — the others are kept.</p>
     </div>`;
   openModal(html, { page: { key: "save", reopen: openSaveTransfer } });
 
@@ -4764,10 +4942,13 @@ function openSaveTransfer() {
       return;
     }
     const who = parsed.playerName ? `${parsed.playerName}, ` : "";
-    if (!confirm(`Load ${who}Day ${parsed.day}? This replaces the career on this device.`)) return;
+    const g = gameLengthInfo(parsed.gameLength);
+    if (!confirm(`Load ${who}Day ${parsed.day} (${g.name} game)? This replaces your ${g.name} game on this device; your other games are kept.`)) return;
+    saveState();
     try {
       state = migrateSave(parsed);
     } catch (e) {
+      applyGameLength(state.gameLength); // migrateSave may have switched it
       importStatus("That save couldn't be loaded — it's from an older version of the game.");
       return;
     }
@@ -5164,7 +5345,9 @@ function init() {
   wireInputs();
   renderAll();
 
-  if (!state.playerName) {
+  if (needsGamePick) {
+    openGames({ first: true });
+  } else if (!state.playerName) {
     openNameModal(true);
   } else if (state.pendingSplash) {
     showPendingSplashes();
