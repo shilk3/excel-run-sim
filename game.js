@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.49.0";
+const APP_VERSION = "4.49.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -549,10 +549,13 @@ function composureMatchMultiplier(composure) {
 function todayHours() {
   return dailyHoursCap(state.stats.nutrition) + (state.carbHours || 0);
 }
-// Carb loading: each Food hour past the 1h minimum banks one extra hour for
-// tomorrow only (up to 3, at Food's 4h max). Exactly 1:1, so it moves
-// hours between days rather than adding any.
-function carbHoursFrom(foodH) {
+// Carb loading: once Nutrition is already full (100 at the start of the
+// day, as shown), each Food hour past the 1h minimum banks one extra hour
+// for tomorrow only (up to 3, at Food's 4h max). Exactly 1:1, so it moves
+// hours between days rather than adding any. Below 100 the extra Food goes
+// into Nutrition as usual.
+function carbHoursFrom(foodH, nutrition) {
+  if (Math.round(nutrition) < 100) return 0;
   return clamp((foodH || 0) - BAL.skillDecayThresholdHours, 0, BAL.carbLoadMaxHours);
 }
 function dailyHoursCap(nutrition) {
@@ -1439,6 +1442,7 @@ function resolveDay() {
 
   // ---- Nutrition ----
   const nutritionBefore = s.nutrition;
+  const carbEarned = carbHoursFrom(a.nutrition, nutritionBefore);
   s.nutrition = result.nutrition;
   const nutritionH = a.nutrition || 0;
   if (nutritionH >= BAL.skillDecayThresholdHours) {
@@ -1448,7 +1452,7 @@ function resolveDay() {
   }
   // Today's carb-loaded hours are used up; tonight's extra Food banks
   // tomorrow's.
-  state.carbHours = carbHoursFrom(nutritionH);
+  state.carbHours = carbEarned;
   if (state.carbHours > 0) events.push({ type: "good", text: `🍝 Carb-loaded: +${state.carbHours}h tomorrow` });
 
   // ---- Rest ----
@@ -2783,7 +2787,7 @@ function renderPlannerRows() {
   if (capToday < BAL.dailyHoursCeiling) nutritionOutcome += ` · ${capToday}h today`;
   if (capTomorrow !== capToday) nutritionOutcome += ` → ${capTomorrow}h tomorrow`;
   const carbToday = state.carbHours || 0;
-  const carbTomorrow = carbHoursFrom(a.nutrition);
+  const carbTomorrow = carbHoursFrom(a.nutrition, s.nutrition);
   if (carbToday) nutritionOutcome += ` · 🍝 +${carbToday}h today`;
   if (carbTomorrow) nutritionOutcome += ` · 🍝 +${carbTomorrow}h tmrw`;
   rows.push(
@@ -4157,7 +4161,7 @@ function openHowTo() {
   sec("nutrition", "🥗", "Nutrition & day length", ul([
     `Nutrition sets how many hours tomorrow has: <b>${B.dailyHoursFloor}h</b> at ${B.nutritionHoursCapLow} or below, rising to the full <b>${B.dailyHoursCeiling}h</b> at ${B.nutritionHoursCapHigh}+.`,
     `Under ${B.skillDecayThresholdHours}h of Food a day, Nutrition drops.`,
-    `<b>🍝 Carb loading:</b> each Food hour past ${B.skillDecayThresholdHours}h banks one extra hour for <b>tomorrow only</b> (up to +${B.carbLoadMaxHours}h). It moves hours between days rather than adding any — End Week stops on a carb-loaded day so you can use them.`,
+    `<b>🍝 Carb loading:</b> once Nutrition is already at 100, each Food hour past ${B.skillDecayThresholdHours}h banks one extra hour for <b>tomorrow only</b> (up to +${B.carbLoadMaxHours}h). It moves hours between days rather than adding any — End Week stops on a carb-loaded day so you can use them.`,
   ]));
 
   sec("health", "🏃", "Health & injuries", ul([
