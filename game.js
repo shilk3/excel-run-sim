@@ -3,14 +3,14 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.56.2";
+const APP_VERSION = "4.57.0";
 const SAVE_KEY = "cellgrind_save_v1";
 const SAVE_BACKUP_KEY = "cellgrind_save_unreadable";
 // Bumped when a save's shape changes. Older saves aren't converted (there's
 // only ever been one tester) — anything missing is filled from a new
 // career's defaults (see migrateSave), and a save too different to use is
 // refused.
-const SAVE_VERSION = 5;
+const SAVE_VERSION = 6;
 
 // Nested records a save might be missing a newer field in: filled from a
 // new career's defaults, keeping everything the save already has.
@@ -78,15 +78,18 @@ const BAL = {
   dailyHoursFloor: 16,
   dailyHoursCeiling: 24,
   // Season structure
-  preseasonDays: 14,
+  // Preseason is also annual leave (see onLeave). It starts the day after
+  // the Final (the playoff window's last day), so that's when a year ends.
+  preseasonDays: 21,
+  preseasonCoachPrice: 0.5, // skill coaches' wages in preseason, as a share of normal
   seasonRounds: 39,
   roundIntervalDays: 7,
   playoffSize: 16,
-  offseasonDays: 7,
   // Missing the playoffs ends your season 4 rounds early compared to a
   // Final run — give that time back as an explicit training camp instead
   // of just a short generic break, so missing the cut isn't strictly worse
   // for preparing next season than qualifying and getting knocked out fast.
+  // It runs to the day of the Final.
   trainingCampDays: 28,
   statCapBase: 70, // Physical Health ceiling with zero relevant upgrades
   statCapPerLevel: 10, // + this much per Physio level (max 3 levels -> +30 -> 100)
@@ -345,10 +348,19 @@ function upgradeEffect(key) {
   const lvl = hiredLevel(key);
   return lvl > 0 ? UPGRADES[key].levels[lvl - 1] : null;
 }
+// Skill coaches are half price in preseason (annual leave).
+function coachSaleActive() {
+  return state.seasonPhase === "preseason";
+}
+// A level's weekly wage right now (after any preseason discount).
+function staffWage(key, level) {
+  const wage = UPGRADES[key].levels[level - 1].wage;
+  return key.startsWith("coach_") && coachSaleActive() ? Math.ceil(wage * BAL.preseasonCoachPrice) : wage;
+}
 // This week's wage for a level, pro-rated by the days left in the week
 // (today included) and rounded up to the dollar.
 function staffCost(key, level) {
-  const wage = UPGRADES[key].levels[level - 1].wage;
+  const wage = staffWage(key, level);
   return Math.ceil((wage * daysLeftInWeek()) / 7);
 }
 function canUnlockLevel(key, level) {
@@ -631,21 +643,14 @@ function jobSecurityPreviewPct(hours, isPro) {
   const previewLives = clamp(BAL.strikesToFire - used - loss, 0, BAL.strikesToFire);
   return clamp((previewLives / BAL.strikesToFire) * 100, 0, 100);
 }
-// Annual leave: paid time off from Work and Pro Duties for the offseason's
-// last week (the week after the Final — the whole break for a champion)
-// and all of preseason. A job search carries on as normal.
-function inLeavePeriod(s = state) {
-  if (s.seasonPhase === "preseason") return true;
-  return s.seasonPhase === "offseason" && s.phaseDay >= (s.offseasonDays || BAL.offseasonDays) - BAL.offseasonDays;
-}
+// Annual leave: all of preseason is paid time off from Work and Pro Duties.
+// A job search carries on as normal.
 function onLeave(st = state.employment.status, s = state) {
-  return st !== "unemployed" && inLeavePeriod(s);
+  return st !== "unemployed" && s.seasonPhase === "preseason";
 }
 // Days of leave left, today included — until the season starts.
 function leaveDaysLeft() {
-  const s = state;
-  if (s.seasonPhase === "preseason") return BAL.preseasonDays - s.phaseDay;
-  return (s.offseasonDays || BAL.offseasonDays) - s.phaseDay + BAL.preseasonDays;
+  return BAL.preseasonDays - state.phaseDay;
 }
 function requiredWorkHours(st = state.employment.status) {
   return st === "pro" ? BAL.proDutyHoursRequired : st === "employed" ? BAL.workHoursRequired : BAL.jobSearchMinHours;
@@ -832,7 +837,7 @@ function freshState() {
     equipment: { owned: {} }, // lasts until the year it was bought ends
     carbHours: 0, // extra hours today, banked by yesterday's extra Food
     phaseStart: null, // snapshot taken when each phase begins (phaseSnapshot) — for the phase splash
-    pendingSplash: null, // a phase splash not yet dismissed
+    pendingSplash: null, // phase splashes not yet dismissed (a list: a season can end and a new year start on one day)
     tutorialSeen: false,
     leagueStandings: { 1: null, 2: null, 3: null, 4: null, 5: null }, // last fully completed season per tier
     leagueRoundRobins: leagueData.roundRobins, // this season's full fixture list per tier, all 5 at once
@@ -842,7 +847,7 @@ function freshState() {
     lastStandings: null,
     lastPlayerPosition: null,
     lastStandingsTier: null, // which league lastStandings was for (may differ from leagueTier after a promotion/relegation)
-    offseasonDays: BAL.offseasonDays,
+    offseasonDays: 0,
     offseasonReason: null, // "missed" | "eliminated" (both training camp) | "playoffs" (champion's break) — set when entering offseason
     playoff: null, // { stage, currentRound, eliminated, champion, playerSeed, tier }
     playoffChampions: null, // { [tier]: { name, rivalId, isPlayer } } — last completed knockout per tier
@@ -924,6 +929,12 @@ function migrateSave(parsed) {
     const v = target[last];
     target[last] = v && typeof v === "object" && !Array.isArray(v) ? { ...from[last], ...v } : from[last];
   });
+  // v6: annual leave moved from camp's last week into a 21-day preseason —
+  // a save on leave mid-camp goes back to Work for the rest of it.
+  if ((parsed.saveVersion || 0) < 6 && fresh.seasonPhase === "offseason" && fresh.employment.status !== "unemployed" && !fresh.allocation.work) {
+    fresh.allocation.work = requiredWorkHours(fresh.employment.status);
+    fresh.logEntries.push({ html: `🏖️ Annual leave has moved: it's now the whole ${BAL.preseasonDays}-day preseason, which starts the day after the Final. Work is back in your plan for the rest of camp.`, cls: "event-season" });
+  }
   fresh.saveVersion = SAVE_VERSION;
   // Slider maxes can drop between versions — never load a plan past them.
   const a = fresh.allocation;
@@ -1927,11 +1938,11 @@ const PLAYOFF_ROUND_NAMES = { r16: "Round of 16", qf: "Quarterfinal", sf: "Semif
 const PLAYOFF_NEXT_STAGE = { r16: "qf", qf: "sf", sf: "f" };
 const PLAYOFF_STAGES = ["r16", "qf", "sf", "f"];
 
-// Knocked out in `stage`: camp covers the playoff rounds still to come.
-// R16 exit → 21 days, QF → 14, SF and Final → the normal 7-day break.
+// Knocked out in `stage`: camp covers the playoff rounds still to come, up
+// to the Final's day. R16 exit → 21 days, QF → 14, SF → 7, Final → none.
 function eliminatedCampDays(stage) {
   const roundsLeft = PLAYOFF_STAGES.length - 1 - Math.max(0, PLAYOFF_STAGES.indexOf(stage));
-  return Math.max(BAL.offseasonDays, roundsLeft * BAL.roundIntervalDays);
+  return roundsLeft * BAL.roundIntervalDays;
 }
 
 // Training camp = the season ended without a title, by missing the
@@ -2009,16 +2020,66 @@ function resolvePlayoffRound() {
   return { matchResult, summary, seasonOver, champion };
 }
 
+// The year ends: money summary, raises, worn-out equipment, then Year N+1
+// begins with a fresh schedule and its preseason.
+function startNewYear() {
+  const flow = state.yearCashFlow;
+  const income = flow.workPay + flow.matchCash;
+  const yearSummary = {
+    year: state.year,
+    workPay: flow.workPay,
+    matchCash: flow.matchCash,
+    income,
+    expenses: flow.expenses,
+    net: income - flow.expenses,
+    cashNow: state.cash,
+  };
+  state.yearCashFlow = { workPay: 0, matchCash: 0, expenses: 0 };
+
+  // Annual raise — rises $10/year for 5 years of unbroken tenure in
+  // whichever role is currently held, then plateaus. Only the active
+  // role's rate moves; the other sits untouched until it's relevant.
+  const emp = state.employment;
+  const maxRaise = BAL.payRaisePerYear * BAL.payRaiseMaxYears;
+  if (emp.status === "employed") {
+    emp.workPay = Math.min(emp.workPay + BAL.payRaisePerYear, BAL.workPayMin + maxRaise);
+    yearSummary.newPayRate = emp.workPay;
+  } else if (emp.status === "pro") {
+    emp.proPay = Math.min(emp.proPay + BAL.payRaisePerYear, BAL.proPayMin + maxRaise);
+    yearSummary.newPayRate = emp.proPay;
+  }
+
+  state.phaseDay = 0;
+  const worn = ownedEquipment();
+  state.equipment.owned = {};
+  if (worn.length) yearSummary.equipmentExpired = worn.map((e) => `${e.icon} ${e.name}`);
+  state.year += 1;
+  state.seasonPhase = "preseason";
+  state.roundIndex = 0;
+  state.seasonResults = [];
+  const newLeagueData = buildSeasonLeagueData(state.rivals, state.leagueTier);
+  state.schedule = newLeagueData.schedule;
+  state.leagueRoundRobins = newLeagueData.roundRobins;
+  state.leaguePoints = newLeagueData.points;
+  state.playoff = null;
+  let phaseEvent = `🎉 Year ${state.year} begins! A fresh ${BAL.seasonRounds}-round season has been scheduled — good luck.`;
+  if (worn.length) phaseEvent += ` Last year's equipment has worn out (${worn.map((e) => e.name).join(", ")}).`;
+  return { yearSummary, phaseEvent };
+}
+
 /* ---------------------------------------------------------------------- */
 /* Season/day phase engine                                                */
 /* ---------------------------------------------------------------------- */
 // Advances the season state machine by one day. Call after resolveDay().
-// Returns { matchResult, phaseEvent, yearSummary } — any may be null.
+// Returns { matchResult, phaseEvent, yearSummary, newYearNow } — any may be
+// null. newYearNow: the season ended on the Final's day, so the caller
+// starts the new year (startNewYear) straight after.
 function processDayEnd() {
   state.phaseDay += 1;
   let matchResult = null;
   let phaseEvent = null;
   let yearSummary = null;
+  let newYearNow = false;
 
   if (state.seasonPhase === "preseason") {
     if (state.phaseDay >= BAL.preseasonDays) {
@@ -2033,7 +2094,7 @@ function processDayEnd() {
       const focus = state.activeSkills.map((k) => `${skillMeta(k).icon} ${skillMeta(k).name}`).join(", ");
       phaseEvent = `🏁 Preseason over — the ${BAL.seasonRounds}-round regular season begins. This week's focus: ${focus}.`;
     }
-    return { matchResult, phaseEvent, yearSummary };
+    return { matchResult, phaseEvent, yearSummary, newYearNow };
   }
 
   if (state.seasonPhase === "regular") {
@@ -2101,7 +2162,7 @@ function processDayEnd() {
         }
       }
     }
-    return { matchResult, phaseEvent, yearSummary };
+    return { matchResult, phaseEvent, yearSummary, newYearNow };
   }
 
   if (state.seasonPhase === "playoffs") {
@@ -2114,71 +2175,33 @@ function processDayEnd() {
         state.seasonPhase = "offseason";
         if (state.playoff.eliminated) {
           // Knocked out: training camp for the rest of the playoff window
-          // (never shorter than the normal break) — an early exit gets its
-          // time back as training, same as missing the playoffs entirely.
+          // — an early exit gets its time back as training, same as missing
+          // the playoffs entirely. Out in the Final: none.
           state.offseasonDays = eliminatedCampDays(state.playoff.stage);
           state.offseasonReason = "eliminated";
         } else {
-          state.offseasonDays = BAL.offseasonDays;
+          state.offseasonDays = 0;
           state.offseasonReason = "playoffs";
         }
         phaseEvent += finalizeSeasonMovement(result.champion);
-        if (state.offseasonReason === "eliminated") {
+        if (state.offseasonDays > 0) {
           phaseEvent += ` ${state.offseasonDays}-day training camp starts now to get ready for next season.`;
+        } else {
+          // The Final was the last day of the year — the new one starts now
+          // (runDay rolls it over once this season's screen is built).
+          newYearNow = true;
         }
       }
     }
-    return { matchResult, phaseEvent, yearSummary };
+    return { matchResult, phaseEvent, yearSummary, newYearNow };
   }
 
   if (state.seasonPhase === "offseason") {
-    if (state.phaseDay >= (state.offseasonDays || BAL.offseasonDays)) {
-      const flow = state.yearCashFlow;
-      const income = flow.workPay + flow.matchCash;
-      yearSummary = {
-        year: state.year,
-        workPay: flow.workPay,
-        matchCash: flow.matchCash,
-        income,
-        expenses: flow.expenses,
-        net: income - flow.expenses,
-        cashNow: state.cash,
-      };
-      state.yearCashFlow = { workPay: 0, matchCash: 0, expenses: 0 };
-
-      // Annual raise — rises $10/year for 5 years of unbroken tenure in
-      // whichever role is currently held, then plateaus. Only the active
-      // role's rate moves; the other sits untouched until it's relevant.
-      const emp = state.employment;
-      const maxRaise = BAL.payRaisePerYear * BAL.payRaiseMaxYears;
-      if (emp.status === "employed") {
-        emp.workPay = Math.min(emp.workPay + BAL.payRaisePerYear, BAL.workPayMin + maxRaise);
-        yearSummary.newPayRate = emp.workPay;
-      } else if (emp.status === "pro") {
-        emp.proPay = Math.min(emp.proPay + BAL.payRaisePerYear, BAL.proPayMin + maxRaise);
-        yearSummary.newPayRate = emp.proPay;
-      }
-
-      state.phaseDay = 0;
-      const worn = ownedEquipment();
-      state.equipment.owned = {};
-      if (worn.length) yearSummary.equipmentExpired = worn.map((e) => `${e.icon} ${e.name}`);
-      state.year += 1;
-      state.seasonPhase = "preseason";
-      state.roundIndex = 0;
-      state.seasonResults = [];
-      const newLeagueData = buildSeasonLeagueData(state.rivals, state.leagueTier);
-      state.schedule = newLeagueData.schedule;
-      state.leagueRoundRobins = newLeagueData.roundRobins;
-      state.leaguePoints = newLeagueData.points;
-      state.playoff = null;
-      phaseEvent = `🎉 Year ${state.year} begins! A fresh ${BAL.seasonRounds}-round season has been scheduled — good luck.`;
-      if (worn.length) phaseEvent += ` Last year's equipment has worn out (${worn.map((e) => e.name).join(", ")}).`;
-    }
-    return { matchResult, phaseEvent, yearSummary };
+    if (state.phaseDay >= state.offseasonDays) ({ yearSummary, phaseEvent } = startNewYear());
+    return { matchResult, phaseEvent, yearSummary, newYearNow };
   }
 
-  return { matchResult, phaseEvent, yearSummary };
+  return { matchResult, phaseEvent, yearSummary, newYearNow };
 }
 
 // Qualitative read on a specific known opponent vs the player's current
@@ -2265,7 +2288,7 @@ function getNextMatchInfo() {
     };
   }
   if (s.seasonPhase === "offseason") {
-    const daysUntil = (s.offseasonDays || BAL.offseasonDays) - s.phaseDay;
+    const daysUntil = s.offseasonDays - s.phaseDay;
     let outcome = "Season over";
     if (isTrainingCamp(s)) outcome = "Training camp";
     else if (s.playoff && s.playoff.champion) outcome = "🏆 Champion!";
@@ -3053,7 +3076,10 @@ function staffCardHtml(key, { focus = false, statNote = "" } = {}) {
       ? `<button class="staff-chip staff-unlock" data-unlock="${key}" ${state.cash < next.cost ? "disabled" : ""}>Unlock Lv${owned + 1} · $${fmt(next.cost)}</button>`
       : `<span class="staff-locked">🔒 Lv${owned + 1} unlocks in League ${next.unlock}</span>`;
   }
-  const lvlInfo = (lvl) => `Lv${lvl}: ${u.levels[lvl - 1].desc} · $${fmt(u.levels[lvl - 1].wage)}/wk`;
+  const lvlInfo = (lvl) => {
+    const full = u.levels[lvl - 1].wage, now = staffWage(key, lvl);
+    return `Lv${lvl}: ${u.levels[lvl - 1].desc} · ${now < full ? `<s>$${fmt(full)}</s> ` : ""}$${fmt(now)}/wk`;
+  };
   const showLevels = Array.from({ length: Math.min(owned + 1, max) }, (_, i) => i + 1);
   const unhired = isCoach ? `<div class="staff-line">No coach: trains up to ${BAL.skillShopCapBase}, no bonus</div>` : "";
   const auto = isAutoRehire(key);
@@ -3064,7 +3090,7 @@ function staffCardHtml(key, { focus = false, statNote = "" } = {}) {
         <span class="staff-auto-switch"></span>
         <span>🔁 Auto-rehire each week</span>
       </label>
-      ${auto ? `<div class="staff-line">${hired ? `Kept on at Lv${hired} ($${fmt(u.levels[hired - 1].wage)}/wk) when each new week starts, if you have the cash.${coachNote}` : `Hire them once and they'll be kept on at that level every week.${coachNote}`}</div>` : ""}`;
+      ${auto ? `<div class="staff-line">${hired ? `Kept on at Lv${hired} ($${fmt(staffWage(key, hired))}/wk) when each new week starts, if you have the cash.${coachNote}` : `Hire them once and they'll be kept on at that level every week.${coachNote}`}</div>` : ""}`;
   return `
   <div class="shop-item staff-card${focus ? " shop-item-match" : ""}${hired ? " staff-card-hired" : ""}" data-staff-card="${key}">
     <div class="shop-item-icon">${u.icon}</div>
@@ -3095,7 +3121,7 @@ function shopHtml(tab = shopTab) {
   const supportCards = SUPPORT_KEYS
     .map((k) => staffCardHtml(k, { statNote: k === "physio" ? `🏃 Health now ${fmt(state.stats.phys)} · ceiling ${BAL.statCapBase} without a physio` : "" }))
     .join("");
-  const weeklyTotal = Object.entries(state.staff.hired).reduce((a, [k, l]) => a + UPGRADES[k].levels[l - 1].wage, 0);
+  const weeklyTotal = Object.entries(state.staff.hired).reduce((a, [k, l]) => a + staffWage(k, l), 0);
   const itemCards = ENERGY_ITEMS.map((it) => {
     const used = itemUsed(it.key);
     const now = [it.rest ? `+${it.rest} Rest` : "", it.composure ? `+${it.composure} Calm` : ""].filter(Boolean).join(", ");
@@ -3153,6 +3179,7 @@ function shopHtml(tab = shopTab) {
     </div>
     <div class="modal-section">
       <h3>Skill Coaches</h3>
+      ${coachSaleActive() ? `<div class="callout staff-sale">🏖️ <b>Half price all preseason</b> — every skill coach's wage is halved until the season starts.</div>` : ""}
       <p class="modal-sub">A hired coach lifts that skill's ceiling (never past your league cap of ${leagueSkillCap()}), speeds up its training, and stops it rusting — even in a week you don't train it. With no coach a skill trains up to ${BAL.skillShopCapBase}; above that, an hour a day holds it and less lets it slip. 🔁 Auto-rehire keeps a coach on each new week — even when their skill isn't in focus.</p>
       ${skillCards}
     </div>
@@ -3759,7 +3786,7 @@ function upcomingHtml() {
       <p class="modal-sub">Next match ${days <= 0 ? "today" : daysUntilPhrase(days)}. Top ${BAL.playoffSize} reach the playoffs.</p>
       <div class="hist-list">${head}${rows}</div>
       <p class="modal-sub">Win chances use everyone's rating today, so they'll move as the season goes. Each week's focus skills are revealed when that week starts.</p>
-    </div>`;
+    </div>${s.seasonPhase === "preseason" && s.lastStandingsTier ? playoffBracketHtml(s.lastStandingsTier, s.year - 1) : ""}`;
   }
 
   if (s.seasonPhase === "playoffs" && s.playoff && !s.playoff.eliminated && !s.playoff.champion) {
@@ -4021,7 +4048,8 @@ function buildPhaseSplash(from, to, { yearSummary = null, tierBefore = state.lea
   const money = [];
   let skills = null;
   const sgn = (n) => (n === 0 ? "±0" : n > 0 ? `+${fmt(n)}` : `−${fmt(-n)}`);
-  if (start) {
+  // A new year straight after the Final has no offseason to sum up.
+  if (start && start.day !== state.day) {
     if (state.rank !== start.rank) how.push(["🏆 Rating", `${fmt(start.rank)} → ${fmt(state.rank)} (${sgn(state.rank - start.rank)})`]);
     if (!yearSummary) how.push(["💰 Cash", `${fmtMoney(start.cash)} → ${fmtMoney(state.cash)}`]);
     // Every skill, start → now, in its own table (not just the top gains).
@@ -4054,14 +4082,13 @@ function buildPhaseSplash(from, to, { yearSummary = null, tierBefore = state.lea
     if (info.opponentName) next.push(["Round of 16", `${info.opponentName} (${info.opponentRating}) · ${info.winPct}% to win`]);
     next.push(["Format", "single elimination, one match a week: R16 → QF → SF → Final"]);
     next.push(["Win it all", `champion: +$${BAL.championCash.toLocaleString()}, +${BAL.championRating} rating${playedTier > 1 ? ", promoted" : ""}`]);
-    next.push(["Knocked out", "training camp until the Final would have finished"]);
+    next.push(["Knocked out", "training camp until the day of the Final"]);
   } else if (from === "regular" && to === "offseason") {
     icon = "📋"; title = "Regular season over"; sub = `Year ${state.year} · League ${playedTier}`;
     how.unshift(["📊 Finished", `#${state.lastPlayerPosition} of ${BAL.leagueSize} · ${w}–${season.length - w} — missed the top ${BAL.playoffSize}`]);
     how.push(["Next season", moveText(playedTier, state.leagueTier)]);
-    next.push(["Training camp", `${state.offseasonDays} days — all 7 skills trainable, no matches`]);
-    if (state.employment.status !== "unemployed") next.push(leaveSplashRow());
-    next.push(["Then", `Year ${state.year + 1} preseason in League ${state.leagueTier}`]);
+    next.push(["Training camp", `${state.offseasonDays} days, to the day of the Final — all 7 skills trainable, no matches`]);
+    next.push(["Then", `Year ${state.year + 1}: ${nextYearText()}`]);
   } else if (from === "playoffs" && to === "offseason") {
     const p = state.playoff || {};
     const champ = !!p.champion;
@@ -4070,9 +4097,13 @@ function buildPhaseSplash(from, to, { yearSummary = null, tierBefore = state.lea
     const c = state.playoffChampions && state.playoffChampions[playedTier];
     if (c && !c.isPlayer) how.push(["League champion", c.name]);
     how.push(["Next season", moveText(playedTier, state.leagueTier)]);
-    next.push([champ ? "Offseason" : "Training camp", `${state.offseasonDays} days — all 7 skills trainable, no matches`]);
-    if (state.employment.status !== "unemployed") next.push(leaveSplashRow());
-    next.push(["Then", `Year ${state.year + 1} preseason in League ${state.leagueTier}`]);
+    if (state.offseasonDays > 0) {
+      next.push(["Training camp", `${state.offseasonDays} days, to the day of the Final — all 7 skills trainable, no matches`]);
+      next.push(["Then", `Year ${state.year + 1}: ${nextYearText()}`]);
+    } else {
+      next.push([`Year ${state.year + 1}`, `starts now — the Final was the year's last day`]);
+      next.push(["Preseason", nextYearText()]);
+    }
   } else if (from === "offseason" && to === "preseason") {
     icon = "🎉"; title = `Year ${state.year} begins`; sub = `League ${state.leagueTier}`;
     if (yearSummary) {
@@ -4083,7 +4114,8 @@ function buildPhaseSplash(from, to, { yearSummary = null, tierBefore = state.lea
       if (yearSummary.newPayRate != null) money.push(["📈 Annual raise", `pay is now $${fmt(yearSummary.newPayRate)}/day`]);
     }
     next.push(["Preseason", `${BAL.preseasonDays} days — all 7 skills trainable, no matches`]);
-    next.push(state.employment.status === "unemployed" ? ["🔍 Job search", "carries on as normal"] : ["🏖️ Annual leave", `carries on all preseason — no ${state.employment.status === "pro" ? "Pro Duties" : "Work"}, paid as normal`]);
+    next.push(state.employment.status === "unemployed" ? ["🔍 Job search", "carries on as normal"] : ["🏖️ Annual leave", `all preseason — no ${state.employment.status === "pro" ? "Pro Duties" : "Work"}, paid as normal`]);
+    next.push(["🧑‍🏫 Skill coaches", "half price all preseason"]);
     next.push(["League cap", `skills can reach ${leagueSkillCap()} (League ${state.peakLeagueTier} best)`]);
     const unlockable = [];
     if (SKILL_COACH_LEVELS.some((l, i) => l.unlock === state.peakLeagueTier && i > 0)) unlockable.push(`Coach Lv${SKILL_COACH_LEVELS.findIndex((l) => l.unlock === state.peakLeagueTier) + 1}`);
@@ -4098,12 +4130,10 @@ function buildPhaseSplash(from, to, { yearSummary = null, tierBefore = state.lea
   return { icon, title, sub, fromName: PHASE_NAMES[from] || from, how, skills, money, moneyTitle, next, notes };
 }
 
-// When the season ends: when annual leave starts.
-function leaveSplashRow() {
-  const label = state.employment.status === "pro" ? "Pro Duties" : "Work";
-  return state.offseasonDays > BAL.offseasonDays
-    ? ["🏖️ Annual leave", `the last ${BAL.offseasonDays} days (after the Final) and all preseason — no ${label}, paid as normal`]
-    : ["🏖️ Annual leave", `starts now, through to the end of preseason — no ${label}, paid as normal`];
+// What follows the season: next year's preseason, which is annual leave.
+function nextYearText() {
+  const leave = state.employment.status === "unemployed" ? "" : ", all 🏖️ annual leave";
+  return `${BAL.preseasonDays}-day preseason in League ${state.leagueTier}${leave}`;
 }
 
 // Same look and rounding as the week summary's table.
@@ -4139,12 +4169,23 @@ function showPhaseSplash(sp, extraHtml = "", onDone = null) {
   // Dismissing it any way counts as seen — no nagging on the next launch.
   openModal(html, {
     onDismiss: () => {
-      state.pendingSplash = null;
+      const left = [].concat(state.pendingSplash || []).filter((x) => x !== sp);
+      state.pendingSplash = left.length ? left : null;
       saveState();
       if (onDone) onDone();
     },
   });
   $("splashGo").addEventListener("click", closeModal);
+}
+
+// Pop-up steps for a list of phase splashes (the first one can carry extra
+// html, e.g. End Week's summary).
+function splashSteps(list, extraHtml = "") {
+  return [].concat(list || []).map((sp, i) => (next) => showPhaseSplash(sp, i === 0 ? extraHtml : "", next));
+}
+// The splashes still waiting from last time, one after another.
+function showPendingSplashes() {
+  showSequence(splashSteps(state.pendingSplash));
 }
 
 // Shows pop-ups one after another: each step is (next) => opens a pop-up
@@ -4219,13 +4260,6 @@ function dayEventCards(before) {
       tip: "Hire them again in 🧑‍🏫 Staff once you can afford it, and switch auto-rehire back on if you want it.",
     });
   }
-  if (!before.leave && onLeave() && before.phase === state.seasonPhase && before.employment === emp.status) {
-    cards.push({
-      icon: "🏖️", tone: "good", title: "Annual leave",
-      body: `The playoffs are over, so you're on paid leave until the season starts — <b>${leaveDaysLeft()} days</b> with no ${emp.status === "pro" ? "Pro Duties" : "Work"}, full pay, and no chances at risk.`,
-      tip: `Those ${requiredWorkHours()}h are free — put them into training.`,
-    });
-  }
   const leaveOver = before.leave && !onLeave() && emp.status !== "unemployed";
   if (isOverAllocated() && leaveOver) {
     const label = emp.status === "pro" ? "Pro Duties" : "Work";
@@ -4288,7 +4322,7 @@ function tutorialPages() {
   return [
     { icon: "👋", title: `Welcome, ${escapeHtml(state.playerName || "rookie")}`, body: `You're an Excel esports rookie starting at the bottom: <b>League ${BAL.leagueCount}</b> of ${BAL.leagueCount}. Win matches, climb the table and get promoted — all the way to League 1.` },
     { icon: "🗓️", title: "Plan your day", body: `Each day you share out up to 24 hours with the sliders. <b>💼 Work ${BAL.workHoursRequired}h</b> pays the bills — $${BAL.dailyExpenses}/day living costs never stop — but preseason is paid <b>🏖️ annual leave</b>, so it's greyed out for now. Train skills, and keep <b>🏃 Gym</b>, <b>🌙 Sleep</b> (${BAL.idealSleep}h+), <b>🎮 Relax</b> and <b>🥗 Food</b> topped up. The small marker on each slider is the minimum to avoid losing ground; bars preview tomorrow — green up, red down.` },
-    { icon: "🏋️", title: `This preseason: ${BAL.preseasonDays} days`, body: `No matches and no Work yet, and <b>all 7 skills</b> can be trained. Once the season starts only 1–3 <b>focus skills</b> a week can be trained — and they're exactly what that week's match tests. Tap <b>End Day ▶</b> for one day, or <b>End Week ▶▶</b> to play the week out.` },
+    { icon: "🏋️", title: `This preseason: ${BAL.preseasonDays} days`, body: `No matches and no Work yet (it's paid 🏖️ annual leave), <b>all 7 skills</b> can be trained, and skill coaches are half price. Once the season starts only 1–3 <b>focus skills</b> a week can be trained — and they're exactly what that week's match tests. Tap <b>End Day ▶</b> for one day, or <b>End Week ▶▶</b> to play the week out.` },
     { icon: "🧑‍🏫", title: "Staff & money", body: `Skills train up to <b>${BAL.skillShopCapBase}</b> on your own. To go higher, hire that skill's <b>Coach</b> in Staff — one week at a time, paid up front. At $${SKILL_COACH_LEVELS[0].wage}/week a coach is a big chunk of your pay, so you can't hire everyone every week: spend where it counts.` },
     { icon: "⚔️", title: "Match day", body: `One match a week. Your stats set your <b>performance</b>, add some luck, and the higher match-day rating wins. Top ${BAL.playoffSize} reach the playoffs. <b>Four are promoted</b>: the playoff champion, plus the next ${BAL.promotionTablePlaces} highest in the table — so a top-${BAL.promotionTablePlaces} finish always goes up. Every result is explained on its result screen, and ☰ <b>How to Play</b> has the full rules.` },
   ];
@@ -4407,7 +4441,7 @@ function openHowTo() {
     ${ul([
       `<b>Preseason:</b> ${B.preseasonDays} days of training. <b>Regular season:</b> ${B.seasonRounds} rounds, one match a week, all scheduled in advance.`,
       `Top <b>${B.playoffSize}</b> of ${B.leagueSize} reach the knockout playoffs (R16 → QF → SF → Final).`,
-      `Miss the playoffs: a ${B.trainingCampDays}-day <b>training camp</b>. Knocked out: camp for the rest of the playoff window. Champion: a ${B.offseasonDays}-day offseason.`,
+      `Miss the playoffs: a ${B.trainingCampDays}-day <b>training camp</b>; knocked out: camp for the rest of the playoff window. Either way it runs to the day of the Final — the year's last day. Reach the Final and the new year starts straight after it.`,
       `${B.leagueCount} leagues — you start in League ${B.leagueCount}. <b>Four go up</b> from each: the playoff champion plus the next ${B.promotionTablePlaces} highest in the table. Bottom ${B.relegationCount} go down.`,
       "Every rival plays real simulated matches — all tables are live. Tap a name to see their season.",
       "<b>Rating</b> (🏆) is your strength and sets your win chance. <b>Table position</b> comes from league points (3 per win); players level on points are split by their games against each other, then by rating.",
@@ -4417,7 +4451,7 @@ function openHowTo() {
   sec("money", "💼", "Work & money", `
     ${ul([
       `Work <b>${B.workHoursRequired}h/day</b>, except on annual leave (below). Pay starts at $${B.workPayMin}/day, +$${B.payRaisePerYear} each year for ${B.payRaiseMaxYears} years. Living costs are <b>$${B.dailyExpenses}/day</b>, always.`,
-      `<b>🏖️ Annual leave:</b> the offseason's last ${B.offseasonDays} days (the week after the Final — all of a champion's break) and all of preseason are paid time off — no Work or Pro Duties, full pay, no chances at risk, and used chances still come back on time. A job search carries on as normal.`,
+      `<b>🏖️ Annual leave:</b> the ${B.preseasonDays}-day preseason is paid time off — no Work or Pro Duties, full pay, no chances at risk, and used chances still come back on time. A job search carries on as normal. Skill coaches are half price.`,
       `<b>Overtime:</b> up to ${B.overtimeMaxHours}h extra at half your hourly rate ($${Math.round(B.workPayMin / B.workHoursRequired / 2)}/h at $${B.workPayMin}/day).`,
       `Short on Work hours? You keep your pay but lose part of a <b>chance</b> (back after ${B.strikeWindowDays} days). Lose all ${fmt1(B.strikesToFire)} and you're fired.`,
       `Fired: the Work slider becomes <b>Job Search</b> — ${B.jobSearchHoursRange[0]}–${B.jobSearchHoursRange[1]}h in total gets you hired, at least ${B.jobSearchMinHours}h a day. Pay resets to the minimum.`,
@@ -4434,6 +4468,7 @@ function openHowTo() {
     ${ul([
       `Skills train to <b>${B.skillShopCapBase}</b> on your own. A hired <b>Coach</b> raises that skill's ceiling (Lv1 60 … Lv5 100), trains it faster and stops it rusting — never past your <b>league cap</b> (60 in League 5 … 100 in League 1).`,
       "<b>Support staff</b> (Physio, Nutritionist, Manager, Sleep App, Meditation, Recovery) help only while hired.",
+      `<b>🏖️ Preseason:</b> every skill coach is <b>half price</b>.`,
       "Staff are hired <b>a week at a time</b>, paid up front (pro-rated mid-week). A week ends after each match. Unlock a higher level mid-week and you can upgrade whoever's hired for just the extra wages.",
       "<b>🔁 Auto-rehire</b> keeps someone on at the same level each new week — it switches itself off if you can't pay.",
       "Higher levels cost a <b>one-off fee</b> to unlock, once your league allows it, and pay more per week.",
@@ -4711,7 +4746,7 @@ function openSaveTransfer() {
     saveState();
     showSaveToast(ok);
     if (!state.playerName) openNameModal(true);
-    else if (state.pendingSplash) showPhaseSplash(state.pendingSplash);
+    else if (state.pendingSplash) showPendingSplashes();
   };
 
   $("saveImportBtn").addEventListener("click", () => importFrom($("saveImportText").value));
@@ -4778,12 +4813,9 @@ function runDay() {
   // Resolve this week's match (if today's the day) before the skill focus
   // rerolls — the match grades the skills actually trained this week, not
   // whatever gets revealed for the week ahead.
-  const { matchResult, phaseEvent, yearSummary } = processDayEnd();
-  // Annual leave starts in the offseason's last week (Work goes to 0h) and
-  // ends with preseason (back to the required hours — the plan may need
-  // trimming to fit).
-  if (onLeave()) state.allocation.work = 0;
-  else if (leaveBefore && state.employment.status !== "unemployed") state.allocation.work = requiredWorkHours();
+  const dayEnd = processDayEnd();
+  const { matchResult, phaseEvent, newYearNow } = dayEnd;
+  let { yearSummary } = dayEnd;
   if (matchResult) {
     // Rating after everything this match did (incl. a champion bonus), so a
     // replay of the result screen shows the same numbers later on.
@@ -4805,6 +4837,32 @@ function runDay() {
     state.logEntries.push(e);
     appendLog(e.html, e.cls);
   }
+
+  // A new phase: build its splash screen (summary of the phase just played,
+  // preview of the next) and start a fresh snapshot for the next one. They're
+  // kept on the state until dismissed, so closing the app doesn't lose them.
+  const splashes = [];
+  if (state.seasonPhase !== phaseBefore) {
+    splashes.push(buildPhaseSplash(phaseBefore, state.seasonPhase, { yearSummary, tierBefore }));
+    state.phaseStart = phaseSnapshot();
+  }
+  // The season ended on the Final's day, the year's last: the new year
+  // starts now, with its own screen after the season's.
+  if (newYearNow) {
+    const ny = startNewYear();
+    yearSummary = ny.yearSummary;
+    const e = { html: ny.phaseEvent, cls: "event-season" };
+    state.logEntries.push(e);
+    appendLog(e.html, e.cls);
+    splashes.push(buildPhaseSplash("offseason", "preseason", { yearSummary, tierBefore }));
+    state.phaseStart = phaseSnapshot();
+  }
+  if (splashes.length) state.pendingSplash = splashes;
+
+  // Annual leave is preseason: Work goes to 0h as it starts, and back to the
+  // required hours when the season does (the plan may need trimming).
+  if (onLeave()) state.allocation.work = 0;
+  else if (leaveBefore && state.employment.status !== "unemployed") state.allocation.work = requiredWorkHours();
 
   const skillCycleEvent = advanceSkillCycle(wasInSeason);
   if (skillCycleEvent) {
@@ -4829,21 +4887,11 @@ function runDay() {
     state.staff.hired = {};
   }
 
-  // A new phase: build its splash screen (summary of the phase just played,
-  // preview of the next) and start a fresh snapshot for the next one. It's
-  // kept on the state until dismissed, so closing the app doesn't lose it.
-  let splash = null;
-  if (state.seasonPhase !== phaseBefore) {
-    splash = buildPhaseSplash(phaseBefore, state.seasonPhase, { yearSummary, tierBefore });
-    state.pendingSplash = splash;
-    state.phaseStart = phaseSnapshot();
-  }
-
   state.day += 1;
   // After the day ticks over, so the new week's wage is pro-rated for it.
   state.staff.missed = [];
   if (Object.keys(endedHires).length) staffWeekEnded(endedHires);
-  return { matchResult, phaseEvent, yearSummary, splash };
+  return { matchResult, phaseEvent, yearSummary, splashes };
 }
 
 function finishTurn() {
@@ -4860,14 +4908,14 @@ function endDay() {
   // action itself too in case it's ever reachable another way.
   if (endDayBlocker()) return;
   const before = weekSnapshot();
-  const { matchResult, splash } = runDay();
+  const { matchResult, splashes } = runDay();
   finishTurn();
   const cards = dayEventCards(before).filter((c) => !c.weekOnly);
   // The match result comes first, then the phase change, then anything
   // else that happened — each opens once the one before is closed.
   showSequence([
     matchResult && ((next) => showMatchModal(matchResult, "", { onDone: next, showNext: true })),
-    splash && ((next) => showPhaseSplash(splash, "", next)),
+    ...splashSteps(splashes),
     cards.length && ((next) => showEventSplash(cards, "", next)),
   ]);
 }
@@ -4881,7 +4929,7 @@ function endDay() {
 function daysLeftInWeek() {
   const week = BAL.roundIntervalDays;
   if (state.seasonPhase === "regular" || state.seasonPhase === "playoffs") return Math.max(1, week - state.phaseDay);
-  const phaseLength = state.seasonPhase === "preseason" ? BAL.preseasonDays : state.offseasonDays || BAL.offseasonDays;
+  const phaseLength = state.seasonPhase === "preseason" ? BAL.preseasonDays : state.offseasonDays;
   return Math.max(1, Math.min(week - (state.phaseDay % week), phaseLength - state.phaseDay));
 }
 
@@ -4901,7 +4949,6 @@ function weekSnapshot() {
     techniques: state.employment.techniqueQueue.length,
     carbHours: state.carbHours || 0,
     leave: onLeave(),
-    phase: state.seasonPhase,
   };
 }
 
@@ -4917,7 +4964,7 @@ function endWeek() {
   let stopReason = null;
   let matchResult = null;
   let yearSummary = null;
-  let splash = null;
+  let splashes = [];
   let cards = [];
   while (daysRun < planned) {
     const before = weekSnapshot();
@@ -4925,7 +4972,7 @@ function endWeek() {
     daysRun += 1;
     matchResult = result.matchResult;
     yearSummary = result.yearSummary;
-    splash = result.splash || splash;
+    if (result.splashes.length) splashes = result.splashes;
     cards = dayEventCards(before);
     stopReason = cards.length ? cards.map((c) => `${c.icon} ${c.title}`).join(" · ") : null;
     if (stopReason || matchResult || yearSummary || state.seasonPhase !== startPhase) break;
@@ -4938,11 +4985,11 @@ function endWeek() {
   finishTurn();
   const summaryHtml = weekSummaryHtml({ start, daysRun, planned, stopReason });
   // The week summary rides on the first screen shown.
-  if (!matchResult && !splash && !cards.length) return showWeekSummaryModal(summaryHtml, daysRun);
+  if (!matchResult && !splashes.length && !cards.length) return showWeekSummaryModal(summaryHtml, daysRun);
   showSequence([
     matchResult && ((next) => showMatchModal(matchResult, summaryHtml, { onDone: next, showNext: true })),
-    splash && ((next) => showPhaseSplash(splash, matchResult ? "" : summaryHtml, next)),
-    cards.length && ((next) => showEventSplash(cards, matchResult || splash ? "" : summaryHtml, next)),
+    ...splashSteps(splashes, matchResult ? "" : summaryHtml),
+    cards.length && ((next) => showEventSplash(cards, matchResult || splashes.length ? "" : summaryHtml, next)),
   ]);
 }
 
@@ -5085,7 +5132,7 @@ function init() {
   if (!state.playerName) {
     openNameModal(true);
   } else if (state.pendingSplash) {
-    showPhaseSplash(state.pendingSplash);
+    showPendingSplashes();
   }
 
   if ("serviceWorker" in navigator) {

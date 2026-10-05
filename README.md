@@ -71,8 +71,8 @@ Relax, and Food. Everything is connected:
   you can afford roughly 90% of what you'd want in a 1-skill week and 40% in
   a 3-skill week.
 - **Work** funds everything else. 9h/day, except on paid **🏖️ annual
-  leave** — the offseason's last 7 days (the week after the Final; all of a
-  champion's break) and all of preseason: the Work (or Pro Duties) row is greyed
+  leave** — the whole 21-day preseason (skill coaches are half price then
+  too): the Work (or Pro Duties) row is greyed
   out, pay continues as normal, no chances are at risk (used ones still
   come back on time, shown on the row), and a Pro's
   technique clock waits; it comes back at the full requirement when the
@@ -125,17 +125,17 @@ numbers side by side, collapsible explanations, and a preview of the next
 match (opponent, ratings, table places, win chance and the week's focus). League tables rank by points, then
 head-to-head between tied players, then rating; they show W and L too.
 
-**The season**: a 14-day preseason to train, then a 39-round regular season —
+**The season**: a 21-day preseason to train (annual leave), then a 39-round regular season —
 one match a week against a named rival, the full schedule known in advance.
 Finish in the top 16 of your 40-competitor league to reach the knockout
 playoffs (Round of 16 → Quarterfinal → Semifinal → Final, single elimination).
-Lose a playoff match and you're out; win the Final and you're champion. Miss
-the playoffs and you get a 28-day training camp instead of a short offseason,
-so missing the cut is never a worse deal than qualifying and getting knocked
-out early. Get knocked out and you go to training camp too, for the rest of
-the playoff window (Round of 16 exit: 21 days, Quarterfinal: 14, Semifinal or
-Final: 7), so an early exit gets its time back as training, just like missing
-the cut. Only the champion gets a plain 7-day offseason.
+Lose a playoff match and you're out; win the Final and you're champion. The
+day of the Final is the year's last day for everyone. Miss the playoffs and
+you get a 28-day training camp up to it, so missing the cut is never a worse
+deal than qualifying and getting knocked out early. Get knocked out and you
+go to training camp too, for the rest of the playoff window (Round of 16
+exit: 21 days, Quarterfinal: 14, Semifinal: 7). Reach the Final, win or
+lose, and the new year starts straight after it.
 
 **Leagues**: 5 tiers (League 1 at the top, League 5 at the bottom — new
 careers start at the bottom). Every league has a persistent roster of 199

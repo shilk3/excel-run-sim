@@ -804,6 +804,8 @@ details.match-more[open] { padding-bottom: 8px; }
 .staff-chip:disabled { background: var(--bg-elev-2); color: var(--text-dim); }
 .staff-chip.staff-unlock { background: transparent; color: var(--text); border: 1px solid var(--border); }
 .staff-chip.staff-unlock:disabled { color: var(--text-dim); }
+.staff-sale { margin: 6px 0 10px; }
+.staff-line s { opacity: 0.6; }
 .staff-hired { color: var(--accent); font-weight: 800; font-size: 13px; }
 .staff-locked { color: var(--text-dim); font-size: 12px; align-self: center; }
 .staff-auto { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; font-weight: 700; color: var(--text); cursor: pointer; }
