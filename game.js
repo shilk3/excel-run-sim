@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.48.0";
+const APP_VERSION = "4.48.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -3552,10 +3552,12 @@ function leagueTableHtml(tier) {
       </div>${cutLine}`;
     })
     .join("");
-  const legendParts = [`<span class="legend-dot legend-playoff"></span> Playoffs (top ${BAL.playoffSize})`];
-  if (showPromo) legendParts.push(`<span class="legend-dot legend-promo"></span> Promoted (top ${BAL.promotionTablePlaces} + 🏆 playoff champion)`);
-  if (showReleg) legendParts.push(`<span class="legend-dot legend-releg"></span> Relegation zone`);
-  const legend = legendParts.length ? `<p class="modal-sub league-legend">${legendParts.join(" · ")}</p>` : "";
+  // Each dot and its label are one unit, so a wrap never strands a dot.
+  const legendItem = (cls, text) => `<span class="legend-item"><span class="legend-dot ${cls}"></span>${text}</span>`;
+  const legendParts = [legendItem("legend-playoff", `Playoffs (top ${BAL.playoffSize})`)];
+  if (showPromo) legendParts.push(legendItem("legend-promo", `Promoted (top ${BAL.promotionTablePlaces} + 🏆 playoff champion)`));
+  if (showReleg) legendParts.push(legendItem("legend-releg", "Relegation zone"));
+  const legend = legendParts.length ? `<p class="modal-sub league-legend">${legendParts.join("")}</p>` : "";
   return `
     <p class="modal-sub">${noteText}</p>
     <div class="league-table-header">

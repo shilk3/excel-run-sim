@@ -634,7 +634,8 @@ input[type="range"]::-webkit-slider-thumb {
 .league-row.league-row-you { background: rgba(255, 176, 32, 0.12); }
 .league-row.league-row-you .league-name { color: var(--text); font-weight: 700; }
 
-.league-legend { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.league-legend { display: flex; align-items: center; gap: 6px 14px; flex-wrap: wrap; }
+.legend-item { display: inline-flex; align-items: center; gap: 6px; }
 .legend-dot { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 2px; }
 .legend-dot.legend-promo { background: rgba(52, 208, 160, 0.5); }
 .legend-dot.legend-releg { background: rgba(255, 93, 93, 0.5); }
