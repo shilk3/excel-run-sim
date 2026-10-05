@@ -72,7 +72,8 @@ Relax, and Food. Everything is connected:
 - **Work** funds everything else. 9h/day, except on paid **🏖️ annual
   leave** — the offseason's last 7 days (the week after the Final; all of a
   champion's break) and all of preseason: the Work (or Pro Duties) row is greyed
-  out, pay continues as normal, no chances are at risk, and a Pro's
+  out, pay continues as normal, no chances are at risk (used ones still
+  come back on time, shown on the row), and a Pro's
   technique clock waits; it comes back at the full requirement when the
   season starts (a screen says so if your plan then needs trimming). A job
   search carries on as normal through leave. Otherwise no exceptions (up

@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.56.0";
+const APP_VERSION = "4.56.1";
 const SAVE_KEY = "cellgrind_save_v1";
 const SAVE_BACKUP_KEY = "cellgrind_save_unreadable";
 // Bumped when a save's shape changes. Older saves aren't converted (there's
@@ -615,10 +615,14 @@ function jobSecurityPct() {
 // Today's projected hit to job security if the day resolved right now at the
 // current Work/Pro Duties slider position — feeds the bar's preview overlay
 // so a shortfall visibly shows how much of today's lives it would cost.
+// Chances due back today come back when the day resolves, so they're
+// counted in too. On annual leave nothing can be lost — only regained.
 function jobSecurityPreviewPct(hours, isPro) {
   const required = isPro ? BAL.proDutyHoursRequired : BAL.workHoursRequired;
-  const loss = hours >= required ? 0 : strikeAmount(hours, isPro);
-  const previewLives = clamp(livesRemaining() - loss, 0, BAL.strikesToFire);
+  const loss = onLeave() || hours >= required ? 0 : strikeAmount(hours, isPro);
+  const kept = state.employment.strikes.filter((x) => state.day - x.day < BAL.strikeWindowDays);
+  const used = kept.reduce((sum, x) => sum + (x.amount != null ? x.amount : 1), 0);
+  const previewLives = clamp(BAL.strikesToFire - used - loss, 0, BAL.strikesToFire);
   return clamp((previewLives / BAL.strikesToFire) * 100, 0, 100);
 }
 // Annual leave: paid time off from Work and Pro Duties for the offseason's
@@ -2459,10 +2463,12 @@ function workRowHtml() {
     return comboRowHtml("work", {
       icon: "🏖️",
       label: "Annual leave",
-      outcomeText: `Paid · ${isPro ? "Pro Duties" : "Work"} back in ${back} day${back === 1 ? "" : "s"}`,
+      // Chances left (used ones keep coming back while on leave) and days
+      // of leave left — kept short to fit beside the label.
+      outcomeText: `${fmt1(livesRemaining())}/${fmt1(BAL.strikesToFire)} left · ${back}d`,
       shopTag: netPerDayTag((isPro ? emp.proPay : emp.workPay) - BAL.dailyExpenses),
       value: jobSecurityPct(),
-      previewValue: jobSecurityPct(),
+      previewValue: jobSecurityPreviewPct(0, isPro),
       cap: 100,
       hours: 0,
       maxHours: 1,
@@ -4403,7 +4409,7 @@ function openHowTo() {
   sec("money", "💼", "Work & money", `
     ${ul([
       `Work <b>${B.workHoursRequired}h/day</b>, except on annual leave (below). Pay starts at $${B.workPayMin}/day, +$${B.payRaisePerYear} each year for ${B.payRaiseMaxYears} years. Living costs are <b>$${B.dailyExpenses}/day</b>, always.`,
-      `<b>🏖️ Annual leave:</b> the offseason's last ${B.offseasonDays} days (the week after the Final — all of a champion's break) and all of preseason are paid time off — no Work or Pro Duties, full pay, no chances at risk. A job search carries on as normal.`,
+      `<b>🏖️ Annual leave:</b> the offseason's last ${B.offseasonDays} days (the week after the Final — all of a champion's break) and all of preseason are paid time off — no Work or Pro Duties, full pay, no chances at risk, and used chances still come back on time. A job search carries on as normal.`,
       `<b>Overtime:</b> up to ${B.overtimeMaxHours}h extra at half your hourly rate ($${Math.round(B.workPayMin / B.workHoursRequired / 2)}/h at $${B.workPayMin}/day).`,
       `Short on Work hours? You keep your pay but lose part of a <b>chance</b> (back after ${B.strikeWindowDays} days). Lose all ${fmt1(B.strikesToFire)} and you're fired.`,
       `Fired: the Work slider becomes <b>Job Search</b> — ${B.jobSearchHoursRange[0]}–${B.jobSearchHoursRange[1]}h in total gets you hired, at least ${B.jobSearchMinHours}h a day. Pay resets to the minimum.`,
