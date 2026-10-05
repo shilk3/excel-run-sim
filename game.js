@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.51.0";
+const APP_VERSION = "4.51.1";
 const SAVE_KEY = "cellgrind_save_v1";
 
 /* ---------------------------------------------------------------------- */
@@ -3943,6 +3943,32 @@ function openHistory(opts = {}) {
 
 // A rival's season so far, read straight from the stored league results —
 // nothing extra is saved for this page.
+// The table as it stood going into a regular-season round (or, for a
+// playoff key, the final table), rebuilt from the stored results: points,
+// then head-to-head among those level, then rating going into that round —
+// the same order as the live table. Returns Map id → position, or null for
+// round 1 (no table yet).
+function tablePositionsBefore(year, tier, key) {
+  const rounds = (((ensureHistory().league[year] || {})[tier]) || {});
+  const upTo = /^\d+$/.test(key) ? Number(key) : BAL.seasonRounds + 1;
+  if (upTo <= 1) return null;
+  const points = new Map(), rating = new Map(), beat = new Set();
+  const note = (id, r) => { if (!points.has(id)) points.set(id, 0); if (r != null) rating.set(id, r); };
+  for (let k = 1; k < upTo; k++) {
+    (rounds[String(k)] || []).forEach(([w, l, wr, lr]) => {
+      note(w, wr); note(l, lr);
+      points.set(w, points.get(w) + 3);
+      beat.add(`${w}>${l}`);
+    });
+  }
+  (rounds[key] || []).forEach(([w, l, wr, lr]) => { if (points.has(w)) rating.set(w, wr); if (points.has(l)) rating.set(l, lr); });
+  if (!points.size) return null;
+  const ids = [...points.keys()];
+  const h2h = new Map(ids.map((a) => [a, ids.filter((b) => b !== a && points.get(b) === points.get(a) && beat.has(`${a}>${b}`)).length]));
+  ids.sort((a, b) => points.get(b) - points.get(a) || h2h.get(b) - h2h.get(a) || (rating.get(b) || 0) - (rating.get(a) || 0));
+  return new Map(ids.map((x, i) => [x, i + 1]));
+}
+
 function openRival(id, back) {
   const r = findRival(id);
   if (!r) return;
@@ -3951,33 +3977,47 @@ function openRival(id, back) {
   Object.keys(yearData).forEach((tier) =>
     HISTORY_ROUND_KEYS.forEach((key) =>
       (yearData[tier][key] || []).forEach(([w, l, wr, lr]) => {
-        if (w === id) games.push({ key, win: true, opp: l, oppRating: lr, rating: wr });
-        else if (l === id) games.push({ key, win: false, opp: w, oppRating: wr, rating: lr });
+        if (w === id) games.push({ key, tier, win: true, opp: l, oppRating: lr, rating: wr });
+        else if (l === id) games.push({ key, tier, win: false, opp: w, oppRating: wr, rating: lr });
       })
     )
   );
   const w = games.filter((g) => g.win).length;
+  // Both sides' table positions going into each match (the final table for
+  // playoff games), rebuilt from the stored results.
+  const tables = new Map();
+  const posAt = (g, who) => {
+    const k = `${g.tier}|${g.key}`;
+    if (!tables.has(k)) tables.set(k, tablePositionsBefore(state.year, g.tier, g.key));
+    const t = tables.get(k);
+    return t && t.has(who) ? `#${t.get(who)}` : "";
+  };
   const rows = games
     .slice()
     .reverse()
-    .map((g) => `<div class="hist-row">
+    .map((g) => {
+      const oppPos = posAt(g, g.opp);
+      return `<div class="hist-row rival-row">
         <span class="hist-round">${roundShort(roundKeyLabel(g.key))}</span>
         <span class="hist-wl ${g.win ? "win" : "loss"}">${g.win ? "W" : "L"}</span>
-        <span class="hist-opp">${g.win ? "beat" : "lost to"} ${historyName(g.opp)}</span>
+        <span class="hist-opp">${g.win ? "beat" : "lost to"} ${oppPos ? `<span class="hist-pos">${oppPos}</span> ` : ""}${historyName(g.opp)}</span>
         <span class="hist-score">${g.oppRating}</span>
-      </div>`)
+        <span class="up-pos">${posAt(g, id)}</span>
+      </div>`;
+    })
     .join("");
+  const nowPos = currentTablePositions(r.league).get(id);
   const html = `
     ${stickyHeadHtml(r.name)}
     <div class="modal-section">
       <div class="kv-row"><span>League</span><span>League ${r.league}</span></div>
       <div class="kv-row"><span>Rating</span><span>${fmt(r.rating)}</span></div>
-      <div class="kv-row"><span>This season</span><span>${w}–${games.length - w}</span></div>
+      <div class="kv-row"><span>This season</span><span>${w}–${games.length - w}${nowPos ? ` · #${nowPos} in the table` : ""}</span></div>
       <div class="kv-row"><span>All-time record</span><span>${r.wins}–${r.losses}</span></div>
     </div>
     <div class="modal-section">
       <h3>Year ${state.year} results</h3>
-      ${games.length ? `<div class="hist-list">${rows}</div><p class="modal-sub">Number = the opponent's rating going into the match.</p>` : `<p class="modal-sub">No results recorded for them this season yet.</p>`}
+      ${games.length ? `<div class="hist-list"><div class="hist-row rival-row up-head"><span>Rd</span><span></span><span>Opponent</span><span>Rating</span><span>Them</span></div>${rows}</div><p class="modal-sub">#N = table position going into the match (playoffs: final table). Rating = the opponent's going into the match; Them = ${r.name}'s own position then.</p>` : `<p class="modal-sub">No results recorded for them this season yet.</p>`}
     </div>
     ${back ? `<button class="ghost-btn" id="rivalBack">◀ Back</button>` : ""}`;
   openModal(html, { ownClose: true });
