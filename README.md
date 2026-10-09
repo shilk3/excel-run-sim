@@ -1,8 +1,10 @@
 # CELLOG — Excel Esports Manager
 
-**Play it at [cellog.vercel.app](https://cellog.vercel.app)** (Vercel project
-`cellog`, team shilkteam; every push to `main` redeploys it). The original
-GitHub Pages address still works too.
+**Play it at [cellog.website](https://cellog.website)** (Vercel project
+`cellog`, team shilkteam; every push to `main` redeploys it). DNS is at
+Namecheap (A `@` → 76.76.21.21, CNAME `www` → cname.vercel-dns.com; www
+redirects to the apex). [cellog.vercel.app](https://cellog.vercel.app) and
+the original GitHub Pages address still work too.
 
 A mobile-first simulation game: manage a rising Excel esports competitor. Every
 day has up to 24 hours — split them across Skill Training, Gym, Sleep,
