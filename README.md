@@ -1,5 +1,9 @@
 # CELLOG — Excel Esports Manager
 
+**Play it at [cellog.vercel.app](https://cellog.vercel.app)** (Vercel project
+`cellog`, team shilkteam; every push to `main` redeploys it). The original
+GitHub Pages address still works too.
+
 A mobile-first simulation game: manage a rising Excel esports competitor. Every
 day has up to 24 hours — split them across Skill Training, Gym, Sleep,
 Relax, and Food. Everything is connected:
