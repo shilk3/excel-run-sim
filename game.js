@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.60.2";
+const APP_VERSION = "4.60.3";
 // One save slot per game length. The Full game keeps the original key, so
 // a career from before game lengths carries on as the Full game.
 const SAVE_KEY = "cellgrind_save_v1";
@@ -3088,7 +3088,10 @@ function nextMatchPreviewHtml() {
   const what = info.kind === "playoff" ? PLAYOFF_ROUND_NAMES[state.playoff.stage] : `Round ${state.roundIndex + 1}/${BAL.seasonRounds}`;
   const when = info.daysUntil <= 0 ? "today" : daysUntilPhrase(info.daysUntil);
   const row = (label, a, b) => `<tr><td>${label}</td><td>${a}</td><td>${b}</td></tr>`;
-  const focus = state.activeSkills.map((k) => `${skillMeta(k).icon} ${skillMeta(k).name} ${fmt(state.stats.skills[k])}`).join(" · ");
+  // One line per focus skill, like Career's "Tested this match".
+  const focus = state.activeSkills
+    .map((k) => `<div class="kv-row"><span>${skillMeta(k).icon} ${skillMeta(k).name}</span><span>${fmt(state.stats.skills[k])}/${skillCap(k)}</span></div>`)
+    .join("");
   return `
     <div class="next-match">
       <div class="next-match-title">⏭️ Next: ${what} · ${when}</div>
@@ -3100,7 +3103,10 @@ function nextMatchPreviewHtml() {
         </tbody>
       </table>
       <div class="match-sub perf-note">At today's form you have a <b>${info.winPct}%</b> win chance.</div>
-      <div class="match-sub perf-note">This week's focus: ${focus}.</div>
+      <div class="callout next-match-focus">
+        <div class="callout-label">This week's focus</div>
+        ${focus}
+      </div>
     </div>`;
 }
 
