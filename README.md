@@ -1,4 +1,4 @@
-# Cell Grind — Excel Esports Manager
+# CELLOG — Excel Esports Manager
 
 A mobile-first simulation game: manage a rising Excel esports competitor. Every
 day has up to 24 hours — split them across Skill Training, Gym, Sleep,

@@ -1,6 +1,6 @@
 {
-  "name": "Cell Grind — Excel Esports Manager",
-  "short_name": "Cell Grind",
+  "name": "CELLOG — Excel Esports Manager",
+  "short_name": "CELLOG",
   "description": "Manage an Excel esports pro: balance training, running, cross training, sleep and relaxation to become the best.",
   "start_url": "./index.html",
   "scope": "./",

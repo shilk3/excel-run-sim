@@ -1,9 +1,9 @@
-/* Cell Grind — Excel Esports Manager
+/* CELLOG — Excel Esports Manager
  * Single-file game engine: state, daily simulation, season/league structure,
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.61.2";
+const APP_VERSION = "4.62.0";
 // One save slot per game length. The Full game keeps the original key, so
 // a career from before game lengths carries on as the Full game.
 const SAVE_KEY = "cellgrind_save_v1";
@@ -3502,7 +3502,7 @@ function openMenu() {
     <div class="menu-row" id="menuSaveTransfer"><span>💾 Export / Import Save</span><span class="arrow">›</span></div>
     <div class="menu-row" id="menuInstall"><span>📲 Add to Home Screen</span><span class="arrow">›</span></div>
     <button class="ghost-btn" id="menuReset">Restart this ${gameLengthInfo(state.gameLength).name} game</button>
-    <div class="version-tag">Cell Grind v${APP_VERSION}</div>
+    <div class="version-tag">CELLOG v${APP_VERSION}</div>
   `;
   openModal(html);
   $("menuGames").addEventListener("click", () => openGames());
@@ -4948,7 +4948,7 @@ function openInstall() {
   const html = `
     <h2>Add to Home Screen</h2>
     <div class="modal-section">
-      <p>To install Cell Grind as an app icon on your iPhone:</p>
+      <p>To install CELLOG as an app icon on your iPhone:</p>
       <p>1. Open this page in <b>Safari</b>.<br>
       2. Tap the <b>Share</b> icon (square with an arrow).<br>
       3. Scroll down and tap <b>Add to Home Screen</b>.<br>
@@ -5003,7 +5003,7 @@ async function encodeSaveCode(json = null) {
 class SaveCodeError extends Error {}
 
 // Pasted text on iOS often isn't just the code: the share sheet / Notes can
-// put a "Cell Grind save" title in front, a URL or line breaks can ride
+// put a "CELLOG save" title in front, a URL or line breaks can ride
 // along, and invisible characters sneak in. So find the code wherever it
 // is rather than requiring the paste to start with it. Every gzip stream
 // begins with the same bytes, which base64 always renders as "H4sI" — that
@@ -5044,7 +5044,7 @@ async function decodeSaveCode(text) {
   const found = extractSaveCode(text);
   if (!found) {
     const peek = text.replace(/\s+/g, " ").trim().slice(0, 16);
-    throw new SaveCodeError(`That doesn't look like a Cell Grind save code (it starts “${peek}…”). Make sure you copied the whole code, from the very start.`);
+    throw new SaveCodeError(`That doesn't look like a CELLOG save code (it starts “${peek}…”). Make sure you copied the whole code, from the very start.`);
   }
   // Tolerate URL-safe base64 and lost "=" padding.
   const b64 = (body) => {
@@ -5073,7 +5073,7 @@ async function decodeSaveCode(text) {
 
 function saveFileName(g = state) {
   const who = (g.playerName || "career").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "") || "career";
-  return `cellgrind-${g.gameLength || "full"}-${who}-day${g.day}.txt`;
+  return `cellog-${g.gameLength || "full"}-${who}-day${g.day}.txt`;
 }
 
 // One tab per game length: export that game, or import a code into it.
@@ -5168,7 +5168,7 @@ function openSaveTransfer(tab = saveTransferTab || state.gameLength) {
       $("saveExportShare").addEventListener("click", () => {
         if (!ready()) return;
         const file = new File([code], saveFileName(saved), { type: "text/plain" });
-        const data = navigator.canShare && navigator.canShare({ files: [file] }) ? { files: [file], title: `Cell Grind ${g.name} save` } : { text: code, title: `Cell Grind ${g.name} save` };
+        const data = navigator.canShare && navigator.canShare({ files: [file] }) ? { files: [file], title: `CELLOG ${g.name} save` } : { text: code, title: `CELLOG ${g.name} save` };
         navigator.share(data).catch((e) => {
           if (e && e.name !== "AbortError") exportStatus("Sharing didn't work here — use Copy save code instead.", true);
         });
@@ -5589,7 +5589,7 @@ function renderAll() {
   renderFullLog();
   if (state.logEntries.length === 0) {
     const welcome = {
-      html: "Welcome to Cell Grind. Plan your first day, then tap <b>End Day</b>.",
+      html: "Welcome to CELLOG. Plan your first day, then tap <b>End Day</b>.",
       cls: "",
     };
     state.logEntries.push(welcome);
