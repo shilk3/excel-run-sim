@@ -718,7 +718,7 @@ input[type="range"]::-webkit-slider-thumb {
 .next-match { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
 .next-match-title { font-weight: 800; font-size: 14px; color: var(--text); }
 .next-match .next-match-table { margin-top: 8px; }
-.next-match-focus { margin-top: 10px; text-align: left; }
+.next-match .next-match-focus { margin-top: 12px; }
 .match-verdict { text-align: center; font-size: 16px; font-weight: 800; margin: 10px 0 4px; }
 .match-verdict.win { color: var(--accent); }
 .match-verdict.loss { color: var(--danger); }
@@ -877,3 +877,12 @@ details.match-more[open] { padding-bottom: 8px; }
 
 /* Games screen / menu: the game length beside a label */
 .menu-note { font-size: 12px; font-weight: 600; color: var(--text-dim); margin-left: 4px; }
+
+/* Specialisation picker */
+.spec-list { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+.spec-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-elev); color: var(--text); font: inherit; font-size: 14px; cursor: pointer; }
+.spec-row.on { border-color: var(--accent); background: var(--bg-elev-2); }
+.spec-star { font-size: 16px; width: 20px; text-align: center; }
+.spec-name { flex: 1; font-weight: 700; }
+.spec-val { font-size: 12px; color: var(--text-dim); text-align: right; }
+.spec-loss { color: var(--danger); font-weight: 700; }

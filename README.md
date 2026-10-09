@@ -64,7 +64,7 @@ Relax, and Food. Everything is connected:
   turns itself off and you're told). A hired Coach lifts that
   skill's ceiling (Lv1 60 … Lv5 100), speeds training and stops that skill
   rusting while hired (even in a week you don't train it), but never past
-  your league cap (60 in League 5 up to 100 in League 1). Above the ceiling
+  your league cap (see Specialisations below). Above the ceiling
   a skill holds with an hour a day and slips with less. Physical Health caps
   at 70 without a hired Sports Physio. Higher staff levels need a one-off
   fee and a high enough league, and cost more per week; wages are tuned so
@@ -90,10 +90,11 @@ Relax, and Food. Everything is connected:
   becomes a Job Search until you log a random 10–40 cumulative hours
   (rolled each time you lose the job, and shown on the slider) — at least 1h
   of searching a day, or the day can't end, so you can't idle into debt. Once you've
-  reached League 2 (ever) and all 7 skills are 85+ at the same time, while
-  employed, you go pro automatically (a screen says so). The sponsorship
-  lasts to the end of the year whatever your skills do, and is renewed only
-  if all 7 are still 85+ when the year ends; if not, the new-year screen
+  reached League 2 (ever) and your 7 skills average 75+ (85+ once League 1
+  is your best), while employed, you go pro automatically (a screen says
+  so). The sponsorship lasts to the end of the year whatever your skills
+  do, and is renewed only if the average still clears the bar when the year
+  ends; if not, the new-year screen
   says so and you're unemployed, back to a Job Search. As a pro: Work
   drops to 5h/day of Pro Duties, same chances rule. Pros also have to stay
   current — a new Excel technique appears roughly every 30 days needing
@@ -117,10 +118,22 @@ burnout, a new technique to master, or Nutrition shrinking the day below what
 your plan needs. Each of those events also gets its own screen whenever it happens —
 after End Day too — saying what changed and what to do about it.
 
+**Specialisations**: pick 3 ⭐ skills. They can reach your best league's
+skill cap and the other 4 stop 20 lower — League 5: 60/40, League 4: 70/50,
+League 3: 80/60, League 2: 90/70, League 1: 100/80 (coaches still set each
+skill's own ceiling). Change them any time from Career, but a skill that
+stops being one drops straight to the lower cap (the picker shows exactly
+what each change costs first). Every rival has 3 specialisations too, fixed
+for good, under the same caps, with levels that follow their rating — so
+they rise and fall with their results.
+
 **Match day**: both sides get a match-day rating = rating + performance +
-luck, and the higher one wins. Your performance comes from your stats (each
-point above 70 adds 3, below 70 costs 3); rivals get a performance on the same
-scale, around 70 and higher the further their rating is above yours. Luck is random for both sides every match,
+focus-skill edge + luck, and the higher one wins. Your performance comes
+from your stats (each point above 70 adds 3, below 70 costs 3); a rival's
+comes from their focus skills, with Health, Calm and Rest at 80. Whoever
+averages higher in the week's focus skills gets 2.5 match-day rating per
+point ahead (🎯 Focus-skill edge) — shown on the result screen and the
+next-match preview. Luck is random for both sides every match,
 drawn so the odds of winning match the classic Elo win chance for the rating
 gap — upsets always stay possible — and the scores shown are scaled so most
 games read as close. The result
@@ -228,6 +241,15 @@ For access from an iPhone on the same Wi-Fi, serve it from your computer and
 open `http://<your-computer-ip>:8000` in Safari, or deploy the folder as-is
 to any static host (GitHub Pages, Netlify, Vercel, etc.) and open that HTTPS
 URL in Safari.
+
+## Maybe later
+
+Ideas discussed and parked for now:
+
+- **Upkeep that grows with level** — higher skills rust faster (about 4 a
+  week at 100), coaches halve rust instead of stopping it, and the hours
+  needed to hold a skill rise with it (1h below 60, 2h at 60–79, 3h at 80+).
+  Parked because it may make the game too hard alongside specialisations.
 
 ## Files
 

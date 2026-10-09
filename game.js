@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.60.3";
+const APP_VERSION = "4.61.0";
 // One save slot per game length. The Full game keeps the original key, so
 // a career from before game lengths carries on as the Full game.
 const SAVE_KEY = "cellgrind_save_v1";
@@ -16,7 +16,7 @@ const SAVE_BACKUP_KEY = "cellgrind_save_unreadable";
 // only ever been one tester) — anything missing is filled from a new
 // career's defaults (see migrateSave), and a save too different to use is
 // refused.
-const SAVE_VERSION = 6;
+const SAVE_VERSION = 7;
 
 // Nested records a save might be missing a newer field in: filled from a
 // new career's defaults, keeping everything the save already has.
@@ -116,7 +116,17 @@ const BAL = {
   // and every tier stays at exactly leagueSize.
   promotionTablePlaces: 3, // (length)
   relegationCount: 4, // (length)
-  oppPerfRange: [50, 95], // rivals' cosmetic match-day performance (see resolveMatch)
+  // Specialisations: 3 skills you pick can reach your best league's skill
+  // cap; the other 4 stop this much lower. Changeable any time — a skill
+  // that stops being one drops straight to the lower cap.
+  specialisationCount: 3,
+  otherSkillCapGap: 20,
+  // Match day, on top of each side's performance: every point your focus
+  // skills average above (or below) the opponent's is worth this much
+  // match-day rating.
+  skillEdgeWeight: 2.5,
+  // Rivals' Health / Calm / Rest on match day, for their performance.
+  rivalCondition: 80,
   // Rating change per match: up to this many points, scaled by how
   // unlikely the result was (Elo).
   ratingK: 24,
@@ -152,10 +162,11 @@ const BAL = {
   strikesToFire: 3,
   jobSearchHoursRange: [10, 40], // Unemployed: cumulative hours to get re-hired — rolled fresh each time you lose a job
   jobSearchMinHours: 1, // Unemployed: at least this much Job Search a day, or the day can't end (no idling into endless debt)
-  // Employed + reached this league (ever) + every skill at goProSkill or
-  // more right now -> Pro, automatically.
+  // Employed + reached this league (ever) + a skill average of at least
+  // goProAverage[best league] right now -> Pro, automatically. The bar
+  // scales with your best league, since its caps limit the best average.
   goProLeagueTier: 2,
-  goProSkill: 85,
+  goProAverage: { 1: 85, 2: 75 },
   // Pros must stay current: a new technique queues up periodically: only
   // the front of the queue is "in progress" at once, taking hours above
   // the Pro Duties minimum. Falling behind never loses progress, but every
@@ -561,25 +572,45 @@ function physCap() {
   return BAL.statCapBase + BAL.statCapPerLevel * hiredLevel("physio");
 }
 // Effective skill ceiling stacks two independent gates: the hired coach's
-// level (per skill, 5 levels) and the highest league ever reached (peak tier).
+// level (per skill, 5 levels) and the highest league ever reached (peak
+// tier) — full for a specialisation, otherSkillCapGap lower for the rest.
 function skillShopCap(key) {
   return BAL.skillShopCapBase + BAL.skillShopCapPerLevel * hiredLevel(coachKey(key));
 }
-function leagueSkillCap() {
-  return LEAGUE_SKILL_CAP[state.peakLeagueTier] || LEAGUE_SKILL_CAP[5];
+function isSpecialisation(key, s = state) {
+  return (s.specialisations || []).includes(key);
+}
+// The league's cap for a skill (no key: a specialisation's, the top one).
+function leagueSkillCap(key = null, s = state) {
+  const top = LEAGUE_SKILL_CAP[s.peakLeagueTier] || LEAGUE_SKILL_CAP[5];
+  return key && !isSpecialisation(key, s) ? top - BAL.otherSkillCapGap : top;
 }
 function skillCap(key) {
-  return Math.min(skillShopCap(key), leagueSkillCap());
+  return Math.min(skillShopCap(key), leagueSkillCap(key));
+}
+// Sets your specialisations. A skill that stops being one drops straight
+// to the lower cap. Returns what was lost: [{ key, from, to }].
+function setSpecialisations(keys, s = state) {
+  s.specialisations = keys.slice(0, BAL.specialisationCount);
+  const losses = [];
+  SKILL_KEYS.forEach((k) => {
+    const cap = leagueSkillCap(k, s);
+    if (s.stats.skills[k] > cap) {
+      losses.push({ key: k, from: s.stats.skills[k], to: cap });
+      s.stats.skills[k] = cap;
+    }
+  });
+  return losses;
 }
 // Which gate is holding a skill's ceiling down — tells the player whether
 // the fix is hiring a coach (Staff) or a promotion (peak league).
 function skillCapCause(key) {
   const shop = skillShopCap(key);
-  const league = leagueSkillCap();
+  const league = leagueSkillCap(key);
   if (Math.min(shop, league) >= 100) return null;
   const lvl = hiredLevel(coachKey(key));
   const coachText = lvl > 0 ? `Coach Lv${lvl}` : "no coach";
-  const leagueText = `League ${state.peakLeagueTier}`;
+  const leagueText = `League ${state.peakLeagueTier}${isSpecialisation(key) ? "" : ", not a ⭐"}`;
   if (shop < league) return coachText;
   if (league < shop) return leagueText;
   return `${coachText} + ${leagueText}`;
@@ -650,12 +681,19 @@ function dailyHoursCap(nutrition) {
 /* ---------------------------------------------------------------------- */
 /* Employment: Work -> Pro, with Unemployed as the failure/recovery state  */
 /* ---------------------------------------------------------------------- */
-// Skills still short of the go-pro bar (judged as shown, i.e. rounded).
-function skillsBelowPro() {
-  return SKILL_KEYS.filter((k) => Math.round(state.stats.skills[k]) < BAL.goProSkill);
+// The 7 skills' average (as shown, i.e. rounded) and the bar it must reach
+// to go (or stay) pro — which depends on your best league.
+function skillAverage() {
+  return Math.round(SKILL_KEYS.reduce((a, k) => a + state.stats.skills[k], 0) / SKILL_KEYS.length);
+}
+function proAverageBar() {
+  return BAL.goProAverage[Math.max(1, Math.min(state.peakLeagueTier, BAL.goProLeagueTier))];
+}
+function meetsProSkillBar() {
+  return state.peakLeagueTier <= BAL.goProLeagueTier && skillAverage() >= proAverageBar();
 }
 function checkGoProEligible() {
-  return state.peakLeagueTier <= BAL.goProLeagueTier && skillsBelowPro().length === 0;
+  return meetsProSkillBar();
 }
 // Fractional strikes for falling short of the daily requirement — indexed by
 // hours actually worked. Hand-tuned, not a formula: a near-miss costs far
@@ -801,7 +839,7 @@ function generateRivalRoster(playerTier) {
     const [lo, hi] = LEAGUE_RATING_BANDS[tier];
     for (let i = 0; i < countsByTier[tier]; i++) {
       const name = names[id % names.length];
-      rivals.push({ id: id++, name, rating: randInt(lo, hi), league: tier, wins: 0, losses: 0, promotions: 0, relegations: 0 });
+      rivals.push(ensureRivalProfile({ id: id++, name, rating: randInt(lo, hi), league: tier, wins: 0, losses: 0, promotions: 0, relegations: 0 }));
     }
   }
   return rivals;
@@ -888,6 +926,7 @@ function freshState() {
     equipment: { owned: {} }, // lasts until the year it was bought ends
     carbHours: 0, // extra hours today, banked by yesterday's extra Food
     phaseStart: null, // snapshot taken when each phase begins (phaseSnapshot) — for the phase splash
+    specialisations: null, // the 3 ⭐ skills that can reach the full league cap — chosen after naming the player
     pendingSplash: null, // phase splashes not yet dismissed (a list: a season can end and a new year start on one day)
     tutorialSeen: false,
     leagueStandings: { 1: null, 2: null, 3: null, 4: null, 5: null }, // last fully completed season per tier
@@ -990,6 +1029,7 @@ function migrateSave(parsed) {
     fresh.allocation.work = requiredWorkHours(fresh.employment.status);
     fresh.logEntries.push({ html: `🏖️ Annual leave has moved: it's now the whole ${BAL.preseasonDays}-day preseason, which starts the day after the Final. Work is back in your plan for the rest of camp.`, cls: "event-season" });
   }
+  fresh.rivals.forEach(ensureRivalProfile); // v7: rivals' skill profiles
   fresh.saveVersion = SAVE_VERSION;
   // Slider maxes can drop between versions — never load a plan past them.
   const a = fresh.allocation;
@@ -1520,8 +1560,8 @@ function resolveEmploymentDay() {
 /* ---------------------------------------------------------------------- */
 // Every match tests only this round's active 1-3 skills — a live case
 // competition on those specific specialties, not the full roster of 7.
-function activeSkillAverage() {
-  const active = state.activeSkills;
+function activeSkillAverage(keys = state.activeSkills) {
+  const active = keys;
   if (!active.length) return 0;
   const sum = active.reduce((acc, k) => acc + state.stats.skills[k], 0);
   return sum / active.length;
@@ -1533,13 +1573,14 @@ function activeSkillAverage() {
 // weigh in too).
 const PERF_WEIGHTS = { skill: 0.55, phys: 0.25, composure: 0.15, rest: 0.05 };
 
-function performanceBreakdown() {
+// keys: the skills being tested (this week's focus unless given).
+function performanceBreakdown(keys = state.activeSkills) {
   const s = state.stats;
   // Low Calm hits you hardest where it matters most: match day. This
   // stacks on top of (doesn't replace) Calm's own weighted contribution
   // below, same as before.
   const composureMult = composureMatchMultiplier(s.composure);
-  const skillAvg = activeSkillAverage();
+  const skillAvg = activeSkillAverage(keys);
   const skillComponent = skillAvg * composureMult;
   const weighted = {
     skill: skillComponent * PERF_WEIGHTS.skill,
@@ -1549,7 +1590,7 @@ function performanceBreakdown() {
   };
   // Raw inputs, snapshotted for the match result table.
   const raw = {
-    skills: state.activeSkills.map((k) => ({ key: k, value: s.skills[k] })),
+    skills: keys.map((k) => ({ key: k, value: s.skills[k] })),
     skillAvg,
     skillComponent,
     phys: s.phys,
@@ -1569,15 +1610,69 @@ function performanceBreakdown() {
   return { weighted, raw, composureMult, techniquePenaltyMult, score };
 }
 
-function performanceScore() {
-  return performanceBreakdown().score;
+function performanceScore(keys) {
+  return performanceBreakdown(keys).score;
 }
 
 // Your effective strength for a match right now: base rank, adjusted by
 // today's performance. The single source of truth for that adjustment, so
 // win-probability and any "what fought" display can never drift apart.
-function currentMatchRating() {
-  return state.rank + (performanceScore() - 70) * 3;
+function currentMatchRating(keys) {
+  return state.rank + (performanceScore(keys) - 70) * 3;
+}
+
+// ---- Rivals' skills ----
+// Every rival has 3 fixed specialisations and small personal ups and downs
+// per skill (±4). Their levels follow their rating — so they rise and fall
+// with results — under the same caps as yours (their league's cap for a
+// specialisation, otherSkillCapGap lower for the rest).
+function ensureRivalProfile(r) {
+  if (Array.isArray(r.specs) && r.specs.length === BAL.specialisationCount && r.skillOffsets) return r;
+  const pool = SKILL_KEYS.slice();
+  r.specs = [];
+  for (let i = 0; i < BAL.specialisationCount; i++) r.specs.push(pool.splice(randInt(0, pool.length - 1), 1)[0]);
+  r.skillOffsets = Object.fromEntries(SKILL_KEYS.map((k) => [k, randInt(-4, 4)]));
+  return r;
+}
+// A specialisation's level for a rating: ~34 for a typical League 5 rival,
+// ~55 in League 3, ~90 in League 1.
+function rivalBaseSkill(rating) {
+  return 30 + (rating - 400) * 0.05;
+}
+function rivalSkill(r, key) {
+  ensureRivalProfile(r);
+  const spec = r.specs.includes(key);
+  const top = LEAGUE_SKILL_CAP[r.league] || LEAGUE_SKILL_CAP[5];
+  const cap = spec ? top : top - BAL.otherSkillCapGap;
+  return clamp(rivalBaseSkill(r.rating) + (spec ? 0 : -10) + (r.skillOffsets[key] || 0), 1, cap);
+}
+function rivalFocusAverage(r, keys = state.activeSkills) {
+  return keys.length ? keys.reduce((a, k) => a + rivalSkill(r, k), 0) / keys.length : 0;
+}
+// A rival's match-day performance: their focus skills plus a steady
+// rivalCondition for Health / Calm / Rest, on your weights.
+function rivalPerformance(r, keys = state.activeSkills) {
+  return PERF_WEIGHTS.skill * rivalFocusAverage(r, keys) + (1 - PERF_WEIGHTS.skill) * BAL.rivalCondition;
+}
+
+// Everything a match against this opponent comes down to, before luck:
+// both match-day ratings (rating + performance, + the focus-skill edge for
+// whoever has the better focus skills) and your win chance. keys: the
+// skills tested (this week's focus; all 7 for a week not yet revealed).
+function matchup(entry, keys = state.activeSkills) {
+  const rival = entry && entry.rivalId != null ? findRival(entry.rivalId) : null;
+  const oppRating = rival ? rival.rating : entry && entry.rating != null ? entry.rating : Number(entry) || 0;
+  const yourPerf = performanceScore(keys);
+  const yourBase = state.rank + (yourPerf - 70) * 3;
+  const youFocus = activeSkillAverage(keys);
+  const oppFocus = rival ? rivalFocusAverage(rival, keys) : null;
+  const oppPerf = rival ? rivalPerformance(rival, keys) : 70;
+  const oppBase = oppRating + (oppPerf - 70) * 3;
+  const edge = oppFocus == null ? 0 : (youFocus - oppFocus) * BAL.skillEdgeWeight;
+  const yourEdge = Math.max(0, edge), oppEdge = Math.max(0, -edge);
+  const yourMatch = yourBase + yourEdge, oppMatch = oppBase + oppEdge;
+  const winProb = 1 / (1 + Math.pow(10, (oppMatch - yourMatch) / 400));
+  return { rival, oppRating, yourPerf, oppPerf, youFocus, oppFocus, yourEdge, oppEdge, yourMatch, oppMatch, winProb };
 }
 
 // Resolves one real match for the player against a specific opponent rating.
@@ -1586,9 +1681,8 @@ function currentMatchRating() {
 // bonus — enough to matter, not enough to guarantee a win against a tough
 // opponent. Shared by the real match resolution and any "what are my
 // chances" preview, so the two can never drift apart.
-function winProbabilityAgainst(opponentRating) {
-  const matchRating = currentMatchRating();
-  return 1 / (1 + Math.pow(10, (opponentRating - matchRating) / 400));
+function winProbabilityAgainst(opponent, keys) {
+  return matchup(opponent, keys).winProb;
 }
 
 // Fixtures and bracket slots copy a rival's rating when they're built, but
@@ -1610,7 +1704,7 @@ function recordRivalResultVsPlayer(rivalId, playerWon, playerRating) {
   else rival.wins += 1;
 }
 
-function resolveMatch(opponentRating) {
+function resolveMatch(opponent) {
   const managerEff = upgradeEffect("manager");
   const rankLossMult = managerEff ? managerEff.rankLossMult : 1.0;
   const cashBonusMult = managerEff ? managerEff.cashBonusMult : 1.0;
@@ -1618,8 +1712,11 @@ function resolveMatch(opponentRating) {
 
   const breakdown = performanceBreakdown();
   const perf = breakdown.score;
-  const matchRating = currentMatchRating();
-  const winProb = winProbabilityAgainst(opponentRating);
+  const mu = matchup(opponent);
+  const opponentRating = mu.oppRating;
+  const matchRating = mu.yourMatch;
+  const opponentMatchRating = mu.oppMatch;
+  const winProb = mu.winProb;
   // Each side has its own luck on the day, and the higher match-day rating
   // wins. The two draws are Gumbel-distributed, whose difference is exactly
   // the logistic curve behind winProb — so the odds (and upsets) are the
@@ -1627,13 +1724,9 @@ function resolveMatch(opponentRating) {
   const yourLuck = matchLuckDraw();
   const oppLuck = matchLuckDraw();
   const yourFinal = matchRating + yourLuck;
-  const oppFinal = opponentRating + oppLuck;
-  const win = yourFinal > oppFinal || (yourFinal === oppFinal && matchRating >= opponentRating);
-  // Rivals have no stats, so their "performance" is cosmetic: around 70,
-  // nudged by how their rating compares with yours (a weaker rival rarely
-  // plays a blinder) plus a little day-to-day wobble, on the same ×3 scale.
-  // Relative to you, so it reads the same in every league.
-  const oppPerf = clamp(Math.round(70 + (opponentRating - rankBefore) / 25) + randInt(-5, 5), BAL.oppPerfRange[0], BAL.oppPerfRange[1]);
+  const oppFinal = opponentMatchRating + oppLuck;
+  const win = yourFinal > oppFinal || (yourFinal === oppFinal && matchRating >= opponentMatchRating);
+  const oppPerf = Math.round(mu.oppPerf * 10) / 10;
   const K = BAL.ratingK;
   const actual = win ? 1 : 0;
   let ratingChange = Math.round(K * (actual - winProb));
@@ -1657,18 +1750,20 @@ function resolveMatch(opponentRating) {
   // performances leave, split between the two sides in random shares.
   // Columns add up exactly and the winner always has the higher total.
   const yourRatingShown = Math.round(rankBefore);
-  const yourPerfShown = Math.round(matchRating) - yourRatingShown;
+  const yourPerfShown = Math.round((perf - 70) * 3);
   const oppRatingShown = Math.round(opponentRating);
-  const oppPerfShown = Math.round((oppPerf - 70) * 3);
+  const oppPerfShown = Math.round((mu.oppPerf - 70) * 3);
+  const yourEdgeShown = Math.round(mu.yourEdge);
+  const oppEdgeShown = Math.round(mu.oppEdge);
   const shownMargin = Math.max(1, Math.round(100 * (1 - Math.exp(-Math.abs(yourFinal - oppFinal) / 700))));
-  const baseGap = yourRatingShown + yourPerfShown - (oppRatingShown + oppPerfShown);
+  const baseGap = yourRatingShown + yourPerfShown + yourEdgeShown - (oppRatingShown + oppPerfShown + oppEdgeShown);
   const luckGap = (win ? shownMargin : -shownMargin) - baseGap; // your luck − theirs
   // A random share of the gap goes to each side, so it isn't always the
   // favourite having an off day and the underdog a good one in equal parts.
   const yourLuckShown = Math.round(luckGap * (0.25 + Math.random() * 0.5)) + randInt(-15, 15);
   const oppLuckShown = yourLuckShown - luckGap;
-  const yourFinalShown = yourRatingShown + yourPerfShown + yourLuckShown;
-  const oppFinalShown = oppRatingShown + oppPerfShown + oppLuckShown;
+  const yourFinalShown = yourRatingShown + yourPerfShown + yourEdgeShown + yourLuckShown;
+  const oppFinalShown = oppRatingShown + oppPerfShown + oppEdgeShown + oppLuckShown;
 
   return {
     win,
@@ -1676,6 +1771,9 @@ function resolveMatch(opponentRating) {
     breakdown,
     matchRating: Math.round(matchRating),
     opponentRating: oppRatingShown,
+    opponentMatchRating: Math.round(opponentMatchRating),
+    // Focus skills each side brought (the week's), for the result screen.
+    focus: { keys: state.activeSkills.slice(), you: Math.round(mu.youFocus * 10) / 10, opp: mu.oppFocus == null ? null : Math.round(mu.oppFocus * 10) / 10 },
     winProb: Math.round(winProb * 100),
     ratingChange,
     ratingChangeRaw: Math.round(K * (actual - winProb)),
@@ -1689,8 +1787,8 @@ function resolveMatch(opponentRating) {
     recordBefore,
     recordScope: "season",
     sides: {
-      you: { rating: yourRatingShown, perfScore: perf, perfAdj: yourPerfShown, luck: yourFinalShown - yourRatingShown - yourPerfShown, final: yourFinalShown },
-      opp: { rating: oppRatingShown, perfScore: oppPerf, perfAdj: oppPerfShown, luck: oppFinalShown - oppRatingShown - oppPerfShown, final: oppFinalShown },
+      you: { rating: yourRatingShown, perfScore: perf, perfAdj: yourPerfShown, edge: yourEdgeShown, luck: yourLuckShown, final: yourFinalShown },
+      opp: { rating: oppRatingShown, perfScore: oppPerf, perfAdj: oppPerfShown, edge: oppEdgeShown, luck: oppLuckShown, final: oppFinalShown },
     },
     // From the displayed totals so the verdict always matches them; rounding
     // can make a sub-1 margin look like a tie, which reads as "less than 1".
@@ -1772,7 +1870,13 @@ function recordMyMatch(result) {
 // ratings and lifetime records — this is what makes the other 199 rivals a
 // real, evolving world rather than static names.
 function resolveNpcMatch(rivalA, rivalB) {
-  const aWon = simulateNpcMatch(rivalA.rating, rivalB.rating);
+  // Same match-day maths as yours: rating + performance, + the focus-skill
+  // edge for whoever has the better focus skills this week.
+  const keys = state.activeSkills;
+  const edge = (rivalFocusAverage(rivalA, keys) - rivalFocusAverage(rivalB, keys)) * BAL.skillEdgeWeight;
+  const mA = rivalA.rating + (rivalPerformance(rivalA, keys) - 70) * 3 + Math.max(0, edge);
+  const mB = rivalB.rating + (rivalPerformance(rivalB, keys) - 70) * 3 + Math.max(0, -edge);
+  const aWon = simulateNpcMatch(mA, mB);
   const change = eloChange(rivalA.rating, rivalB.rating, aWon);
   rivalA.rating = clamp(rivalA.rating + change, BAL.ratingMin, BAL.ratingMax);
   rivalB.rating = clamp(rivalB.rating - change, BAL.ratingMin, BAL.ratingMax);
@@ -2048,7 +2152,7 @@ function resolvePlayoffRound() {
     if (teamA.isPlayer || teamB.isPlayer) {
       const player = teamA.isPlayer ? teamA : teamB;
       const opp = teamA.isPlayer ? teamB : teamA;
-      matchResult = resolveMatch(liveOpponentRating(opp));
+      matchResult = resolveMatch(opp);
       matchResult.opponentName = opp.name;
       matchResult.opponentRivalId = opp.rivalId;
       matchResult.roundLabel = roundName;
@@ -2124,14 +2228,13 @@ function startNewYear() {
   // If not, you're back to finding a job.
   const emp = state.employment;
   if (emp.status === "pro") {
-    const short = skillsBelowPro();
-    if (short.length) {
+    if (!meetsProSkillBar()) {
       emp.status = "unemployed";
       emp.strikes = [];
       emp.jobSearchHours = 0;
       emp.jobSearchHoursNeeded = randInt(BAL.jobSearchHoursRange[0], BAL.jobSearchHoursRange[1]);
       emp.endedBy = "renewal";
-      yearSummary.proEnded = { short: short.map((k) => `${skillMeta(k).icon} ${skillMeta(k).name} ${fmt(state.stats.skills[k])}`), searchHours: emp.jobSearchHoursNeeded };
+      yearSummary.proEnded = { avg: skillAverage(), bar: proAverageBar(), searchHours: emp.jobSearchHoursNeeded };
     } else {
       yearSummary.proRenewed = true;
     }
@@ -2163,7 +2266,7 @@ function startNewYear() {
   state.leaguePoints = newLeagueData.points;
   state.playoff = null;
   let phaseEvent = `🎉 Year ${state.year} begins! A fresh ${BAL.seasonRounds}-round season has been scheduled — good luck.`;
-  if (yearSummary.proEnded) phaseEvent += ` 📉 Sponsorship not renewed — not every skill is ${BAL.goProSkill}+ (${yearSummary.proEnded.short.join(", ")}). Time to find a job: ${yearSummary.proEnded.searchHours}h of Job Search.`;
+  if (yearSummary.proEnded) phaseEvent += ` 📉 Sponsorship not renewed — your skill average was ${yearSummary.proEnded.avg}, under the ${yearSummary.proEnded.bar} needed. Time to find a job: ${yearSummary.proEnded.searchHours}h of Job Search.`;
   else if (yearSummary.proRenewed) phaseEvent += ` 🏆 Sponsorship renewed for Year ${state.year}.`;
   if (worn.length) phaseEvent += ` Last year's equipment has worn out (${worn.map((e) => e.name).join(", ")}).`;
   return { yearSummary, phaseEvent };
@@ -2208,7 +2311,7 @@ function processDayEnd() {
       // where you actually sit in the table.
       const standingsBefore = buildStandingsFromPoints(state.leagueTier);
       const positionBefore = standingsBefore.findIndex((r) => r.isPlayer) + 1;
-      matchResult = resolveMatch(liveOpponentRating(fixture));
+      matchResult = resolveMatch(fixture);
       matchResult.opponentName = fixture.name;
       matchResult.opponentRivalId = fixture.rivalId;
       matchResult.roundLabel = `Round ${state.roundIndex + 1}/${BAL.seasonRounds}`;
@@ -2344,7 +2447,7 @@ function getNextMatchInfo() {
     const roundNum = s.roundIndex + 1;
     const liveRating = liveOpponentRating(fixture);
     const diff = difficultyLabel(liveRating, s.rank);
-    const winPct = Math.round(winProbabilityAgainst(liveRating) * 100);
+    const winPct = Math.round(winProbabilityAgainst(fixture) * 100);
     const oppRating = Math.round(liveRating);
     return {
       kind: "fixture",
@@ -2371,7 +2474,7 @@ function getNextMatchInfo() {
     const roundName = PLAYOFF_ROUND_NAMES[p.stage];
     const liveRating = opp ? liveOpponentRating(opp) : null;
     const diff = opp ? difficultyLabel(liveRating, s.rank) : null;
-    const winPct = opp ? Math.round(winProbabilityAgainst(liveRating) * 100) : null;
+    const winPct = opp ? Math.round(winProbabilityAgainst(opp) * 100) : null;
     const oppRating = opp ? Math.round(liveRating) : null;
     const oppTag = opp ? `${opp.name} (${oppRating})` : "?";
     return {
@@ -2647,7 +2750,7 @@ function renderPlannerRows() {
     rows.push(
       comboRowHtml(key, {
         icon: meta.icon,
-        label: meta.name,
+        label: `${meta.name}${isSpecialisation(key) ? " ⭐" : ""}`,
         outcomeText: `${fmt(s.skills[key])}/${cap}${lvl > 0 && (a.skills[key] || 0) < BAL.skillDecayThresholdHours ? " · held" : ""}`,
         value: s.skills[key],
         previewValue: preview.skills[key],
@@ -3048,17 +3151,21 @@ function headToHeadHtml(result) {
       <tbody>
         ${result.h2hTable ? row(result.h2hTable.label, `#${result.h2hTable.you}`, `#${result.h2hTable.opp}`, "h2h-context") : ""}
         ${row("🏆 Rating", y.rating, o.rating)}
-        ${row("📈 Performance", `${y.perfScore.toFixed(1)} → ${signedNum(y.perfAdj)}`, `${o.perfScore} → ${signedNum(o.perfAdj)}`)}
+        ${row("📈 Performance", `${y.perfScore.toFixed(1)} → ${signedNum(y.perfAdj)}`, `${typeof o.perfScore === "number" ? o.perfScore.toFixed(1) : o.perfScore} → ${signedNum(o.perfAdj)}`)}
+        ${y.edge != null ? row("🎯 Focus-skill edge", y.edge ? signedNum(y.edge) : "–", o.edge ? signedNum(o.edge) : "–") : ""}
         ${row("🎲 Luck on the day", signedNum(y.luck), signedNum(o.luck))}
       </tbody>
       <tfoot>${row("Match-day rating", y.final, o.final)}</tfoot>
     </table>
     <div class="match-verdict ${result.win ? "win" : "loss"}">${result.win ? "Won" : "Lost"} ${marginText}</div>
+    ${result.focus && result.focus.opp != null ? `<div class="match-sub perf-note">Focus skills (${result.focus.keys.map((k) => skillMeta(k).icon).join(" ")}): you averaged <b>${fmt1(result.focus.you)}</b>, ${escapeHtml(result.opponentName || "they")} <b>${fmt1(result.focus.opp)}</b> — each point ahead is worth ${BAL.skillEdgeWeight} to whoever leads.</div>` : ""}
     <div class="match-sub perf-note">Before the match you had a <b>${result.winProb}%</b> win chance.</div>`;
 }
 
 function luckExplainerHtml(result) {
-  const gap = result.matchRating - result.opponentRating; // + = you're ahead, before luck
+  // Results from before rivals had skills compared against their rating.
+  const theirs = result.opponentMatchRating != null ? result.opponentMatchRating : result.opponentRating;
+  const gap = result.matchRating - theirs; // + = you're ahead, before luck
   const chanceFor = (g) => Math.round(100 / (1 + Math.pow(10, -g / 400)));
   const ladderGaps = [-400, -200, -100, 0, 100, 200, 400];
   const rows = ladderGaps.filter((g) => g !== gap).map((g) => ({ gap: g, chance: chanceFor(g), you: false }));
@@ -3069,7 +3176,7 @@ function luckExplainerHtml(result) {
     .join("");
   return `
     <div class="match-sub perf-note">Both sides get random luck every match, and the highest match-day rating wins. Most games end up close; now and then the underdog has an inspired day and sneaks it.</div>
-    <div class="match-sub perf-note">So your win chance comes down to the gap before luck: your rating + performance (${result.matchRating}) against their rating (${result.opponentRating}) — <b>${gapLabel(gap)}</b> this time. The bigger the gap, the more luck the underdog needs, but upsets always stay possible:</div>
+    <div class="match-sub perf-note">So your win chance comes down to the gap before luck: ${result.opponentMatchRating != null ? `your rating + performance + edge (${result.matchRating}) against theirs (${theirs})` : `your rating + performance (${result.matchRating}) against their rating (${result.opponentRating})`} — <b>${gapLabel(gap)}</b> this time. The bigger the gap, the more luck the underdog needs, but upsets always stay possible:</div>
     <table class="perf-table win-ladder">
       <thead><tr><th>Rating gap</th><th>Win chance</th></tr></thead>
       <tbody>${ladder}</tbody>
@@ -3088,10 +3195,14 @@ function nextMatchPreviewHtml() {
   const what = info.kind === "playoff" ? PLAYOFF_ROUND_NAMES[state.playoff.stage] : `Round ${state.roundIndex + 1}/${BAL.seasonRounds}`;
   const when = info.daysUntil <= 0 ? "today" : daysUntilPhrase(info.daysUntil);
   const row = (label, a, b) => `<tr><td>${label}</td><td>${a}</td><td>${b}</td></tr>`;
-  // One line per focus skill, like Career's "Tested this match".
-  const focus = state.activeSkills
-    .map((k) => `<div class="kv-row"><span>${skillMeta(k).icon} ${skillMeta(k).name}</span><span>${fmt(state.stats.skills[k])}/${skillCap(k)}</span></div>`)
+  // One row per focus skill, you against them, then the edge they add up to.
+  const mu = matchup({ rivalId: info.opponentRivalId });
+  const r = mu.rival;
+  const star = (on) => (on ? " ⭐" : "");
+  const focusRows = state.activeSkills
+    .map((k) => row(`${skillMeta(k).icon} ${skillMeta(k).name}`, `${fmt(state.stats.skills[k])}${star(isSpecialisation(k))}`, r ? `${fmt(rivalSkill(r, k))}${star(r.specs.includes(k))}` : "?"))
     .join("");
+  const edgeRow = r ? row("🎯 Focus-skill edge", mu.yourEdge >= 0.5 ? signedNum(Math.round(mu.yourEdge)) : "–", mu.oppEdge >= 0.5 ? signedNum(Math.round(mu.oppEdge)) : "–") : "";
   return `
     <div class="next-match">
       <div class="next-match-title">⏭️ Next: ${what} · ${when}</div>
@@ -3102,11 +3213,11 @@ function nextMatchPreviewHtml() {
           ${row("🏆 Rating", fmt(state.rank), fmt(info.opponentRating))}
         </tbody>
       </table>
+      <table class="perf-table h2h-table next-match-table next-match-focus">
+        <thead><tr><th>This week's focus</th><th>You</th><th class="h2h-opp">${info.opponentName}</th></tr></thead>
+        <tbody>${focusRows}${edgeRow}</tbody>
+      </table>
       <div class="match-sub perf-note">At today's form you have a <b>${info.winPct}%</b> win chance.</div>
-      <div class="callout next-match-focus">
-        <div class="callout-label">This week's focus</div>
-        ${focus}
-      </div>
     </div>`;
 }
 
@@ -3224,7 +3335,7 @@ function shopHtml(tab = shopTab) {
   // then the rest.
   const order = [...focusKeys, ...SKILL_KEYS.filter((k) => !focusKeys.includes(k))];
   const skillCards = order
-    .map((k) => staffCardHtml(coachKey(k), { focus: focusKeys.includes(k), statNote: `${skillMeta(k).icon} ${skillMeta(k).name} now ${fmt(state.stats.skills[k])} · league cap ${leagueSkillCap()}` }))
+    .map((k) => staffCardHtml(coachKey(k), { focus: focusKeys.includes(k), statNote: `${skillMeta(k).icon} ${skillMeta(k).name}${isSpecialisation(k) ? " ⭐" : ""} now ${fmt(state.stats.skills[k])} · league cap ${leagueSkillCap(k)}` }))
     .join("");
   const supportCards = SUPPORT_KEYS
     .map((k) => staffCardHtml(k, { statNote: k === "physio" ? `🏃 Health now ${fmt(state.stats.phys)} · ceiling ${BAL.statCapBase} without a physio` : "" }))
@@ -3288,7 +3399,7 @@ function shopHtml(tab = shopTab) {
     <div class="modal-section">
       <h3>Skill Coaches</h3>
       ${coachSaleActive() ? `<div class="callout staff-sale">🏖️ <b>Half price all preseason</b> — every skill coach's wage is halved until the season starts.</div>` : ""}
-      <p class="modal-sub">A hired coach lifts that skill's ceiling (never past your league cap of ${leagueSkillCap()}), speeds up its training, and stops it rusting — even in a week you don't train it. With no coach a skill trains up to ${BAL.skillShopCapBase}; above that, an hour a day holds it and less lets it slip. 🔁 Auto-rehire keeps a coach on each new week — even when their skill isn't in focus.</p>
+      <p class="modal-sub">A hired coach lifts that skill's ceiling (never past your league cap: ${leagueSkillCap()} for a ⭐ specialisation, ${leagueSkillCap() - BAL.otherSkillCapGap} for the rest), speeds up its training, and stops it rusting — even in a week you don't train it. With no coach a skill trains up to ${BAL.skillShopCapBase}; above that, an hour a day holds it and less lets it slip. 🔁 Auto-rehire keeps a coach on each new week — even when their skill isn't in focus.</p>
       ${skillCards}
     </div>
     <div class="modal-section">
@@ -3430,8 +3541,7 @@ function switchToGame(len) {
   saveState();
   closeModal();
   renderAll();
-  if (!state.playerName) openNameModal(true);
-  else if (state.pendingSplash) showPendingSplashes();
+  resumeGameScreens();
 }
 
 function gameCardHtml(len, { first = false } = {}) {
@@ -3486,6 +3596,68 @@ function openGames({ first = false } = {}) {
   );
 }
 
+// After loading or switching to a game: name it, choose specialisations,
+// then any phase screens still waiting.
+function resumeGameScreens() {
+  if (!state.playerName) openNameModal(true);
+  else if (!state.specialisations) openSpecialisations({ required: true, onDone: () => state.pendingSplash && showPendingSplashes() });
+  else if (state.pendingSplash) showPendingSplashes();
+}
+
+// Choose the 3 ⭐ specialisations. required: a game without them yet (no
+// way out until 3 are picked). Skills leaving the list drop to the lower cap
+// — the screen shows exactly what each change would cost before you confirm.
+function openSpecialisations({ required = false, onDone = null } = {}, picked = null) {
+  const n = BAL.specialisationCount;
+  const top = leagueSkillCap();
+  const other = top - BAL.otherSkillCapGap;
+  if (!picked) {
+    picked = state.specialisations
+      ? state.specialisations.slice()
+      : SKILL_KEYS.slice().sort((a, b) => state.stats.skills[b] - state.stats.skills[a]).slice(0, n);
+  }
+  const rows = SKILL_KEYS.map((k) => {
+    const m = skillMeta(k);
+    const on = picked.includes(k);
+    const lvl = state.stats.skills[k];
+    const loss = !on && lvl > other ? `<span class="spec-loss">drops ${fmt(lvl)} → ${other}</span>` : "";
+    return `<button class="spec-row${on ? " on" : ""}" data-spec="${k}" aria-pressed="${on}">
+        <span class="spec-star">${on ? "⭐" : "☆"}</span>
+        <span class="spec-name">${m.icon} ${m.name}</span>
+        <span class="spec-val">${fmt(lvl)} · cap ${on ? top : other}${loss ? "<br>" + loss : ""}</span>
+      </button>`;
+  }).join("");
+  const ready = picked.length === n;
+  const html = `
+    ${required ? `<h2>⭐ Choose ${n} specialisations</h2>` : stickyHeadHtml("⭐ Specialisations")}
+    <p class="modal-sub">Your ${n} specialisations can reach your best league's skill cap (<b>${top}</b> now, League ${state.peakLeagueTier}); the other skills stop at <b>${other}</b>. Coaches still set each skill's own ceiling. You can change them any time — but a skill that stops being one <b>drops to ${other}</b> straight away.</p>
+    ${required && state.day > 1 ? `<p class="modal-sub">Your career already has skills above ${other}: pick which ${n} to keep — the rest drop to ${other}.</p>` : ""}
+    <div class="spec-list">${rows}</div>
+    <p class="modal-sub">${picked.length}/${n} chosen.</p>
+    <button class="primary-btn" id="specSave" ${ready ? "" : "disabled"}>${ready ? "Confirm specialisations" : `Choose ${n - picked.length} more`}</button>`;
+  openModal(html, required ? { keepScroll: true, onDismiss: () => !state.specialisations && openSpecialisations({ required, onDone }, picked) } : { ownClose: true, keepScroll: true, page: { key: "specs", reopen: () => openSpecialisations() } });
+  $("modalBody").querySelectorAll("[data-spec]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const k = b.dataset.spec;
+      const next = picked.includes(k) ? picked.filter((x) => x !== k) : picked.length < n ? picked.concat(k) : picked;
+      openSpecialisations({ required, onDone }, next);
+    })
+  );
+  $("specSave").addEventListener("click", () => {
+    if (picked.length !== n) return;
+    const losses = setSpecialisations(picked);
+    if (losses.length) {
+      const e = { html: `⭐ Specialisations: ${picked.map((k) => skillMeta(k).name).join(", ")}. ${losses.map((l) => `${skillMeta(l.key).icon} ${skillMeta(l.key).name} ${fmt(l.from)} → ${l.to}`).join(", ")}.`, cls: "event-bad" };
+      state.logEntries.push(e);
+      appendLog(e.html, e.cls);
+    }
+    saveState();
+    closeModal();
+    renderAll();
+    if (onDone) onDone();
+  });
+}
+
 function openNameModal(isFirstTime) {
   const html = `
     <h2>${isFirstTime ? "Name Your Player" : "Rename Player"}</h2>
@@ -3503,7 +3675,8 @@ function openNameModal(isFirstTime) {
     state.playerName = val;
     saveState();
     closeModal();
-    if (isFirstTime && !state.tutorialSeen) openTutorial(0);
+    if (!state.specialisations) openSpecialisations({ required: true, onDone: () => !state.tutorialSeen && openTutorial(0) });
+    else if (isFirstTime && !state.tutorialSeen) openTutorial(0);
   };
   $("nameSaveBtn").addEventListener("click", save);
   input.addEventListener("keydown", (e) => {
@@ -3541,13 +3714,13 @@ function employmentSectionHtml() {
       ? queue.map((t, i) => `${i === 0 ? "▶" : "⏸"} ${t.name}: ${fmt(t.hoursDone)}/${t.hoursNeeded}h`).join("<br>")
       : "Fully caught up — no match penalty.";
     return `${expensesLine}${leaveLine}<p>🏆 <b>Pro</b> · Pro Duties ${BAL.proDutyHoursRequired}h/day required ($${fmt(emp.proPay)}/day) · ${fmt1(lives)}/${fmt1(BAL.strikesToFire)} chances</p>${strikeLines}
-      <p class="modal-sub">Sponsored to the end of Year ${state.year}. Renewal needs every skill ${BAL.goProSkill}+ when the year ends: ${skillsBelowPro().length ? `⚠️ not yet — under ${BAL.goProSkill}: ${skillsBelowPro().map((k) => `${skillMeta(k).icon} ${fmt(state.stats.skills[k])}`).join(", ")}` : "on track ✓"}.</p>
+      <p class="modal-sub">Sponsored to the end of Year ${state.year}. Renewal needs a skill average of ${proAverageBar()}+ when the year ends: ${meetsProSkillBar() ? `on track ✓ (average ${skillAverage()})` : `⚠️ not yet — average ${skillAverage()}`}.</p>
       <p><b>Technique queue</b> (hours above ${BAL.proDutyHoursRequired}h/day go here)${penalty > 0 ? ` — currently <b>-${penalty}%</b> match performance` : ""}:<br>${queueHtml}</p>`;
   }
 
   const goProHint = checkGoProEligible()
     ? "Thresholds met — going pro next time a day resolves."
-    : `Go pro once you've reached League ${BAL.goProLeagueTier} and every skill is ${BAL.goProSkill}+ (${state.peakLeagueTier <= BAL.goProLeagueTier ? `League ${BAL.goProLeagueTier} ✓` : `best so far League ${state.peakLeagueTier}`}; ${skillsBelowPro().length ? `under ${BAL.goProSkill}: ${skillsBelowPro().map((k) => `${skillMeta(k).icon} ${fmt(state.stats.skills[k])}`).join(", ")}` : "skills ✓"}).`;
+    : `Go pro once you've reached League ${BAL.goProLeagueTier} and your 7 skills average ${BAL.goProAverage[2]}+ (${BAL.goProAverage[1]}+ once League 1 is your best) — now: ${state.peakLeagueTier <= BAL.goProLeagueTier ? `League ${state.peakLeagueTier} ✓` : `best so far League ${state.peakLeagueTier}`}, average ${skillAverage()}${state.peakLeagueTier <= BAL.goProLeagueTier ? ` of ${proAverageBar()} needed` : ""}.`;
   return `${expensesLine}${leaveLine}<p>💼 <b>Employed</b> · Work ${BAL.workHoursRequired}h/day required ($${fmt(emp.workPay)}/day) · ${fmt1(lives)}/${fmt1(BAL.strikesToFire)} chances</p>${strikeLines}
     <p class="modal-sub">${goProHint}</p>`;
 }
@@ -3659,6 +3832,8 @@ function openCareer() {
     </div>
     <div class="modal-section">
       <h3>Skills${!inSeason() ? ` — ${isPreseason() ? "preseason" : "off-season"}: train anything` : ""}</h3>
+      <div class="menu-row" id="careerSpecs"><span>⭐ Specialisations <span class="menu-note">${(state.specialisations || []).map((k) => skillMeta(k).icon).join(" ")} · change</span></span><span class="arrow">›</span></div>
+      <p class="modal-sub">⭐ skills can reach ${leagueSkillCap()}, the rest ${leagueSkillCap() - BAL.otherSkillCapGap} (League ${state.peakLeagueTier} best). Average ${skillAverage()}.</p>
       ${inSeason() ? `<p class="modal-sub skills-legend">🟢 = this week's focus, the only skills you can train and the ones tested in the next match.</p>` : ""}
       ${SKILLS.map((sk) => {
         const cap = skillCap(sk.key);
@@ -3668,7 +3843,7 @@ function openCareer() {
         const cause = skillCapCause(sk.key);
         return `
         <div class="skill-row-detail ${active ? "skill-row-detail-active" : ""}">
-          <div class="skill-row-detail-label"><span>${sk.icon} ${sk.name}${active ? " 🟢" : ""}</span><span>${fmt(val)}/${cap}${cause ? ` · cap: ${cause}` : ""}</span></div>
+          <div class="skill-row-detail-label"><span>${sk.icon} ${sk.name}${isSpecialisation(sk.key) ? " ⭐" : ""}${active ? " 🟢" : ""}</span><span>${fmt(val)}/${cap}${cause ? ` · cap: ${cause}` : ""}</span></div>
           <div class="bar"><div class="bar-fill skill" style="width:${pct}%"></div>${lockedZoneHtml(cap, 100)}</div>
         </div>`;
       }).join("")}
@@ -3678,6 +3853,7 @@ function openCareer() {
       ${currentStatsHtml()}
     </div>`;
   openModal(html, { ownClose: true, page: { key: "career", reopen: openCareer } });
+  $("careerSpecs").addEventListener("click", () => openSpecialisations());
   $("viewLeaguesLink").addEventListener("click", () => openLeagues(state.leagueTier));
   $("viewHistoryLink").addEventListener("click", () => openHistory());
 }
@@ -3975,14 +4151,16 @@ function leagueResultsHtml(view) {
 // preseason), then your path through the playoff bracket once it starts.
 function upcomingHtml() {
   const s = state;
-  const winPct = (rating) => Math.round(winProbabilityAgainst(rating) * 100);
-  const row = (round, name, rivalId, rating, pos, next) => `
+  // This week's match is judged on this week's focus skills; later ones,
+  // whose focus isn't revealed yet, on all 7.
+  const winPct = (entry, known) => Math.round(winProbabilityAgainst(entry, known ? state.activeSkills : SKILL_KEYS) * 100);
+  const row = (round, name, rivalId, rating, pos, next, entry = null) => `
     <div class="hist-row up-row${next ? " up-next" : ""}" ${rivalId != null ? `data-rival="${rivalId}"` : ""}>
       <span class="hist-round">${round}</span>
       <span class="hist-opp">${name}</span>
       <span class="hist-score">${rating != null ? fmt(rating) : ""}</span>
       <span class="up-pos">${pos ? `#${pos}` : ""}</span>
-      <span class="up-pct">${rating != null ? `${winPct(rating)}%` : ""}</span>
+      <span class="up-pct">${entry ? `${winPct(entry, next)}%` : ""}</span>
     </div>`;
   const head = `<div class="hist-row up-row up-head"><span>Rd</span><span>Opponent</span><span>Rating</span><span>Table</span><span>Win</span></div>`;
 
@@ -3993,12 +4171,12 @@ function upcomingHtml() {
     const left = s.schedule.slice(from);
     if (!left.length) return `<p class="modal-sub">The regular season is wrapping up.</p>`;
     const days = s.seasonPhase === "regular" ? BAL.roundIntervalDays - s.phaseDay : BAL.preseasonDays - s.phaseDay + BAL.roundIntervalDays;
-    const rows = left.map((f, i) => row(`R${from + i + 1}`, f.name, f.rivalId, liveOpponentRating(f), positions[f.rivalId], i === 0)).join("");
+    const rows = left.map((f, i) => row(`R${from + i + 1}`, f.name, f.rivalId, liveOpponentRating(f), positions[f.rivalId], s.seasonPhase === "regular" && i === 0, f)).join("");
     return `<div class="modal-section">
       <h3>Year ${s.year} · League ${s.leagueTier} · ${left.length} to play</h3>
       <p class="modal-sub">Next match ${days <= 0 ? "today" : daysUntilPhrase(days)}. Top ${BAL.playoffSize} reach the playoffs.</p>
       <div class="hist-list">${head}${rows}</div>
-      <p class="modal-sub">Win chances use everyone's rating today, so they'll move as the season goes. Each week's focus skills are revealed when that week starts.</p>
+      <p class="modal-sub">Win chances use everyone's rating and skills today, so they'll move as the season goes. Each week's focus skills are revealed when that week starts — until then a match is judged on all 7.</p>
     </div>${s.seasonPhase === "preseason" && s.lastStandingsTier ? playoffBracketHtml(s.lastStandingsTier, s.year - 1) : ""}`;
   }
 
@@ -4023,7 +4201,7 @@ function upcomingHtml() {
       const short = roundShort(label);
       if (pool.length === 1) {
         const o = pool[0];
-        rows.push(row(short, o.name, o.rivalId, liveOpponentRating(o), posOf(o), j === 0));
+        rows.push(row(short, o.name, o.rivalId, liveOpponentRating(o), posOf(o), j === 0, o));
       } else if (pool.length) {
         const fav = pool.slice().sort((a, b) => liveOpponentRating(b) - liveOpponentRating(a))[0];
         const who = pool.length === 2 ? `${pool[0].name} (#${posOf(pool[0])}) or ${pool[1].name} (#${posOf(pool[1])})` : `one of ${pool.length} — favourite ${fav.name} (#${posOf(fav)})`;
@@ -4218,9 +4396,20 @@ function openRival(id) {
     .join("");
   const thisYear = games.filter((g) => g.year === state.year);
   const tw = thisYear.filter((g) => g.win).length;
+  // Their skills: 3 fixed ⭐ specialisations, levels following their rating.
+  const focusNow = inSeason() ? state.activeSkills : [];
+  const skillRows = SKILL_KEYS.map((k) => {
+    const m = skillMeta(k);
+    return `<div class="kv-row"><span>${m.icon} ${m.name}${r.specs.includes(k) ? " ⭐" : ""}${focusNow.includes(k) ? " 🟢" : ""}</span><span>${fmt(rivalSkill(r, k))} <span class="kv-dim">· you ${fmt(state.stats.skills[k])}</span></span></div>`;
+  }).join("");
   const html = `
     ${stickyHeadHtml(r.name)}
     ${resultsSummaryHtml({ league: r.league, rating: r.rating, season: `${tw}–${thisYear.length - tw}`, pos: currentTablePositions(r.league).get(id), allTime: `${r.wins}–${r.losses}` })}
+    <div class="modal-section">
+      <h3>Skills</h3>
+      ${skillRows}
+      <p class="modal-sub">⭐ = their specialisations (they never change). Levels move with their rating.${focusNow.length ? " 🟢 = this week's focus." : ""}</p>
+    </div>
     ${sections}
     ${games.length ? RESULTS_NOTE : ""}`;
   openModal(html, { ownClose: true, page: { key: `rival:${id}`, reopen: () => openRival(id) } });
@@ -4327,14 +4516,14 @@ function buildPhaseSplash(from, to, { yearSummary = null, tierBefore = state.lea
       if (yearSummary.newPayRate != null) money.push(["📈 Annual raise", `pay is now $${fmt(yearSummary.newPayRate)}/day`]);
     }
     if (yearSummary && yearSummary.proEnded) {
-      notes.push(`📉 <b>No longer pro.</b> Your sponsorship wasn't renewed: every skill needed to be ${BAL.goProSkill}+ when the year ended, and these weren't — ${yearSummary.proEnded.short.join(", ")}. You'll have to find a job: the Work slider is now a <b>Job Search</b> (${yearSummary.proEnded.searchHours}h in total). Get every skill back to ${BAL.goProSkill}+ and you'll go pro again.`);
+      notes.push(`📉 <b>No longer pro.</b> Your sponsorship wasn't renewed: your skills needed to average ${yearSummary.proEnded.bar}+ when the year ended, and they averaged ${yearSummary.proEnded.avg}. You'll have to find a job: the Work slider is now a <b>Job Search</b> (${yearSummary.proEnded.searchHours}h in total). Get the average back to ${yearSummary.proEnded.bar}+ and you'll go pro again.`);
     } else if (yearSummary && yearSummary.proRenewed) {
-      next.push(["🏆 Sponsorship", `renewed for Year ${state.year} — every skill ${BAL.goProSkill}+`]);
+      next.push(["🏆 Sponsorship", `renewed for Year ${state.year} — skill average ${skillAverage()}`]);
     }
     next.push(["Preseason", `${BAL.preseasonDays} days — all 7 skills trainable, no matches`]);
     next.push(state.employment.status === "unemployed" ? ["🔍 Job search", "carries on as normal"] : ["🏖️ Annual leave", `all preseason — no ${state.employment.status === "pro" ? "Pro Duties" : "Work"}, paid as normal`]);
     next.push(["🧑‍🏫 Skill coaches", "half price all preseason"]);
-    next.push(["League cap", `skills can reach ${leagueSkillCap()} (League ${state.peakLeagueTier} best)`]);
+    next.push(["League cap", `⭐ specialisations can reach ${leagueSkillCap()}, other skills ${leagueSkillCap() - BAL.otherSkillCapGap} (League ${state.peakLeagueTier} best)`]);
     const unlockable = [];
     if (SKILL_COACH_LEVELS.some((l, i) => l.unlock === state.peakLeagueTier && i > 0)) unlockable.push(`Coach Lv${SKILL_COACH_LEVELS.findIndex((l) => l.unlock === state.peakLeagueTier) + 1}`);
     const supIdx = SUPPORT_LEVEL_UNLOCK.indexOf(state.peakLeagueTier);
@@ -4446,7 +4635,7 @@ function dayEventCards(before) {
       cards.push({
         icon: "🏆", tone: "good", title: "You've gone pro!",
         body: `Sponsorship replaces the day job: <b>${BAL.proDutyHoursRequired}h/day of Pro Duties</b> at $${fmt(emp.proPay)}/day, with the same chances rule. About every ${BAL.techniqueIntervalDays} days a new technique appears; Pro Duties hours beyond ${BAL.proDutyHoursRequired}h go towards mastering it.`,
-        tip: `You're pro until Year ${state.year} ends, even if skills dip. To be renewed for next year, all 7 skills must be ${BAL.goProSkill}+ when the year ends — or it's back to finding a job. Each unmastered technique costs ${Math.round(BAL.techniquePenaltyPerUnmastered * 100)}% match performance.`,
+        tip: `You're pro until Year ${state.year} ends, even if skills dip. To be renewed for next year, your skills must still average ${proAverageBar()}+ when the year ends — or it's back to finding a job. Each unmastered technique costs ${Math.round(BAL.techniquePenaltyPerUnmastered * 100)}% match performance.`,
       });
     } else {
       cards.push({
@@ -4649,12 +4838,19 @@ function openHowTo() {
     "Above its ceiling a skill is never cut down: 1h a day holds it.",
   ]));
 
+  sec("specs", "⭐", "Specialisations", ul([
+    `Pick <b>${B.specialisationCount} specialisations</b>. They can reach your best league's skill cap; the other ${7 - B.specialisationCount} skills stop <b>${B.otherSkillCapGap} lower</b>:`,
+    `League 5: ${LEAGUE_SKILL_CAP[5]} / ${LEAGUE_SKILL_CAP[5] - B.otherSkillCapGap} · League 4: ${LEAGUE_SKILL_CAP[4]} / ${LEAGUE_SKILL_CAP[4] - B.otherSkillCapGap} · League 3: ${LEAGUE_SKILL_CAP[3]} / ${LEAGUE_SKILL_CAP[3] - B.otherSkillCapGap} · League 2: ${LEAGUE_SKILL_CAP[2]} / ${LEAGUE_SKILL_CAP[2] - B.otherSkillCapGap} · League 1: ${LEAGUE_SKILL_CAP[1]} / ${LEAGUE_SKILL_CAP[1] - B.otherSkillCapGap}. A coach still sets each skill's own ceiling.`,
+    `Change them any time (Career → ⭐ Specialisations), but a skill that stops being one <b>drops to the lower cap</b> straight away.`,
+    "Every rival has 3 specialisations too — fixed for good — and their skill levels follow their rating. Tap a rival to see them.",
+  ]));
+
   sec("match", "⚔️", "Match day", ul([
-    "Each side's <b>match-day rating</b> = rating + performance + luck. Higher wins.",
-    `Performance comes from your stats (skills ${Math.round(PERF_WEIGHTS.skill * 100)}%, Health ${Math.round(PERF_WEIGHTS.phys * 100)}%, Calm ${Math.round(PERF_WEIGHTS.composure * 100)}%, Rest ${Math.round(PERF_WEIGHTS.rest * 100)}%). Each point above 70 adds 3; below 70 costs 3.`,
+    "Each side's <b>match-day rating</b> = rating + performance + focus-skill edge + luck. Higher wins.",
+    `Performance comes from your stats (skills ${Math.round(PERF_WEIGHTS.skill * 100)}%, Health ${Math.round(PERF_WEIGHTS.phys * 100)}%, Calm ${Math.round(PERF_WEIGHTS.composure * 100)}%, Rest ${Math.round(PERF_WEIGHTS.rest * 100)}%). Each point above 70 adds 3; below 70 costs 3. A rival's comes from their focus skills, with Health, Calm and Rest at ${B.rivalCondition}.`,
+    `<b>🎯 Focus-skill edge:</b> whoever has the better average in the week's focus skills gets <b>${B.skillEdgeWeight}</b> match-day rating for every point they're ahead.`,
     "Luck is random for both sides and is drawn so you win exactly as often as the win chance says. Most games end up close; upsets always stay possible.",
-    "Rivals' performance is shown around 70, higher the further their rating is above yours — a weaker rival rarely has a great day, but luck can still carry them.",
-    "The result screen explains every number.",
+    "The result screen explains every number; the next-match preview shows both sides' focus skills.",
   ]));
 
   sec("season", "📅", "Season & leagues", `
@@ -4676,7 +4872,7 @@ function openHowTo() {
       `<b>Overtime:</b> up to ${B.overtimeMaxHours}h extra at half your hourly rate ($${Math.round(B.workPayMin / B.workHoursRequired / 2)}/h at $${B.workPayMin}/day).`,
       `Short on Work hours? You keep your pay but lose part of a <b>chance</b> (back after ${B.strikeWindowDays} days). Lose all ${fmt1(B.strikesToFire)} and you're fired.`,
       `Fired: the Work slider becomes <b>Job Search</b> — ${B.jobSearchHoursRange[0]}–${B.jobSearchHoursRange[1]}h in total gets you hired, at least ${B.jobSearchMinHours}h a day. Pay resets to the minimum.`,
-      `<b>Go pro</b> automatically once you've reached League ${B.goProLeagueTier} (ever) and all 7 skills are ${B.goProSkill}+ at once. You stay pro to the end of the year whatever your skills do; it's renewed only if all 7 are still ${B.goProSkill}+ when the year ends — if not, you're back to finding a job. Pro: ${B.proDutyHoursRequired}h/day of Pro Duties from $${B.proPayMin}/day.`,
+      `<b>Go pro</b> automatically once you've reached League ${B.goProLeagueTier} (ever) and your 7 skills average ${B.goProAverage[2]}+ (${B.goProAverage[1]}+ once you've reached League 1). You stay pro to the end of the year whatever your skills do; it's renewed only if they still average that when the year ends — if not, you're back to finding a job. Pro: ${B.proDutyHoursRequired}h/day of Pro Duties from $${B.proPayMin}/day.`,
     ])}
     ${tbl(["Prize money", ""], [
       ["Win", `$${B.prizeWinBase} + rating ÷ ${B.prizeRatingDiv}`],
@@ -4687,7 +4883,7 @@ function openHowTo() {
 
   sec("staff", "🧑‍🏫", "Staff", `
     ${ul([
-      `Skills train to <b>${B.skillShopCapBase}</b> on your own. A hired <b>Coach</b> raises that skill's ceiling (Lv1 60 … Lv5 100), trains it faster and stops it rusting — never past your <b>league cap</b> (60 in League 5 … 100 in League 1).`,
+      `Skills train to <b>${B.skillShopCapBase}</b> on your own. A hired <b>Coach</b> raises that skill's ceiling (Lv1 60 … Lv5 100), trains it faster and stops it rusting — never past your <b>league cap</b> (see ⭐ Specialisations).`,
       "<b>Support staff</b> (Physio, Nutritionist, Manager, Sleep App, Meditation, Recovery) help only while hired.",
       `<b>🏖️ Preseason:</b> every skill coach is <b>half price</b>.`,
       "Staff are hired <b>a week at a time</b>, paid up front (pro-rated mid-week). A week ends after each match. Unlock a higher level mid-week and you can upgrade whoever's hired for just the extra wages.",
@@ -5010,8 +5206,7 @@ function openSaveTransfer(tab = saveTransferTab || state.gameLength) {
     closeModal();
     renderAll();
     showSaveToast(ok);
-    if (!state.playerName) openNameModal(true);
-    else if (state.pendingSplash) showPendingSplashes();
+    resumeGameScreens();
   };
 
   $("saveImportBtn").addEventListener("click", () => importFrom($("saveImportText").value));
@@ -5396,10 +5591,8 @@ function init() {
 
   if (needsGamePick) {
     openGames({ first: true });
-  } else if (!state.playerName) {
-    openNameModal(true);
-  } else if (state.pendingSplash) {
-    showPendingSplashes();
+  } else {
+    resumeGameScreens();
   }
 
   if ("serviceWorker" in navigator) {
