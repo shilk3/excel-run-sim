@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.61.1";
+const APP_VERSION = "4.61.2";
 // One save slot per game length. The Full game keeps the original key, so
 // a career from before game lengths carries on as the Full game.
 const SAVE_KEY = "cellgrind_save_v1";
@@ -1773,7 +1773,19 @@ function resolveMatch(opponent) {
     opponentRating: oppRatingShown,
     opponentMatchRating: Math.round(opponentMatchRating),
     // Focus skills each side brought (the week's), for the result screen.
-    focus: { keys: state.activeSkills.slice(), you: Math.round(mu.youFocus * 10) / 10, opp: mu.oppFocus == null ? null : Math.round(mu.oppFocus * 10) / 10 },
+    focus: {
+      keys: state.activeSkills.slice(),
+      you: Math.round(mu.youFocus * 10) / 10,
+      opp: mu.oppFocus == null ? null : Math.round(mu.oppFocus * 10) / 10,
+      // Each focus skill, both sides (⭐ = a specialisation).
+      skills: state.activeSkills.map((k) => ({
+        key: k,
+        you: Math.round(state.stats.skills[k]),
+        youSpec: isSpecialisation(k),
+        opp: mu.rival ? Math.round(rivalSkill(mu.rival, k)) : null,
+        oppSpec: mu.rival ? mu.rival.specs.includes(k) : false,
+      })),
+    },
     winProb: Math.round(winProb * 100),
     ratingChange,
     ratingChangeRaw: Math.round(K * (actual - winProb)),
@@ -3145,8 +3157,13 @@ function ratingCashExplainerHtml(result) {
 function focusEdgeRow(result, row) {
   const y = result.sides.you, o = result.sides.opp, f = result.focus;
   const cell = (avg, edge) => (avg != null ? `${fmt1(avg)} → ${signedNum(edge || 0)}` : edge ? signedNum(edge) : "–");
-  const icons = f ? ` <span class="h2h-icons">${f.keys.map((k) => skillMeta(k).icon).join("")}</span>` : "";
-  return row(`🎯 Focus skills${icons}`, cell(f && f.you, y.edge), cell(f && f.opp, o.edge));
+  const star = (on) => (on ? " ⭐" : "");
+  // One line per focus skill under it, like the performance table's skills.
+  const lines = f && f.skills
+    ? f.skills.map((x) => row(`${skillMeta(x.key).icon} ${skillMeta(x.key).name}`, `${x.you}${star(x.youSpec)}`, x.opp != null ? `${x.opp}${star(x.oppSpec)}` : "", "perf-sub")).join("")
+    : "";
+  const icons = f && !f.skills ? ` <span class="h2h-icons">${f.keys.map((k) => skillMeta(k).icon).join("")}</span>` : "";
+  return row(`🎯 Focus skills${icons}`, cell(f && f.you, y.edge), cell(f && f.opp, o.edge)) + lines;
 }
 
 function headToHeadHtml(result) {
