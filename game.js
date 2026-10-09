@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.60.1";
+const APP_VERSION = "4.60.2";
 // One save slot per game length. The Full game keeps the original key, so
 // a career from before game lengths carries on as the Full game.
 const SAVE_KEY = "cellgrind_save_v1";
@@ -3046,8 +3046,8 @@ function headToHeadHtml(result) {
     <table class="perf-table h2h-table">
       <thead><tr><th>Head to Head</th><th>You</th><th class="h2h-opp">${result.opponentName || "Opponent"}</th></tr></thead>
       <tbody>
+        ${result.h2hTable ? row(result.h2hTable.label, `#${result.h2hTable.you}`, `#${result.h2hTable.opp}`, "h2h-context") : ""}
         ${row("🏆 Rating", y.rating, o.rating)}
-        ${result.h2hTable ? row(result.h2hTable.label, `#${result.h2hTable.you}`, `#${result.h2hTable.opp}`) : ""}
         ${row("📈 Performance", `${y.perfScore.toFixed(1)} → ${signedNum(y.perfAdj)}`, `${o.perfScore} → ${signedNum(o.perfAdj)}`)}
         ${row("🎲 Luck on the day", signedNum(y.luck), signedNum(o.luck))}
       </tbody>
@@ -3095,8 +3095,8 @@ function nextMatchPreviewHtml() {
       <table class="perf-table h2h-table next-match-table">
         <thead><tr><th>Next Match</th><th>You</th><th class="h2h-opp">${info.opponentName}</th></tr></thead>
         <tbody>
-          ${row("🏆 Rating", fmt(state.rank), fmt(info.opponentRating))}
           ${youPos && oppPos ? row(info.kind === "playoff" ? "📊 Final table" : "📊 Table", `#${youPos}`, `#${oppPos}`) : ""}
+          ${row("🏆 Rating", fmt(state.rank), fmt(info.opponentRating))}
         </tbody>
       </table>
       <div class="match-sub perf-note">At today's form you have a <b>${info.winPct}%</b> win chance.</div>

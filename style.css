@@ -710,6 +710,8 @@ input[type="range"]::-webkit-slider-thumb {
 .result-table .wk-up, .h2h-table .wk-up { color: var(--accent); }
 .result-table .wk-down { color: var(--danger); }
 .h2h-table { margin-top: 14px; }
+/* Table place sits above the rows that add up to the match-day rating. */
+.h2h-table tr.h2h-context td { border-bottom: 1px dashed var(--border); }
 .h2h-table th.h2h-opp { max-width: 120px; overflow: hidden; text-overflow: ellipsis; text-transform: none; letter-spacing: 0; }
 .h2h-table thead th:nth-child(2) { text-transform: none; letter-spacing: 0; }
 .h2h-table tfoot td { font-size: 15px; }
