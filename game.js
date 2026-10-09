@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.61.0";
+const APP_VERSION = "4.61.1";
 // One save slot per game length. The Full game keeps the original key, so
 // a career from before game lengths carries on as the Full game.
 const SAVE_KEY = "cellgrind_save_v1";
@@ -3140,6 +3140,15 @@ function ratingCashExplainerHtml(result) {
     <div class="match-sub perf-note">Your cash "Before" already includes today's pay and living costs, so the change is just this match's prize.</div>`;
 }
 
+// Head to Head's focus-skill row, laid out like Performance: each side's
+// focus-skill average → the edge it earns (only the side ahead gets one).
+function focusEdgeRow(result, row) {
+  const y = result.sides.you, o = result.sides.opp, f = result.focus;
+  const cell = (avg, edge) => (avg != null ? `${fmt1(avg)} → ${signedNum(edge || 0)}` : edge ? signedNum(edge) : "–");
+  const icons = f ? ` <span class="h2h-icons">${f.keys.map((k) => skillMeta(k).icon).join("")}</span>` : "";
+  return row(`🎯 Focus skills${icons}`, cell(f && f.you, y.edge), cell(f && f.opp, o.edge));
+}
+
 function headToHeadHtml(result) {
   const y = result.sides.you;
   const o = result.sides.opp;
@@ -3152,13 +3161,12 @@ function headToHeadHtml(result) {
         ${result.h2hTable ? row(result.h2hTable.label, `#${result.h2hTable.you}`, `#${result.h2hTable.opp}`, "h2h-context") : ""}
         ${row("🏆 Rating", y.rating, o.rating)}
         ${row("📈 Performance", `${y.perfScore.toFixed(1)} → ${signedNum(y.perfAdj)}`, `${typeof o.perfScore === "number" ? o.perfScore.toFixed(1) : o.perfScore} → ${signedNum(o.perfAdj)}`)}
-        ${y.edge != null ? row("🎯 Focus-skill edge", y.edge ? signedNum(y.edge) : "–", o.edge ? signedNum(o.edge) : "–") : ""}
+        ${y.edge != null ? focusEdgeRow(result, row) : ""}
         ${row("🎲 Luck on the day", signedNum(y.luck), signedNum(o.luck))}
       </tbody>
       <tfoot>${row("Match-day rating", y.final, o.final)}</tfoot>
     </table>
     <div class="match-verdict ${result.win ? "win" : "loss"}">${result.win ? "Won" : "Lost"} ${marginText}</div>
-    ${result.focus && result.focus.opp != null ? `<div class="match-sub perf-note">Focus skills (${result.focus.keys.map((k) => skillMeta(k).icon).join(" ")}): you averaged <b>${fmt1(result.focus.you)}</b>, ${escapeHtml(result.opponentName || "they")} <b>${fmt1(result.focus.opp)}</b> — each point ahead is worth ${BAL.skillEdgeWeight} to whoever leads.</div>` : ""}
     <div class="match-sub perf-note">Before the match you had a <b>${result.winProb}%</b> win chance.</div>`;
 }
 
@@ -3239,6 +3247,7 @@ function showMatchModal(result, extraHtml = "", { onContinue = null, continueLab
           <summary>How was my performance calculated?</summary>
           ${performanceTableHtml(result.breakdown)}
           <div class="match-sub perf-note">Each point of performance above 70 adds 3 to your match-day rating; below 70 it costs 3.</div>
+          <div class="match-sub perf-note">🎯 Focus skills: whoever averages higher in this week's focus skills gets ${BAL.skillEdgeWeight} match-day rating for every point they're ahead.</div>
         </details>
         <details class="match-more">
           <summary>How do luck and win chance work?</summary>
