@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.63.0";
+const APP_VERSION = "4.63.1";
 // One save slot per game length. The Full game keeps the original key, so
 // a career from before game lengths carries on as the Full game.
 const SAVE_KEY = "cellgrind_save_v1";
@@ -2587,14 +2587,13 @@ function renderTopbar() {
   const phase = `Y${state.year} · ${phaseLabelText()}`;
   $("matchCounter").textContent = `${phase} · ${info.labelLine1 || info.label}`;
   $("matchCounter2").textContent = info.labelLine1 ? (info.labelLine2 || "") : "";
-  // ⚔️ and the match lines open the next-match preview whenever there is one.
+  // The match lines open the next-match preview whenever there is one.
   const hasNext = (info.kind === "fixture" || info.kind === "playoff") && info.opponentRivalId != null;
-  $("nextMatchBtn").classList.toggle("hidden", !hasNext);
   $("matchCounter").classList.toggle("tappable", hasNext);
   $("matchCounter2").classList.toggle("tappable", hasNext);
 }
 
-// The next-match preview on its own, from the top bar.
+// The next-match preview on its own, from the top bar's match lines.
 function openNextMatch() {
   const preview = nextMatchPreviewHtml();
   if (!preview) return;
@@ -5598,7 +5597,6 @@ function wireInputs() {
   $("cashChip").addEventListener("click", openShop);
   $("rankChip").addEventListener("click", openCareer);
   $("leaguesBtn").addEventListener("click", () => openLeagues(state.leagueTier));
-  $("nextMatchBtn").addEventListener("click", openNextMatch);
   $("matchCounter").addEventListener("click", openNextMatch);
   $("matchCounter2").addEventListener("click", openNextMatch);
   $("historyLink").addEventListener("click", () => openHistory());
