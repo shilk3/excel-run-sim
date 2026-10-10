@@ -13,7 +13,8 @@ Relax, and Food. Everything is connected:
 - **Skill Training** raises one of 7 case specialties — Data Analysis,
   Mapping, Text Processing, Game Logic, Math & Formulas, Time & Dates, and
   Cards & Random. During the season only 1-3 skills are "active"
-  (trainable) each round, revealed at the start of that round's week —
+  (trainable) each round — 1 in 30% of weeks, 2 in 50%, 3 in 20% —
+  revealed at the start of that round's week —
   every match that week tests exactly those skills. The other 4-6 sit
   locked and slowly rust. Preseason and the off-season (including training
   camp) have no matches, so all 7 are open.

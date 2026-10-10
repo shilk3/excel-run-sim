@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.66.0";
+const APP_VERSION = "4.67.0";
 // One save slot per game length. The Full game keeps the original key, so
 // a career from before game lengths carries on as the Full game.
 const SAVE_KEY = "cellgrind_save_v1";
@@ -125,6 +125,8 @@ const BAL = {
   // skills average above (or below) the opponent's is worth this much
   // match-day rating.
   skillEdgeWeight: 4,
+  // How many focus skills an in-season week has: chance of 1, 2 or 3.
+  focusSkillOdds: { 1: 0.3, 2: 0.5, 3: 0.2 },
   // How much luck there is on match day: the rating gap that makes one side
   // a 10-to-1 favourite (classic Elo uses 400). Smaller = less luck, so
   // ratings, performance and focus skills decide more — upsets still happen.
@@ -259,7 +261,8 @@ function coachKey(key) {
 // previous round's week is over — the other 4-6 skills can't be trained
 // (and quietly rust) until they come up again.
 function rollActiveSkills() {
-  const n = randInt(1, 3);
+  let n = 1;
+  for (let r = Math.random(); n < 3 && r >= BAL.focusSkillOdds[n]; n++) r -= BAL.focusSkillOdds[n];
   const pool = SKILL_KEYS.slice();
   const picked = [];
   for (let i = 0; i < n; i++) {
@@ -4847,7 +4850,7 @@ function openHowTo() {
     ${ul([
       "Below its <b>minimum</b> (the tick on each slider) a stat slips instead of growing. The slider track turns green when you've met it, red when you haven't.",
       "Each bar previews <b>tomorrow</b>: green for a gain, red for a loss.",
-      "Preseason and the off-season: all 7 skills can be trained. In the season only that week's <b>1–3 focus skills</b> can — and they're exactly what the week's match tests.",
+      `Preseason and the off-season: all 7 skills can be trained. In the season only that week's <b>1–3 focus skills</b> can (1 skill ${Math.round(B.focusSkillOdds[1] * 100)}% of weeks, 2 skills ${Math.round(B.focusSkillOdds[2] * 100)}%, 3 skills ${Math.round(B.focusSkillOdds[3] * 100)}%) — and they're exactly what the week's match tests.`,
     ])}`);
 
   sec("buttons", "▶️", "End Day & End Week", ul([
