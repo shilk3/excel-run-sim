@@ -140,9 +140,10 @@ comes from their focus skills, with Health, Calm and Rest at 80. Whoever
 averages higher in the week's focus skills gets 4 match-day rating per
 point ahead (🎯 Focus-skill edge) — shown on the result screen and the
 next-match preview. Luck is random for both sides every match,
-drawn so the odds of winning match the classic Elo win chance for the rating
-gap — upsets always stay possible — and the scores shown are scaled so most
-games read as close. The result
+drawn so the odds of winning follow an Elo-style win chance for the gap
+(a 300 gap makes you a 10-to-1 favourite — tighter than classic Elo's 400,
+so luck matters less) — upsets always stay possible — and the scores shown
+are scaled so most games read as close. The result
 screen shows what changed (rating, table position, cash, record), both sides'
 numbers side by side, collapsible explanations, and a preview of the next
 match (opponent, ratings, table places, win chance and the week's focus). League tables rank by points, then

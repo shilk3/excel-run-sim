@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.64.0";
+const APP_VERSION = "4.65.0";
 // One save slot per game length. The Full game keeps the original key, so
 // a career from before game lengths carries on as the Full game.
 const SAVE_KEY = "cellgrind_save_v1";
@@ -125,6 +125,10 @@ const BAL = {
   // skills average above (or below) the opponent's is worth this much
   // match-day rating.
   skillEdgeWeight: 4,
+  // How much luck there is on match day: the rating gap that makes one side
+  // a 10-to-1 favourite (classic Elo uses 400). Smaller = less luck, so
+  // ratings, performance and focus skills decide more — upsets still happen.
+  luckScale: 300,
   // Rivals' Health / Calm / Rest on match day, for their performance.
   rivalCondition: 80,
   // Rating change per match: up to this many points, scaled by how
@@ -1671,7 +1675,7 @@ function matchup(entry, keys = state.activeSkills) {
   const edge = oppFocus == null ? 0 : (youFocus - oppFocus) * BAL.skillEdgeWeight;
   const yourEdge = Math.max(0, edge), oppEdge = Math.max(0, -edge);
   const yourMatch = yourBase + yourEdge, oppMatch = oppBase + oppEdge;
-  const winProb = 1 / (1 + Math.pow(10, (oppMatch - yourMatch) / 400));
+  const winProb = 1 / (1 + Math.pow(10, (oppMatch - yourMatch) / BAL.luckScale));
   return { rival, oppRating, yourPerf, oppPerf, youFocus, oppFocus, yourEdge, oppEdge, yourMatch, oppMatch, winProb };
 }
 
@@ -1808,26 +1812,25 @@ function resolveMatch(opponent) {
   };
 }
 
-// One side's luck on match day: a Gumbel draw with the Elo scale (400 /
-// ln 10), centred on zero. The difference of two such draws is logistic, so
-// P(you out-score them) is exactly the Elo win chance. Usually within about
-// ±150; now and then a side has an inspired day of +400 or more.
-const LUCK_SCALE = 400 / Math.LN10;
+// One side's luck on match day: a Gumbel draw with scale luckScale / ln 10,
+// centred on zero. The difference of two such draws is logistic, so
+// P(you out-score them) is exactly the win chance. Usually within about
+// ±110; now and then a side has an inspired day of +300 or more.
 const EULER_GAMMA = 0.5772156649;
 function matchLuckDraw() {
   const u = clamp(Math.random(), 1e-9, 1 - 1e-9);
-  return LUCK_SCALE * (-Math.log(-Math.log(u)) - EULER_GAMMA);
+  return (BAL.luckScale / Math.LN10) * (-Math.log(-Math.log(u)) - EULER_GAMMA);
 }
 
 // Cheap win/lose roll for matches that don't involve the player (other
 // league members' simulated season records, and NPC-vs-NPC bracket games).
 function simulateNpcMatch(ratingA, ratingB) {
-  const winProbA = 1 / (1 + Math.pow(10, (ratingB - ratingA) / 400));
+  const winProbA = 1 / (1 + Math.pow(10, (ratingB - ratingA) / BAL.luckScale));
   return Math.random() < winProbA;
 }
 
 function eloChange(ratingA, ratingB, aWon, K = BAL.ratingK) {
-  const winProbA = 1 / (1 + Math.pow(10, (ratingB - ratingA) / 400));
+  const winProbA = 1 / (1 + Math.pow(10, (ratingB - ratingA) / BAL.luckScale));
   return Math.round(K * ((aWon ? 1 : 0) - winProbA));
 }
 
@@ -3212,8 +3215,8 @@ function luckExplainerHtml(result) {
   // Results from before rivals had skills compared against their rating.
   const theirs = result.opponentMatchRating != null ? result.opponentMatchRating : result.opponentRating;
   const gap = result.matchRating - theirs; // + = you're ahead, before luck
-  const chanceFor = (g) => Math.round(100 / (1 + Math.pow(10, -g / 400)));
-  const ladderGaps = [-400, -200, -100, 0, 100, 200, 400];
+  const chanceFor = (g) => Math.round(100 / (1 + Math.pow(10, -g / BAL.luckScale)));
+  const ladderGaps = [-300, -200, -100, 0, 100, 200, 300];
   const rows = ladderGaps.filter((g) => g !== gap).map((g) => ({ gap: g, chance: chanceFor(g), you: false }));
   rows.push({ gap, chance: result.winProb, you: true });
   rows.sort((x, y) => x.gap - y.gap || (x.you ? 1 : -1));
