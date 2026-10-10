@@ -137,7 +137,7 @@ they rise and fall with their results.
 focus-skill edge + luck, and the higher one wins. Your performance comes
 from your stats (each point above 70 adds 3, below 70 costs 3); a rival's
 comes from their focus skills, with Health, Calm and Rest at 80. Whoever
-averages higher in the week's focus skills gets 2.5 match-day rating per
+averages higher in the week's focus skills gets 4 match-day rating per
 point ahead (🎯 Focus-skill edge) — shown on the result screen and the
 next-match preview. Luck is random for both sides every match,
 drawn so the odds of winning match the classic Elo win chance for the rating

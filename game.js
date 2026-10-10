@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.63.1";
+const APP_VERSION = "4.64.0";
 // One save slot per game length. The Full game keeps the original key, so
 // a career from before game lengths carries on as the Full game.
 const SAVE_KEY = "cellgrind_save_v1";
@@ -124,7 +124,7 @@ const BAL = {
   // Match day, on top of each side's performance: every point your focus
   // skills average above (or below) the opponent's is worth this much
   // match-day rating.
-  skillEdgeWeight: 2.5,
+  skillEdgeWeight: 4,
   // Rivals' Health / Calm / Rest on match day, for their performance.
   rivalCondition: 80,
   // Rating change per match: up to this many points, scaled by how
