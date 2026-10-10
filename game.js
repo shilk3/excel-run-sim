@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.68.0";
+const APP_VERSION = "4.68.1";
 // One save slot per game length. The Full game keeps the original key, so
 // a career from before game lengths carries on as the Full game.
 const SAVE_KEY = "cellgrind_save_v1";
@@ -3315,13 +3315,16 @@ function showMatchModal(result, extraHtml = "", { onContinue = null, continueLab
       </div>`;
   openModal(html, { ownClose: true, onDismiss: onDone, page });
   $("matchOk").addEventListener("click", onContinue || closeModal);
-  // "• Round …" sits beside VICTORY when it fits, else on its own line
-  // (without the bullet).
+  // "· Round …" sits beside VICTORY when it fits, else on its own line
+  // (without the dot).
   const sub = $("modalBody").querySelector(".match-head-sub");
   if (sub) {
     sub.classList.add("same-line");
     const head = $("modalBody").querySelector(".match-head").getBoundingClientRect();
-    if (sub.getBoundingClientRect().top >= head.bottom) sub.classList.remove("same-line");
+    if (sub.getBoundingClientRect().top >= head.bottom) {
+      sub.classList.remove("same-line");
+      sub.classList.add("own-line");
+    }
   }
 }
 
