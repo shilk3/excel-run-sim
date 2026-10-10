@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.67.0";
+const APP_VERSION = "4.68.0";
 // One save slot per game length. The Full game keeps the original key, so
 // a career from before game lengths carries on as the Full game.
 const SAVE_KEY = "cellgrind_save_v1";
@@ -3203,7 +3203,6 @@ function headToHeadHtml(result) {
   const y = result.sides.you;
   const o = result.sides.opp;
   const row = (label, a, b, cls = "") => `<tr class="${cls}"><td>${label}</td><td>${a}</td><td>${b}</td></tr>`;
-  const marginText = result.margin === 0 ? "by less than 1" : `by ${result.margin}`;
   return `
     <table class="perf-table h2h-table">
       <thead><tr><th>Head to Head</th><th>You</th><th class="h2h-opp">${result.opponentName || "Opponent"}</th></tr></thead>
@@ -3215,9 +3214,7 @@ function headToHeadHtml(result) {
         ${row("🎲 Luck on the day", signedNum(y.luck), signedNum(o.luck))}
       </tbody>
       <tfoot>${row("Match-day rating", y.final, o.final)}</tfoot>
-    </table>
-    <div class="match-verdict ${result.win ? "win" : "loss"}">${result.win ? "Won" : "Lost"} ${marginText}</div>
-    <div class="match-sub perf-note">Before the match you had a <b>${result.winProb}%</b> win chance.</div>`;
+    </table>`;
 }
 
 function luckExplainerHtml(result) {
@@ -3282,17 +3279,25 @@ function nextMatchPreviewHtml() {
 // onContinue replaces what the Continue button does (✕ still just closes);
 // onDone runs however the result is closed — used to chain the next screen.
 // showNext: a result just played (not a replay) also previews the next match.
+// Layout: VICTORY / DEFEAT by N · round, the win chance, Head to Head, your
+// result, the next match, Continue — then the explanations for anyone who
+// scrolls on.
 function showMatchModal(result, extraHtml = "", { onContinue = null, continueLabel = "Continue", onDone = null, page = null, showNext = false } = {}) {
   const context = result.roundLabel ? `${result.roundLabel}${result.opponentName ? " vs " + result.opponentName : ""}` : "";
-  const title = `<span class="match-head ${result.win ? "win" : "loss"}">${result.win ? "VICTORY" : "DEFEAT"}</span>${
-    context ? `<span class="match-head-sub">${context}</span>` : ""
-  }`;
+  const margin = result.margin == null ? "" : result.margin === 0 ? "by &lt;1" : `by ${result.margin}`;
+  const title = `<span class="match-title"><span class="match-head ${result.win ? "win" : "loss"}">${result.win ? "VICTORY" : "DEFEAT"}${
+    margin ? ` <span class="match-margin">${margin}</span>` : ""
+  }</span>${context ? `<span class="match-head-sub">${context}</span>` : ""}</span>`;
   const html = `
       ${stickyHeadHtml(title)}
       <div class="match-card">
         ${result.championBonus ? `<div class="match-sub champion-line">👑 Champion! +$${fmt(result.championBonus.cash)} · ${signedNum(result.championBonus.rating)} rating</div>` : ""}
-        ${matchResultTableHtml(result)}
+        <div class="match-sub perf-note match-chance">Before the match you had a <b>${result.winProb}%</b> win chance.</div>
         ${headToHeadHtml(result)}
+        ${matchResultTableHtml(result)}
+        ${showNext ? nextMatchPreviewHtml() : ""}
+        ${extraHtml}
+        <button class="primary-btn" id="matchOk">${continueLabel}</button>
         <details class="match-more">
           <summary>How was my performance calculated?</summary>
           ${performanceTableHtml(result.breakdown)}
@@ -3307,12 +3312,17 @@ function showMatchModal(result, extraHtml = "", { onContinue = null, continueLab
           <summary>How were rating and cash worked out?</summary>
           ${ratingCashExplainerHtml(result)}
         </details>
-        ${showNext ? nextMatchPreviewHtml() : ""}
-        ${extraHtml}
-        <button class="primary-btn" id="matchOk">${continueLabel}</button>
       </div>`;
   openModal(html, { ownClose: true, onDismiss: onDone, page });
   $("matchOk").addEventListener("click", onContinue || closeModal);
+  // "• Round …" sits beside VICTORY when it fits, else on its own line
+  // (without the bullet).
+  const sub = $("modalBody").querySelector(".match-head-sub");
+  if (sub) {
+    sub.classList.add("same-line");
+    const head = $("modalBody").querySelector(".match-head").getBoundingClientRect();
+    if (sub.getBoundingClientRect().top >= head.bottom) sub.classList.remove("same-line");
+  }
 }
 
 /* ---------------------------------------------------------------------- */

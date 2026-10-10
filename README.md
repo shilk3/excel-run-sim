@@ -146,9 +146,11 @@ drawn so the odds of winning follow an Elo-style win chance for the gap
 so luck matters less) — upsets always stay possible — and the scores
 show each side's luck at a fifth of its real draw (topped up just enough to
 explain an upset), so luck reads as the small nudge it usually is. The result
-screen shows what changed (rating, table position, cash, record), both sides'
-numbers side by side, collapsible explanations, and a preview of the next
-match (opponent, ratings, table places, win chance and the week's focus). League tables rank by points, then
+screen leads with VICTORY / DEFEAT by the margin and the round, then your
+win chance, both sides' numbers side by side (Head to Head), what changed
+(rating, table position, cash, record), a preview of the next match
+(opponent, ratings, table places, win chance and the week's focus) and
+Continue — with the collapsible explanations below it. League tables rank by points, then
 head-to-head between tied players, then rating; they show W and L too.
 
 **Game length**: chosen when a game starts, and each length keeps its own
