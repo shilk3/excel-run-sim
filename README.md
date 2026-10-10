@@ -142,8 +142,9 @@ point ahead (🎯 Focus-skill edge) — shown on the result screen and the
 next-match preview. Luck is random for both sides every match,
 drawn so the odds of winning follow an Elo-style win chance for the gap
 (a 300 gap makes you a 10-to-1 favourite — tighter than classic Elo's 400,
-so luck matters less) — upsets always stay possible — and the scores shown
-are scaled so most games read as close. The result
+so luck matters less) — upsets always stay possible — and the scores
+show each side's luck at a fifth of its real draw (topped up just enough to
+explain an upset), so luck reads as the small nudge it usually is. The result
 screen shows what changed (rating, table position, cash, record), both sides'
 numbers side by side, collapsible explanations, and a preview of the next
 match (opponent, ratings, table places, win chance and the week's focus). League tables rank by points, then

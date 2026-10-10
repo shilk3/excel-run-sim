@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.65.0";
+const APP_VERSION = "4.66.0";
 // One save slot per game length. The Full game keeps the original key, so
 // a career from before game lengths carries on as the Full game.
 const SAVE_KEY = "cellgrind_save_v1";
@@ -1748,24 +1748,28 @@ function resolveMatch(opponent) {
   else state.losses += 1;
 
   // Display figures for the result screen — cosmetic only; the result was
-  // settled above by the real luck draws. The real margin is squeezed so
-  // most games read as close (100 × (1 − e^(−margin/700)): a real 100 shows
-  // as 13, 500 as 51), then the shown luck makes up whatever the ratings and
-  // performances leave, split between the two sides in random shares.
-  // Columns add up exactly and the winner always has the higher total.
+  // settled above by the real luck draws. Each side's shown luck is its real
+  // draw at a fifth of the size (LUCK_SHOWN), so luck reads as the small
+  // nudge it usually is. Only when that isn't enough to explain the result
+  // (an upset) is it topped up, split between the sides, to just past what
+  // the ratings and performances left — a few points' margin. Columns add up
+  // exactly and the winner always has the higher total.
   const yourRatingShown = Math.round(rankBefore);
   const yourPerfShown = Math.round((perf - 70) * 3);
   const oppRatingShown = Math.round(opponentRating);
   const oppPerfShown = Math.round((mu.oppPerf - 70) * 3);
   const yourEdgeShown = Math.round(mu.yourEdge);
   const oppEdgeShown = Math.round(mu.oppEdge);
-  const shownMargin = Math.max(1, Math.round(100 * (1 - Math.exp(-Math.abs(yourFinal - oppFinal) / 700))));
   const baseGap = yourRatingShown + yourPerfShown + yourEdgeShown - (oppRatingShown + oppPerfShown + oppEdgeShown);
-  const luckGap = (win ? shownMargin : -shownMargin) - baseGap; // your luck − theirs
-  // A random share of the gap goes to each side, so it isn't always the
-  // favourite having an off day and the underdog a good one in equal parts.
-  const yourLuckShown = Math.round(luckGap * (0.25 + Math.random() * 0.5)) + randInt(-15, 15);
-  const oppLuckShown = yourLuckShown - luckGap;
+  let yourLuckShown = Math.round(yourLuck * LUCK_SHOWN);
+  let oppLuckShown = Math.round(oppLuck * LUCK_SHOWN);
+  const shownGap = baseGap + yourLuckShown - oppLuckShown; // your total − theirs
+  if (win ? shownGap < 1 : shownGap > -1) {
+    const fix = (win ? 1 : -1) * randInt(1, 12) - shownGap; // your luck − theirs must rise by this
+    const yourPart = Math.round(fix * (0.3 + Math.random() * 0.4));
+    yourLuckShown += yourPart;
+    oppLuckShown -= fix - yourPart;
+  }
   const yourFinalShown = yourRatingShown + yourPerfShown + yourEdgeShown + yourLuckShown;
   const oppFinalShown = oppRatingShown + oppPerfShown + oppEdgeShown + oppLuckShown;
 
@@ -1817,6 +1821,8 @@ function resolveMatch(opponent) {
 // P(you out-score them) is exactly the win chance. Usually within about
 // ±110; now and then a side has an inspired day of +300 or more.
 const EULER_GAMMA = 0.5772156649;
+// The result screen shows each side's luck at this fraction of its real draw.
+const LUCK_SHOWN = 0.2;
 function matchLuckDraw() {
   const u = clamp(Math.random(), 1e-9, 1 - 1e-9);
   return (BAL.luckScale / Math.LN10) * (-Math.log(-Math.log(u)) - EULER_GAMMA);
@@ -3224,7 +3230,7 @@ function luckExplainerHtml(result) {
     .map((r) => `<tr class="${r.you ? "ladder-you" : "perf-sub"}"><td>${r.you ? `👉 You: ${gapLabel(r.gap)}` : gapLabel(r.gap)}</td><td>${r.chance}%</td></tr>`)
     .join("");
   return `
-    <div class="match-sub perf-note">Both sides get random luck every match, and the highest match-day rating wins. Most games end up close; now and then the underdog has an inspired day and sneaks it.</div>
+    <div class="match-sub perf-note">Both sides get random luck every match, and the highest match-day rating wins. Luck is usually a small nudge; now and then the underdog has an inspired day and sneaks it.</div>
     <div class="match-sub perf-note">So your win chance comes down to the gap before luck: ${result.opponentMatchRating != null ? `your rating + performance + edge (${result.matchRating}) against theirs (${theirs})` : `your rating + performance (${result.matchRating}) against their rating (${result.opponentRating})`} — <b>${gapLabel(gap)}</b> this time. The bigger the gap, the more luck the underdog needs, but upsets always stay possible:</div>
     <table class="perf-table win-ladder">
       <thead><tr><th>Rating gap</th><th>Win chance</th></tr></thead>
@@ -4899,7 +4905,7 @@ function openHowTo() {
     "Each side's <b>match-day rating</b> = rating + performance + focus-skill edge + luck. Higher wins.",
     `Performance comes from your stats (skills ${Math.round(PERF_WEIGHTS.skill * 100)}%, Health ${Math.round(PERF_WEIGHTS.phys * 100)}%, Calm ${Math.round(PERF_WEIGHTS.composure * 100)}%, Rest ${Math.round(PERF_WEIGHTS.rest * 100)}%). Each point above 70 adds 3; below 70 costs 3. A rival's comes from their focus skills, with Health, Calm and Rest at ${B.rivalCondition}.`,
     `<b>🎯 Focus-skill edge:</b> whoever has the better average in the week's focus skills gets <b>${B.skillEdgeWeight}</b> match-day rating for every point they're ahead.`,
-    "Luck is random for both sides and is drawn so you win exactly as often as the win chance says. Most games end up close; upsets always stay possible.",
+    "Luck is random for both sides and is drawn so you win exactly as often as the win chance says. It's usually a small nudge; upsets always stay possible.",
     "The result screen explains every number; the next-match preview shows both sides' focus skills.",
   ]));
 
