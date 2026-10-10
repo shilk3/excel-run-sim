@@ -55,6 +55,12 @@ html, body {
 .brand { font-weight: 800; font-size: 18px; letter-spacing: 0.2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; margin-right: 8px; }
 /* Narrower phones: give the cash / rating / table-position chips room. */
 @media (max-width: 400px) { .brand { font-size: 16px; } }
+/* The narrowest phones: tighter top-bar buttons so CELLOG still fits. */
+@media (max-width: 370px) {
+  .topbar-right { gap: 4px; }
+  .topbar-right .chip { padding: 6px 6px; }
+  .topbar-right .icon-btn:not(.has-pos) { width: 30px; }
+}
 .match-counter {
   font-size: 12px;
   color: var(--text-dim);
@@ -79,6 +85,8 @@ html, body {
   background: var(--bg-elev);
 }
 .match-counter:empty { display: none; }
+.match-counter.tappable { cursor: pointer; }
+#nextMatchBtn.hidden { display: none; }
 .topbar-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .chip {
   background: var(--bg-elev);

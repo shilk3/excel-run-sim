@@ -3,7 +3,7 @@
  * matches, shop, UI rendering.
  */
 
-const APP_VERSION = "4.62.0";
+const APP_VERSION = "4.63.0";
 // One save slot per game length. The Full game keeps the original key, so
 // a career from before game lengths carries on as the Full game.
 const SAVE_KEY = "cellgrind_save_v1";
@@ -2587,6 +2587,28 @@ function renderTopbar() {
   const phase = `Y${state.year} · ${phaseLabelText()}`;
   $("matchCounter").textContent = `${phase} · ${info.labelLine1 || info.label}`;
   $("matchCounter2").textContent = info.labelLine1 ? (info.labelLine2 || "") : "";
+  // ⚔️ and the match lines open the next-match preview whenever there is one.
+  const hasNext = (info.kind === "fixture" || info.kind === "playoff") && info.opponentRivalId != null;
+  $("nextMatchBtn").classList.toggle("hidden", !hasNext);
+  $("matchCounter").classList.toggle("tappable", hasNext);
+  $("matchCounter2").classList.toggle("tappable", hasNext);
+}
+
+// The next-match preview on its own, from the top bar.
+function openNextMatch() {
+  const preview = nextMatchPreviewHtml();
+  if (!preview) return;
+  const info = getNextMatchInfo();
+  const html = `
+      ${stickyHeadHtml("Next Match")}
+      <div class="match-card">
+        ${preview}
+        <button class="ghost-btn" id="nextMatchRival">View ${info.opponentName}</button>
+        <button class="primary-btn" id="nextMatchOk">Close</button>
+      </div>`;
+  openModal(html, { ownClose: true, page: { key: "nextMatch", reopen: openNextMatch } });
+  $("nextMatchRival").addEventListener("click", () => openRival(info.opponentRivalId));
+  $("nextMatchOk").addEventListener("click", closeModal);
 }
 
 function renderStats() {
@@ -5576,6 +5598,9 @@ function wireInputs() {
   $("cashChip").addEventListener("click", openShop);
   $("rankChip").addEventListener("click", openCareer);
   $("leaguesBtn").addEventListener("click", () => openLeagues(state.leagueTier));
+  $("nextMatchBtn").addEventListener("click", openNextMatch);
+  $("matchCounter").addEventListener("click", openNextMatch);
+  $("matchCounter2").addEventListener("click", openNextMatch);
   $("historyLink").addEventListener("click", () => openHistory());
 }
 
